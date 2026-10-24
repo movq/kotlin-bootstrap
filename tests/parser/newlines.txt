@@ -1,0 +1,30 @@
+(KtFile
+  declarations=[
+    (Decl.Function
+      name="f"
+      body=(Expr.Block
+        statements=[
+          (Decl.Property
+            name="a"
+            initializer=(Expr.Binary
+              op=ELVIS
+              left=(Expr.Member
+                receiver=(Expr.Call callee=(Expr.Member receiver=(Expr.Name name="b") name="c"))
+                name="d"
+                safe=true)
+              right=(Expr.Name name="e")))
+          (Decl.Property name="x" initializer=(Expr.IntLit text="1"))
+          (Expr.Prefix op=PLUS expr=(Expr.IntLit text="2"))
+          (Expr.Name name="foo")
+          (Expr.Paren expr=(Expr.IntLit text="1"))
+          (Expr.Call callee=(Expr.Name name="bar") lambdas=[(Expr.Lambda)])
+          (Expr.Name name="baz")
+          (Expr.Lambda)
+          (Decl.Property
+            name="y"
+            initializer=(Expr.Binary op=AND left=(Expr.Name name="a") right=(Expr.Name name="b")))
+          (Decl.Property
+            name="z"
+            initializer=(Expr.Binary op=AND left=(Expr.Name name="a") right=(Expr.Name name="b")))
+          (Expr.Return)
+          (Expr.IntLit text="1")]))])

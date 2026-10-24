@@ -2153,7 +2153,10 @@ public final class Parser {
     private Decl parseLocalDeclaration(boolean rollbackIfDefinitelyNotExpression) {
         Mark before = mark();
         int start = pos();
-        Modifiers modifiers = parseModifierList(EnumSet.noneOf(TokenKind.class), true);
+        // The reference rolls back a failed modifier list along with the rest: in
+        // `inner@ for (...)`, `inner` is a modifier followed by a broken annotation.
+        Modifiers modifiers = attempt(() -> parseModifierList(EnumSet.noneOf(TokenKind.class), true));
+        if (modifiers == null) return null;
 
         Decl decl;
         if (rollbackIfDefinitelyNotExpression) {

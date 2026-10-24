@@ -1,0 +1,38 @@
+(KtFile
+  declarations=[
+    (Decl.Property
+      name="a"
+      initializer=(Expr.StringTemplate parts=[(Expr.TextPart text="plain\n\t\"A$")]))
+    (Decl.Property
+      name="b"
+      initializer=(Expr.StringTemplate
+        parts=[
+          (Expr.TextPart text="x=")
+          (Expr.ExprPart expr=(Expr.Name name="x"))
+          (Expr.TextPart text=", y=")
+          (Expr.ExprPart expr=(Expr.Member receiver=(Expr.Name name="y") name="z"))]))
+    (Decl.Property
+      name="c"
+      initializer=(Expr.StringTemplate
+        parts=[
+          (Expr.TextPart text="raw ")
+          (Expr.ExprPart expr=(Expr.Name name="a"))
+          (Expr.TextPart text=" ")
+          (Expr.ExprPart expr=(Expr.Name name="b"))
+          (Expr.TextPart text=" \\n")]))
+    (Decl.Property
+      name="d"
+      initializer=(Expr.StringTemplate
+        parts=[
+          (Expr.TextPart text="$x ")
+          (Expr.ExprPart expr=(Expr.Name name="y"))
+          (Expr.TextPart text=" ${z}")]))
+    (Decl.Property name="e" initializer=(Expr.CharLit value="c"))
+    (Decl.Property name="f" initializer=(Expr.CharLit value="'"))
+    (Decl.Property
+      name="g"
+      initializer=(Expr.StringTemplate
+        parts=[
+          (Expr.ExprPart
+            expr=(Expr.StringTemplate
+              parts=[(Expr.TextPart text="nested ") (Expr.ExprPart expr=(Expr.Name name="deep"))]))]))])

@@ -1,0 +1,85 @@
+(KtFile
+  declarations=[
+    (Decl.Property
+      name="a"
+      initializer=(Expr.Binary
+        op=MINUS
+        left=(Expr.Binary
+          op=PLUS
+          left=(Expr.IntLit text="1")
+          right=(Expr.Binary op=MUL left=(Expr.IntLit text="2") right=(Expr.IntLit text="3")))
+        right=(Expr.Binary
+          op=REM
+          left=(Expr.Binary op=DIV left=(Expr.IntLit text="4") right=(Expr.IntLit text="5"))
+          right=(Expr.IntLit text="6"))))
+    (Decl.Property
+      name="b"
+      initializer=(Expr.Binary
+        op=PLUS
+        left=(Expr.As
+          expr=(Expr.Name name="x")
+          type=(TypeRef.Simple segments=[(TypeRef.Segment name="T")]))
+        right=(Expr.IntLit text="1")))
+    (Decl.Property
+      name="c"
+      initializer=(Expr.InfixCall
+        left=(Expr.Binary op=RANGE left=(Expr.Name name="a") right=(Expr.Name name="b"))
+        name="step"
+        right=(Expr.IntLit text="2")))
+    (Decl.Property
+      name="d"
+      initializer=(Expr.Binary
+        op=IN
+        left=(Expr.Binary op=ELVIS left=(Expr.Name name="a") right=(Expr.Name name="b"))
+        right=(Expr.Name name="c")))
+    (Decl.Property
+      name="e"
+      initializer=(Expr.Binary
+        op=EQ
+        left=(Expr.Binary op=LT left=(Expr.Name name="a") right=(Expr.Name name="b"))
+        right=(Expr.Binary op=GT left=(Expr.Name name="c") right=(Expr.Name name="d"))))
+    (Decl.Property
+      name="f"
+      initializer=(Expr.Binary
+        op=OR
+        left=(Expr.Binary op=AND left=(Expr.Name name="a") right=(Expr.Name name="b"))
+        right=(Expr.Binary
+          op=AND
+          left=(Expr.Name name="c")
+          right=(Expr.Prefix op=NOT expr=(Expr.Name name="d")))))
+    (Decl.Property
+      name="g"
+      initializer=(Expr.InfixCall
+        left=(Expr.Name name="a")
+        name="foo"
+        right=(Expr.Binary op=PLUS left=(Expr.Name name="b") right=(Expr.Name name="c"))))
+    (Decl.Property
+      name="h"
+      initializer=(Expr.Prefix
+        op=MINUS
+        expr=(Expr.Postfix
+          op=INC
+          expr=(Expr.Member receiver=(Expr.Postfix op=NOT_NULL expr=(Expr.Name name="a")) name="b"))))
+    (Decl.Property
+      name="i"
+      initializer=(Expr.Binary
+        op=AND
+        left=(Expr.Is
+          expr=(Expr.Name name="x")
+          type=(TypeRef.Simple segments=[(TypeRef.Segment name="T")]))
+        right=(Expr.Is
+          expr=(Expr.Name name="y")
+          type=(TypeRef.Simple segments=[(TypeRef.Segment name="U")])
+          negated=true)))
+    (Decl.Property
+      name="j"
+      initializer=(Expr.Binary op=RANGE_UNTIL left=(Expr.Name name="a") right=(Expr.Name name="b")))
+    (Decl.Property
+      name="k"
+      initializer=(Expr.Binary op=NOT_IN left=(Expr.Name name="a") right=(Expr.Name name="b")))
+    (Decl.Property
+      name="l"
+      initializer=(Expr.Binary
+        op=IDENTITY_NE
+        left=(Expr.Binary op=IDENTITY_EQ left=(Expr.Name name="a") right=(Expr.Name name="b"))
+        right=(Expr.Name name="c")))])

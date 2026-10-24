@@ -1,0 +1,197 @@
+(KtFile
+  annotations=[
+    (Annotation
+      target="file"
+      type=(TypeRef.Simple segments=[(TypeRef.Segment name="JvmName")])
+      args=[(ValueArg value=(Expr.StringTemplate parts=[(Expr.TextPart text="Decls")]))])]
+  packageName=["p"]
+  imports=[(KtFile.Import path=["a" "b" "C"]) (KtFile.Import path=["a" "b"] allUnder=true)]
+  declarations=[
+    (Decl.Class
+      modifiers=(Modifiers keywords=[data])
+      kind=CLASS
+      name="Point"
+      primaryConstructor=(Decl.PrimaryConstructor
+        params=[
+          (Decl.Param
+            valOrVar=VAL
+            name="x"
+            type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))
+          (Decl.Param
+            valOrVar=VAL
+            name="y"
+            type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")])
+            defaultValue=(Expr.IntLit text="0"))])
+      superTypes=[
+        (Decl.SuperTypeEntry
+          type=(TypeRef.Simple
+            segments=[
+              (TypeRef.Segment
+                name="Comparable"
+                args=[
+                  (TypeRef.TypeArg
+                    variance=INVARIANT
+                    type=(TypeRef.Simple segments=[(TypeRef.Segment name="Point")]))])]))]
+      members=[
+        (Decl.Function
+          modifiers=(Modifiers keywords=[override])
+          name="compareTo"
+          params=[
+            (Decl.Param
+              valOrVar=NONE
+              name="other"
+              type=(TypeRef.Simple segments=[(TypeRef.Segment name="Point")]))]
+          returnType=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")])
+          body=(Expr.Binary
+            op=MINUS
+            left=(Expr.Name name="x")
+            right=(Expr.Member receiver=(Expr.Name name="other") name="x")))])
+    (Decl.Class modifiers=(Modifiers keywords=[sealed]) kind=INTERFACE name="Shape")
+    (Decl.Class
+      modifiers=(Modifiers keywords=[enum])
+      kind=CLASS
+      name="Color"
+      primaryConstructor=(Decl.PrimaryConstructor
+        params=[
+          (Decl.Param
+            valOrVar=VAL
+            name="rgb"
+            type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))])
+      enumEntries=[
+        (Decl.EnumEntry name="RED" args=[(ValueArg value=(Expr.IntLit text="0xff0000"))])
+        (Decl.EnumEntry
+          name="GREEN"
+          args=[(ValueArg value=(Expr.IntLit text="0x00ff00"))]
+          body=[
+            (Decl.Function
+              modifiers=(Modifiers keywords=[override])
+              name="toString"
+              body=(Expr.StringTemplate parts=[(Expr.TextPart text="g")]))])]
+      members=[(Decl.Class modifiers=(Modifiers keywords=[abstract]) kind=CLASS name="Nested")])
+    (Decl.Class
+      modifiers=(Modifiers keywords=[abstract])
+      kind=CLASS
+      name="Base"
+      typeParams=[
+        (Decl.TypeParam modifiers=(Modifiers keywords=[in]) name="T")
+        (Decl.TypeParam
+          modifiers=(Modifiers keywords=[out])
+          name="R"
+          bound=(TypeRef.Simple segments=[(TypeRef.Segment name="Any")]))]
+      primaryConstructor=(Decl.PrimaryConstructor)
+      constraints=[
+        (Decl.TypeConstraint
+          name="T"
+          bound=(TypeRef.Simple
+            segments=[
+              (TypeRef.Segment
+                name="Comparable"
+                args=[
+                  (TypeRef.TypeArg
+                    variance=INVARIANT
+                    type=(TypeRef.Simple segments=[(TypeRef.Segment name="T")]))])]))]
+      members=[
+        (Decl.Property
+          modifiers=(Modifiers keywords=[abstract])
+          name="p"
+          type=(TypeRef.Nullable inner=(TypeRef.Simple segments=[(TypeRef.Segment name="R")])))
+        (Decl.Property
+          isVar=true
+          name="q"
+          type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")])
+          initializer=(Expr.IntLit text="0")
+          setter=(Decl.Accessor modifiers=(Modifiers keywords=[private])))
+        (Decl.Property
+          name="r"
+          delegate=(Expr.Call
+            callee=(Expr.Name name="lazy")
+            lambdas=[(Expr.Lambda body=[(Expr.IntLit text="1")])]))
+        (Decl.Property
+          modifiers=(Modifiers keywords=[lateinit])
+          isVar=true
+          name="s"
+          type=(TypeRef.Simple segments=[(TypeRef.Segment name="String")]))
+        (Decl.SecondaryConstructor
+          params=[
+            (Decl.Param
+              valOrVar=NONE
+              name="x"
+              type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))]
+          delegation=THIS)
+        (Decl.Initializer
+          body=(Expr.Block statements=[(Expr.Call callee=(Expr.Name name="println"))]))])
+    (Decl.TypeAlias
+      name="Fn"
+      typeParams=[(Decl.TypeParam name="T")]
+      type=(TypeRef.Modified
+        modifiers=(Modifiers keywords=[suspend])
+        inner=(TypeRef.Function
+          receiver=(TypeRef.Simple segments=[(TypeRef.Segment name="T")])
+          params=[(NamedType type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))]
+          returnType=(TypeRef.Simple segments=[(TypeRef.Segment name="Unit")]))))
+    (Decl.Function
+      modifiers=(Modifiers keywords=[inline])
+      typeParams=[(Decl.TypeParam modifiers=(Modifiers keywords=[reified]) name="T")]
+      receiver=(TypeRef.Simple segments=[(TypeRef.Segment name="Any")])
+      name="cast"
+      returnType=(TypeRef.Simple segments=[(TypeRef.Segment name="T")])
+      body=(Expr.As expr=(Expr.This) type=(TypeRef.Simple segments=[(TypeRef.Segment name="T")])))
+    (Decl.Property
+      typeParams=[(Decl.TypeParam name="T")]
+      receiver=(TypeRef.Simple
+        segments=[
+          (TypeRef.Segment
+            name="List"
+            args=[
+              (TypeRef.TypeArg
+                variance=INVARIANT
+                type=(TypeRef.Simple segments=[(TypeRef.Segment name="T")]))])])
+      name="second"
+      type=(TypeRef.Simple segments=[(TypeRef.Segment name="T")])
+      getter=(Decl.Accessor
+        isGetter=true
+        body=(Expr.Index receiver=(Expr.This) indices=[(Expr.IntLit text="1")])))
+    (Decl.Function
+      name="vararg"
+      params=[
+        (Decl.Param
+          modifiers=(Modifiers keywords=[vararg])
+          valOrVar=NONE
+          name="xs"
+          type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))
+        (Decl.Param
+          valOrVar=NONE
+          name="f"
+          type=(TypeRef.Function
+            params=[
+              (NamedType type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))
+              (NamedType type=(TypeRef.Simple segments=[(TypeRef.Segment name="String")]))]
+            returnType=(TypeRef.Simple segments=[(TypeRef.Segment name="Boolean")]))
+          defaultValue=(Expr.Lambda
+            params=[(Expr.Binding name="_") (Expr.Binding name="_")]
+            hasArrow=true
+            body=[(Expr.BoolLit value=true)]))]
+      body=(Expr.Block))
+    (Decl.Function
+      modifiers=(Modifiers
+        contextParams=[(NamedType name="c" type=(TypeRef.Simple segments=[(TypeRef.Segment name="Ctx")]))])
+      name="withContext"
+      body=(Expr.Block))
+    (Decl.Class
+      kind=OBJECT
+      name="Singleton"
+      superTypes=[
+        (Decl.SuperTypeEntry
+          type=(TypeRef.Simple
+            segments=[
+              (TypeRef.Segment
+                name="Base"
+                args=[
+                  (TypeRef.TypeArg
+                    variance=INVARIANT
+                    type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))
+                  (TypeRef.TypeArg
+                    variance=INVARIANT
+                    type=(TypeRef.Simple segments=[(TypeRef.Segment name="String")]))])])
+          args=[(ValueArg value=(Expr.IntLit text="1"))])])
+    (Decl.Class modifiers=(Modifiers keywords=[expect]) kind=CLASS name="Platform")])

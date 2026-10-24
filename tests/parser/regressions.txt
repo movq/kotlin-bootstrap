@@ -1,0 +1,27 @@
+(KtFile
+  declarations=[
+    (Decl.Function
+      name="f"
+      body=(Expr.Block
+        statements=[
+          (Expr.For
+            variable=(Expr.Binding
+              destructuring=(Decl.Destructuring
+                valOrVar=NONE
+                squareBrackets=true
+                entries=[
+                  (Decl.DestructuringEntry valOrVar=NONE name="_")
+                  (Decl.DestructuringEntry valOrVar=NONE name="v")]))
+            iterable=(Expr.Name name="xs")
+            body=(Expr.Block
+              statements=[
+                (Expr.Labeled
+                  label="inner"
+                  expr=(Expr.For
+                    variable=(Expr.Binding name="x")
+                    iterable=(Expr.Name name="v")
+                    body=(Expr.Continue label="inner")))]))]))
+    (Decl.Class
+      kind=CLASS
+      name="C"
+      members=[(Decl.CompanionBlock members=[(Decl.Function name="bar" body=(Expr.Block))])])])

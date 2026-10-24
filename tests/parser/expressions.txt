@@ -1,0 +1,169 @@
+(KtFile
+  declarations=[
+    (Decl.Function
+      name="f"
+      body=(Expr.Block
+        statements=[
+          (Decl.Destructuring
+            valOrVar=VAL
+            entries=[
+              (Decl.DestructuringEntry valOrVar=NONE name="a")
+              (Decl.DestructuringEntry valOrVar=NONE name="b")]
+            initializer=(Expr.Name name="pair"))
+          (Decl.Property
+            name="lambda"
+            initializer=(Expr.Lambda
+              params=[
+                (Expr.Binding
+                  name="x"
+                  type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))
+                (Expr.Binding
+                  destructuring=(Decl.Destructuring
+                    valOrVar=NONE
+                    entries=[
+                      (Decl.DestructuringEntry valOrVar=NONE name="y")
+                      (Decl.DestructuringEntry valOrVar=NONE name="z")])
+                  type=(TypeRef.Simple
+                    segments=[
+                      (TypeRef.Segment
+                        name="Pair"
+                        args=[
+                          (TypeRef.TypeArg
+                            variance=INVARIANT
+                            type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))
+                          (TypeRef.TypeArg
+                            variance=INVARIANT
+                            type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))])]))]
+              hasArrow=true
+              body=[(Expr.Binary op=PLUS left=(Expr.Name name="x") right=(Expr.Name name="y"))]))
+          (Decl.Property
+            name="ref"
+            initializer=(Expr.CallableRef receiver=(Expr.Name name="String") name="length"))
+          (Decl.Property
+            name="cls"
+            initializer=(Expr.ClassLiteral
+              receiver=(Expr.TypeApplication
+                expr=(Expr.Name name="List")
+                typeArgs=[
+                  (TypeRef.TypeArg
+                    variance=INVARIANT
+                    type=(TypeRef.Simple segments=[(TypeRef.Segment name="String")]))])))
+          (Decl.Property name="bound" initializer=(Expr.CallableRef receiver=(Expr.This) name="f"))
+          (Decl.Property
+            name="anon"
+            initializer=(Expr.AnonymousFunction
+              function=(Decl.Function
+                params=[
+                  (Decl.Param
+                    valOrVar=NONE
+                    name="x"
+                    type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))]
+                returnType=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")])
+                body=(Expr.Block statements=[(Expr.Return value=(Expr.Name name="x"))]))))
+          (Decl.Property
+            name="obj"
+            initializer=(Expr.ObjectLiteral
+              decl=(Decl.Class
+                kind=OBJECT
+                superTypes=[
+                  (Decl.SuperTypeEntry
+                    type=(TypeRef.Simple segments=[(TypeRef.Segment name="Runnable")]))]
+                members=[
+                  (Decl.Function
+                    modifiers=(Modifiers keywords=[override])
+                    name="run"
+                    body=(Expr.Block))])))
+          (Decl.Property
+            name="w"
+            initializer=(Expr.When
+              subjectVariable=(Decl.Property name="s" initializer=(Expr.Call callee=(Expr.Name name="get")))
+              entries=[
+                (Expr.WhenEntry
+                  conditions=[
+                    (Expr.IsCondition
+                      type=(TypeRef.Simple segments=[(TypeRef.Segment name="String")]))
+                    (Expr.ExprCondition expr=(Expr.NullLit))]
+                  body=(Expr.IntLit text="1"))
+                (Expr.WhenEntry
+                  conditions=[
+                    (Expr.InCondition
+                      expr=(Expr.Binary
+                        op=RANGE
+                        left=(Expr.IntLit text="1")
+                        right=(Expr.IntLit text="2")))]
+                  body=(Expr.IntLit text="2"))
+                (Expr.WhenEntry
+                  conditions=[
+                    (Expr.InCondition
+                      expr=(Expr.Binary
+                        op=RANGE
+                        left=(Expr.IntLit text="3")
+                        right=(Expr.IntLit text="4"))
+                      negated=true)]
+                  body=(Expr.IntLit text="3"))
+                (Expr.WhenEntry body=(Expr.IntLit text="4"))]))
+          (Decl.Property
+            name="t"
+            initializer=(Expr.Try
+              body=(Expr.Block statements=[(Expr.IntLit text="1")])
+              catches=[
+                (Expr.Catch
+                  param=(Decl.Param
+                    valOrVar=NONE
+                    name="e"
+                    type=(TypeRef.Simple segments=[(TypeRef.Segment name="Exception")]))
+                  body=(Expr.Block statements=[(Expr.IntLit text="2")]))]
+              finallyBlock=(Expr.Block)))
+          (Expr.Labeled
+            label="loop"
+            expr=(Expr.For
+              variable=(Expr.Binding name="i")
+              iterable=(Expr.InfixCall
+                left=(Expr.IntLit text="0")
+                name="until"
+                right=(Expr.IntLit text="10"))
+              body=(Expr.Block
+                statements=[
+                  (Expr.If
+                    condition=(Expr.Binary op=EQ left=(Expr.Name name="i") right=(Expr.IntLit text="2"))
+                    then=(Expr.Continue label="loop")
+                    otherwise=(Expr.Break label="loop"))])))
+          (Expr.DoWhile
+            body=(Expr.Block statements=[(Expr.Postfix op=DEC expr=(Expr.Name name="x"))])
+            condition=(Expr.Binary op=GT left=(Expr.Name name="x") right=(Expr.IntLit text="0")))
+          (Expr.While condition=(Expr.BoolLit value=true))
+          (Expr.Call
+            callee=(Expr.Member receiver=(Expr.Name name="list") name="forEach")
+            lambdas=[(Expr.Labeled label="lambda" expr=(Expr.Lambda body=[(Expr.Return label="lambda")]))])
+          (Expr.Assign
+            op=PLUS_ASSIGN
+            target=(Expr.Index
+              receiver=(Expr.Name name="a")
+              indices=[(Expr.IntLit text="1") (Expr.IntLit text="2")])
+            value=(Expr.IntLit text="3"))
+          (Expr.Call
+            callee=(Expr.Name name="foo")
+            typeArgs=[
+              (TypeRef.TypeArg
+                variance=INVARIANT
+                type=(TypeRef.Simple segments=[(TypeRef.Segment name="Int")]))]
+            args=[(ValueArg value=(Expr.IntLit text="1"))]
+            lambdas=[(Expr.Lambda body=[(Expr.Name name="it")])])
+          (Decl.Property
+            modifiers=(Modifiers
+              annotations=[
+                (Annotation
+                  type=(TypeRef.Simple segments=[(TypeRef.Segment name="Suppress")])
+                  args=[(ValueArg value=(Expr.StringTemplate parts=[(Expr.TextPart text="x")]))])])
+            name="annotated"
+            initializer=(Expr.IntLit text="1"))
+          (Expr.Throw expr=(Expr.Call callee=(Expr.Name name="IllegalStateException")))
+          (Expr.Call
+            callee=(Expr.Member
+              receiver=(Expr.Super qualifier=(TypeRef.Simple segments=[(TypeRef.Segment name="Base")]))
+              name="f"))
+          (Expr.Postfix
+            op=NOT_NULL
+            expr=(Expr.Call
+              callee=(Expr.Member receiver=(Expr.Name name="x") name="let" safe=true)
+              lambdas=[(Expr.Lambda body=[(Expr.Name name="it")])]))]))])
