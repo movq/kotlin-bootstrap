@@ -18,7 +18,13 @@ MAIN_CLASSES := $(BUILD)/classes
 TEST_CLASSES := $(BUILD)/test-classes
 JARFILE      := $(BUILD)/kbc.jar
 
-.PHONY: all clean test test-golden test-psi corpus update-golden
+# A reference kotlinc, used only as a test oracle; never part of the bootstrap.
+KOTLINC_VERSION := 2.4.21
+KOTLINC_SHA256  := 7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd
+KOTLINC_HOME    := tools/kotlinc-$(KOTLINC_VERSION)
+KOTLINC         := $(KOTLINC_HOME)/bin/kotlinc
+
+.PHONY: all clean test test-golden test-psi corpus update-golden fetch-kotlinc
 
 all: $(JARFILE)
 
@@ -56,6 +62,18 @@ test-psi: $(TEST_CLASSES)/.stamp
 # Parse every non-test-data .kt file in the Kotlin tree.
 corpus: $(TEST_CLASSES)/.stamp
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.CorpusTests $(KOTLIN_SRC)
+
+fetch-kotlinc: $(KOTLINC_HOME)/.stamp
+
+$(KOTLINC_HOME)/.stamp:
+	@mkdir -p tools
+	curl -sSL -o tools/kotlin-compiler.zip \
+		https://github.com/JetBrains/kotlin/releases/download/v$(KOTLINC_VERSION)/kotlin-compiler-$(KOTLINC_VERSION).zip
+	echo "$(KOTLINC_SHA256)  tools/kotlin-compiler.zip" | sha256sum -c -
+	rm -rf $(KOTLINC_HOME) tools/kotlinc
+	cd tools && unzip -q kotlin-compiler.zip && mv kotlinc kotlinc-$(KOTLINC_VERSION)
+	rm tools/kotlin-compiler.zip
+	@touch $@
 
 clean:
 	rm -rf $(BUILD)
