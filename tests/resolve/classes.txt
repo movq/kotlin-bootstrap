@@ -1,0 +1,53 @@
+public final class test.classes.Plain : kotlin.Any {
+    public constructor()
+}
+public open class test.classes.WithPrimary : kotlin.Any {
+    public constructor(x: kotlin.Int, y: kotlin.String?, z: kotlin.Long)
+    public final val x: kotlin.Int
+    public final var y: kotlin.String?
+}
+public abstract class test.classes.WithSecondary : kotlin.Any {
+    public constructor(a: kotlin.Int)
+    protected constructor(a: kotlin.String)
+    public open val p: kotlin.Int
+    private final var q: kotlin.Int
+    internal final lateinit var r: kotlin.String
+    public abstract fun f(): kotlin.Int
+}
+public abstract interface test.classes.I<in T : kotlin.Any?> : kotlin.Any {
+    public abstract val v: kotlin.String
+    public abstract fun g(t: T): kotlin.Unit
+    public open fun h(): kotlin.Int
+}
+public sealed class test.classes.Sealed : kotlin.Any {
+    protected constructor()
+}
+public final object test.classes.Obj : test.classes.I<kotlin.String> {
+    public open override val v: kotlin.String
+    public open override fun g(t: kotlin.String): kotlin.Unit
+}
+public final class test.classes.Outer<T : kotlin.Any?> : kotlin.Any {
+    public constructor()
+    public final fun make(): test.classes.Outer<T>.Inner<kotlin.Int>
+    public final inner class test.classes.Outer.Inner<S : kotlin.Any?> : kotlin.Any {
+        public constructor(s: S, t: T)
+        public final val s: S
+        public final val t: T
+    }
+    public final class test.classes.Outer.Nested : kotlin.Any {
+        public constructor()
+    }
+    public final companion object test.classes.Outer.Companion : kotlin.Any {
+        public final const val C: kotlin.Int
+    }
+}
+public final annotation class test.classes.Ann : kotlin.Annotation {
+    public constructor(vararg names: kotlin.String, n: kotlin.Int = ...)
+    public final vararg val names: kotlin.Array<out kotlin.String>
+    public final val n: kotlin.Int
+}
+public final class test.classes.Vararg : kotlin.Any {
+    public constructor(vararg xs: kotlin.Int, vararg ys: test.classes.Outer<*>)
+    public final vararg val xs: kotlin.IntArray
+    public final vararg val ys: kotlin.Array<out test.classes.Outer<*>>
+}

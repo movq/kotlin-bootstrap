@@ -24,7 +24,7 @@ KOTLINC_SHA256  := 7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e7
 KOTLINC_HOME    := tools/kotlinc-$(KOTLINC_VERSION)
 KOTLINC         := $(KOTLINC_HOME)/bin/kotlinc
 
-.PHONY: all clean test test-golden test-psi corpus update-golden fetch-kotlinc test-oracle
+.PHONY: all clean test test-golden test-resolve test-psi corpus update-golden fetch-kotlinc test-oracle
 
 all: $(JARFILE)
 
@@ -55,14 +55,19 @@ $(ORACLE_CLASSES)/.stamp: $(MAIN_CLASSES)/.stamp $(KOTLINC_HOME)/.stamp $(ORACLE
 	$(JAVAC) $(JFLAGS) -cp $(ORACLE_CP) -d $(ORACLE_CLASSES) $(ORACLE_SRC)
 	@touch $@
 
-test: test-golden test-psi
+test: test-golden test-resolve test-psi
 
 # Golden AST dumps under tests/parser.
 test-golden: $(TEST_CLASSES)/.stamp
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.GoldenTests tests/parser
 
+# Resolved declarations of tests/resolve, against the stdlib sources.
+test-resolve: $(TEST_CLASSES)/.stamp
+	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.ResolveGoldenTests $(KOTLIN_SRC) tests/resolve
+
 update-golden: $(TEST_CLASSES)/.stamp
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.GoldenTests --update tests/parser
+	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.ResolveGoldenTests --update $(KOTLIN_SRC) tests/resolve
 
 # The reference parser's own test data: files whose PSI dump has no error
 # elements must parse; files with errors must be rejected.

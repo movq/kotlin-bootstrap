@@ -1,0 +1,42 @@
+public final data class test.synthesized.Point : kotlin.Any {
+    public constructor(x: kotlin.Int, y: kotlin.Int)
+    public final val x: kotlin.Int
+    public final val y: kotlin.Int
+    synthesized public final operator fun component1(): kotlin.Int
+    synthesized public final operator fun component2(): kotlin.Int
+    synthesized public final fun copy(x: kotlin.Int = ..., y: kotlin.Int = ...): test.synthesized.Point
+    synthesized public open override operator fun equals(other: kotlin.Any?): kotlin.Boolean
+    synthesized public open override fun hashCode(): kotlin.Int
+    synthesized public open override fun toString(): kotlin.String
+}
+public final data class test.synthesized.Named : kotlin.Any {
+    public constructor(name: kotlin.String)
+    public final val name: kotlin.String
+    public open override fun toString(): kotlin.String
+    synthesized public final operator fun component1(): kotlin.String
+    synthesized public final fun copy(name: kotlin.String = ...): test.synthesized.Named
+    synthesized public open override operator fun equals(other: kotlin.Any?): kotlin.Boolean
+    synthesized public open override fun hashCode(): kotlin.Int
+}
+public final value class test.synthesized.Meters : kotlin.Any {
+    public constructor(value: kotlin.Double)
+    public final val value: kotlin.Double
+    synthesized public open override operator fun equals(other: kotlin.Any?): kotlin.Boolean
+    synthesized public open override fun hashCode(): kotlin.Int
+    synthesized public open override fun toString(): kotlin.String
+}
+public final enum class test.synthesized.Color : kotlin.Enum<test.synthesized.Color> {
+    private constructor(rgb: kotlin.Int)
+    public final val rgb: kotlin.Int
+    public final static val RED: test.synthesized.Color
+    public final static val GREEN: test.synthesized.Color
+    synthesized public final static val entries: kotlin.enums.EnumEntries<test.synthesized.Color>
+    public final fun brighter(): test.synthesized.Color
+    synthesized public final static fun values(): kotlin.Array<test.synthesized.Color>
+    synthesized public final static fun valueOf(value: kotlin.String): test.synthesized.Color
+}
+public final data object test.synthesized.Singleton : kotlin.Any {
+    synthesized public open override operator fun equals(other: kotlin.Any?): kotlin.Boolean
+    synthesized public open override fun hashCode(): kotlin.Int
+    synthesized public open override fun toString(): kotlin.String
+}

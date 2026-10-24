@@ -1,0 +1,7 @@
+// replaced by an actual declaration
+public final actual class test.expect.Platform : kotlin.Any {
+    public constructor()
+    public final actual fun name(): kotlin.String
+    public final fun extra(): kotlin.Int
+}
+public final actual fun platformName(x: kotlin.Int): kotlin.String

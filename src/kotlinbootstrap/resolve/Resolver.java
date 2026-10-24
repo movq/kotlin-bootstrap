@@ -333,6 +333,18 @@ public final class Resolver {
         return result;
     }
 
+    /**
+     * Whether the type of a declaration (a function's return type, a
+     * property's type) is known without looking at its body.
+     */
+    public static boolean hasDeclaredType(CallableSymbol c) {
+        return switch (c.source()) {
+            case Decl.Function f -> f.returnType() != null || f.body() == null || f.body() instanceof Expr.Block;
+            case Decl.Property p -> p.type() != null || p.getter() != null && p.getter().returnType() != null;
+            default -> true;
+        };
+    }
+
     /** Placeholder until the expression checker can infer declaration types from their bodies. */
     private KType inferredType(FileContext file, Node decl) {
         throw new ResolveException(file.file().source(), decl.pos(), "Type inference is not implemented yet");

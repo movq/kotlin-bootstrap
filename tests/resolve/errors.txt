@@ -1,0 +1,9 @@
+error 3:19: Unresolved type NoSuchType
+error 4:18: Wrong number of type arguments for kotlin.collections.List
+public final fun inferred(): <inferred>
+public final val inferredProp: <inferred>
+public final class test.errors.Ok : kotlin.Any {
+    public constructor(x: kotlin.Int)
+    public final val x: kotlin.Int
+}
+error 8:18: Unresolved type Missing

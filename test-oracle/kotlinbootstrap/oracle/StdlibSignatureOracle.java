@@ -34,7 +34,6 @@ import kotlinbootstrap.Frontend;
 import kotlinbootstrap.Stdlib;
 import kotlinbootstrap.ast.Annotation;
 import kotlinbootstrap.ast.Decl;
-import kotlinbootstrap.ast.Expr;
 import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.KotlinClassSymbol;
@@ -263,7 +262,7 @@ public final class StdlibSignatureOracle {
         if (c instanceof FunctionSymbol) key.append(params);
         String header = c.visibility() + " " + c.modality() + ": ";
         members.computeIfAbsent(asReflectShows(key.toString()), k -> new ArrayList<>())
-                .add(asReflectShows(header + (hasDeclaredType(c) ? TypeRenderer.render(c.returnType()) : "?")));
+                .add(asReflectShows(header + (Resolver.hasDeclaredType(c) ? TypeRenderer.render(c.returnType()) : "?")));
     }
 
     /**
@@ -318,14 +317,6 @@ public final class StdlibSignatureOracle {
             j.add((withVariance ? tp.variance().prefix() : "") + tp.name() + " : " + bounds);
         }
         return j.toString();
-    }
-
-    private static boolean hasDeclaredType(CallableSymbol c) {
-        return switch (c.source()) {
-            case Decl.Function f -> f.returnType() != null || f.body() == null || f.body() instanceof Expr.Block;
-            case Decl.Property p -> p.type() != null || p.getter() != null && p.getter().returnType() != null;
-            default -> true;
-        };
     }
 
     // ==== Reference signatures ====

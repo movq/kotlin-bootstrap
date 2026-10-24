@@ -1,0 +1,27 @@
+public abstract class test.overrides.Base<T : kotlin.Any?> : kotlin.Any {
+    public constructor()
+    protected open val prop: kotlin.collections.List<T>
+    protected abstract fun hook(t: T): kotlin.Int
+    internal open fun internalHook(): kotlin.Unit
+}
+public final class test.overrides.Derived : test.overrides.Base<kotlin.String> {
+    public constructor()
+    public open override val prop: kotlin.collections.List<kotlin.String>
+    protected open override fun hook(t: kotlin.String): kotlin.Int
+    internal open override fun internalHook(): kotlin.Unit
+}
+public final class test.overrides.MyList : java.util.AbstractList<kotlin.String> {
+    public constructor()
+    public open override val size: kotlin.Int
+    public open override fun get(index: kotlin.Int): kotlin.String
+    protected open override fun removeRange(fromIndex: kotlin.Int, toIndex: kotlin.Int): kotlin.Unit
+}
+public final class test.overrides.MyRandom : java.util.Random {
+    public constructor()
+    protected open override fun next(bits: kotlin.Int): kotlin.Int
+}
+public final class test.overrides.Final : kotlin.Comparable<test.overrides.Final> {
+    public constructor()
+    public open override fun compareTo(other: test.overrides.Final): kotlin.Int
+    public final override fun toString(): kotlin.String
+}

@@ -1,0 +1,13 @@
+public typealias test.types.Pred<T : kotlin.Any?> = (T) -> kotlin.Boolean
+public typealias test.types.StringMap<V : kotlin.Any?> = kotlin.collections.Map<kotlin.String, V>
+public final fun functionTypes(a: () -> kotlin.Unit, b: (kotlin.Int, kotlin.String) -> kotlin.Long?, c: kotlin.Int.(kotlin.String) -> kotlin.Unit, d: suspend () -> kotlin.Int, e: suspend kotlin.String.() -> kotlin.Unit, f: ((kotlin.Int) -> kotlin.Int)?, g: (() -> kotlin.Unit).() -> kotlin.Unit, h: kotlin.Int.(kotlin.Int) -> kotlin.Unit): (kotlin.String) -> kotlin.Boolean
+public final fun aliases(m: kotlin.collections.Map<kotlin.String, kotlin.Int>, p: ((kotlin.Int) -> kotlin.Boolean) -> kotlin.Boolean): kotlin.Unit
+public final fun projections(a: kotlin.collections.List<*>, b: kotlin.collections.MutableList<out kotlin.Number>, c: kotlin.Comparable<in kotlin.String>, d: kotlin.Array<out kotlin.Any?>): kotlin.Unit
+public final fun <T : kotlin.Any?> definitelyNotNull(t: T & Any): T
+public final fun <T : kotlin.Comparable<T> & kotlin.CharSequence> bounded(x: T): kotlin.Unit
+public final inline fun <reified T : kotlin.Any?> reified(): T
+public final fun context(kotlin.String) withContext(): kotlin.Int
+public final fun withContextType(f: context(kotlin.String) () -> kotlin.Unit): kotlin.Unit
+public final val kotlin.Int.ext: kotlin.Int
+public final var <T : kotlin.Any?> kotlin.collections.MutableList<T>.second: T
+public final fun javaTypes(f: java.io.File, l: java.util.ArrayList<kotlin.String>): java.lang.Thread

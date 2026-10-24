@@ -6,9 +6,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 import kotlinbootstrap.ast.AstPrinter;
+import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.ResolveException;
 import kotlinbootstrap.resolve.Resolver;
 import kotlinbootstrap.resolve.SignatureCompleter;
+import kotlinbootstrap.resolve.SymbolPrinter;
 import kotlinbootstrap.syntax.Parser;
 import kotlinbootstrap.syntax.SourceFile;
 import kotlinbootstrap.syntax.SyntaxError;
@@ -17,7 +19,7 @@ import kotlinbootstrap.syntax.SyntaxError;
 public final class Main {
     private static final String USAGE = """
             usage: kbc parse <file.kt>...
-                   kbc resolve [--jdk-release N] <file.kt, file.java or directory>...""";
+                   kbc resolve [--jdk-release N] [--dump] <file.kt, file.java or directory>...""";
 
     private Main() {
     }
@@ -50,19 +52,29 @@ public final class Main {
         System.exit(failures == 0 ? 0 : 1);
     }
 
-    /** Resolves the declarations of the sources; for now, just reports errors. */
+    /** Resolves the declarations of the sources and reports errors; with --dump, prints them. */
     private static void resolve(List<String> args) throws IOException {
         String release = "8";
+        boolean dump = false;
         List<Path> paths = new ArrayList<>();
         for (int i = 0; i < args.size(); i++) {
             if (args.get(i).equals("--jdk-release") && i + 1 < args.size()) {
                 release = args.get(++i);
+            } else if (args.get(i).equals("--dump")) {
+                dump = true;
             } else {
                 paths.add(Path.of(args.get(i)));
             }
         }
         try {
             Resolver resolver = Frontend.load(paths, release);
+            if (dump) {
+                for (FileContext file : resolver.files()) {
+                    System.out.println("// " + file.file().source().path());
+                    System.out.print(SymbolPrinter.print(resolver, file));
+                }
+                return;
+            }
             int count = SignatureCompleter.completeAll(resolver);
             System.out.println(resolver.files().size() + " files, " + count + " classifiers resolved");
         } catch (SyntaxError | ResolveException e) {
