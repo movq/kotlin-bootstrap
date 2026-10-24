@@ -87,6 +87,16 @@ public abstract non-sealed class ClassSymbol implements ClassifierSymbol {
         return has(Modifier.INNER);
     }
 
+    /** Whether the class is declared in a function body or initializer (including anonymous objects). */
+    public boolean isLocal() {
+        return false;
+    }
+
+    /** Whether this is the class of an object expression. */
+    public boolean isAnonymous() {
+        return false;
+    }
+
     public abstract List<TypeParamSymbol> typeParams();
 
     /** Direct supertypes. Only {@code kotlin.Any} has none. */

@@ -17,6 +17,7 @@ import kotlinbootstrap.resolve.Resolver;
 import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.types.KType;
+import kotlinbootstrap.types.TypeApproximator;
 import kotlinbootstrap.types.TypeRenderer;
 import kotlinbootstrap.types.TypeSystem;
 
@@ -25,7 +26,9 @@ import kotlinbootstrap.types.TypeSystem;
  * file is a question about the types of its parameters, by its name:
  * {@code subtype(a: A, b: B)}, {@code equal(a: A, b: B)},
  * {@code cst(a: A, b: B, ...)}, {@code intersect(a: A, b: B, ...)},
- * {@code capture(a: A)}, {@code asSupertype(a: A, b: C<*>)}. The answers
+ * {@code localCst(...)} and {@code publicCst(...)} (approximated as the type
+ * of a local or public declaration), {@code capture(a: A)},
+ * {@code captureApproximate(a: A)}, {@code asSupertype(a: A, b: C<*>)}. The answers
  * for {@code foo.kt} are compared with {@code foo.txt}.
  *
  * <p>Arguments: [--update] kotlin-source-root test-directory.
@@ -90,10 +93,23 @@ public final class TypeSystemGoldenTests {
             case "subtype" -> String.valueOf(ts.isSubtype(types.get(0), types.get(1)));
             case "equal" -> String.valueOf(ts.equalTypes(types.get(0), types.get(1)));
             case "cst" -> TypeRenderer.render(ts.commonSuperType(types));
+            case "localCst" -> TypeRenderer.render(TypeApproximator.approximateToSuperTypeOrSelf(ts,
+                    ts.commonSuperType(types), TypeApproximator.Config.LOCAL_DECLARATION));
+            case "publicCst" -> TypeRenderer.render(TypeApproximator.approximateToSuperTypeOrSelf(ts,
+                    ts.commonSuperType(types), TypeApproximator.Config.PUBLIC_DECLARATION_SAVE_ANONYMOUS));
             case "intersect" -> TypeRenderer.render(ts.intersect(types));
             case "capture" -> {
                 KType captured = ts.captureFromExpression(types.getFirst());
                 yield captured == null ? "null" : TypeRenderer.render(captured);
+            }
+            case "captureApproximate" -> {
+                KType captured = ts.captureFromExpression(types.getFirst());
+                if (captured == null) yield "null";
+                KType sup = TypeApproximator.approximateToSuperType(ts, captured,
+                        TypeApproximator.Config.FINAL_APPROXIMATION_AFTER_RESOLUTION);
+                KType sub = TypeApproximator.approximateToSubType(ts, captured,
+                        TypeApproximator.Config.FINAL_APPROXIMATION_AFTER_RESOLUTION);
+                yield TypeRenderer.render(sup) + " :> " + TypeRenderer.render(captured) + " :> " + TypeRenderer.render(sub);
             }
             case "asSupertype" -> {
                 KType sup = ts.asSupertype(types.get(0), ((KType.ClassType) types.get(1)).symbol());
