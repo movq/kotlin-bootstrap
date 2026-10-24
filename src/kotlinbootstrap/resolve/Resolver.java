@@ -18,6 +18,7 @@ import kotlinbootstrap.ast.NamedType;
 import kotlinbootstrap.ast.Node;
 import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassId;
+import kotlinbootstrap.symbols.ClassKind;
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassifierSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
@@ -171,16 +172,16 @@ public final class Resolver {
     private ClassSymbol enterClass(Decl.Class c, FileContext file, KotlinClassSymbol outer) {
         ClassId id = outer == null ? new ClassId(file.packageName(), c.name()) : outer.id().nested(className(c));
         KotlinClassSymbol cls = new KotlinClassSymbol(this, c, id, outer, file);
-        boolean isExpect = c.modifiers().has(Modifier.EXPECT) || outer != null && outer.has(Modifier.EXPECT);
-        if (outer == null) {
-            if (isExpect) {
-                // Registered now, so that it can be found if there is no actual class.
-                table.addKotlinClassifier(id, cls);
-            } else {
-                addClassifier(id, cls, file, c);
-            }
-        } else {
+        boolean isExpect = c.modifiers().has(Modifier.EXPECT);
+        for (ClassSymbol o = outer; o != null && !isExpect; o = o.outer()) isExpect = o.has(Modifier.EXPECT);
+        if (isExpect) {
+            // Registered now, so that it can be found if there is no actual class.
             table.addKotlinClassifier(id, cls);
+        } else if (outer == null) {
+            addClassifier(id, cls, file, c);
+        } else {
+            // Replaces the nested class of an expected class.
+            table.replaceKotlinClassifier(id, cls);
         }
         for (Decl member : c.members()) {
             if (member instanceof Decl.Class nested) cls.addNested(enterClass(nested, file, cls));
@@ -282,7 +283,7 @@ public final class Resolver {
             returnType = () -> inferredType(file, f);
         }
         return new FunctionSymbol(f.name(), Origin.KOTLIN_SOURCE, owner,
-                visibility(f.modifiers(), Visibility.PUBLIC),
+                memberVisibility(f.modifiers()),
                 modality(f.modifiers(), cls, f.body() == null), keywords(f.modifiers()),
                 isStatic, f, tps::symbols,
                 () -> new CallableSymbol.Signature(
@@ -304,11 +305,8 @@ public final class Resolver {
         } else {
             type = () -> inferredType(file, p);
         }
-        Visibility visibility = visibility(p.modifiers(), Visibility.PUBLIC);
-        Visibility setterVisibility = null;
-        if (p.isVar()) {
-            setterVisibility = p.setter() != null ? visibility(p.setter().modifiers(), visibility) : visibility;
-        }
+        Visibility visibility = memberVisibility(p.modifiers());
+        Visibility setterVisibility = p.isVar() && p.setter() != null ? visibility(p.setter().modifiers(), visibility) : null;
         boolean hasBody = p.initializer() != null || p.delegate() != null
                 || p.getter() != null && p.getter().body() != null;
         return new PropertySymbol(p.name(), Origin.KOTLIN_SOURCE, owner, visibility,
@@ -342,11 +340,12 @@ public final class Resolver {
 
     // ==== Modifiers ====
 
-    /**
-     * The declared visibility, or the default. Overrides really inherit the
-     * overridden member's visibility by default; public is close enough
-     * until we generate code, where widening is allowed anyway.
-     */
+    /** The visibility of a function or property: null for an override, which inherits it. */
+    static Visibility memberVisibility(Modifiers m) {
+        return m.has(Modifier.OVERRIDE) ? visibility(m, null) : visibility(m, Visibility.PUBLIC);
+    }
+
+    /** The declared visibility, or the default. */
     static Visibility visibility(Modifiers m, Visibility defaultVisibility) {
         if (m.has(Modifier.PRIVATE)) return Visibility.PRIVATE;
         if (m.has(Modifier.PROTECTED)) return Visibility.PROTECTED;
@@ -361,8 +360,9 @@ public final class Resolver {
         if (m.has(Modifier.ABSTRACT)) return Modality.ABSTRACT;
         if (m.has(Modifier.OPEN)) return Modality.OPEN;
         if (m.has(Modifier.SEALED)) return Modality.SEALED;
-        if (cls != null && cls.isInterface()) return noBody ? Modality.ABSTRACT : Modality.OPEN;
-        if (m.has(Modifier.OVERRIDE) && cls != null && cls.modality() != Modality.FINAL) return Modality.OPEN;
+        if (cls != null && cls.kind() == ClassKind.INTERFACE) return noBody ? Modality.ABSTRACT : Modality.OPEN;
+        // Even in a final class, as kotlinc records it.
+        if (m.has(Modifier.OVERRIDE)) return Modality.OPEN;
         return Modality.FINAL;
     }
 

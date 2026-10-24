@@ -2,6 +2,7 @@ package kotlinbootstrap.resolve;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import kotlinbootstrap.ast.Annotation;
 import kotlinbootstrap.ast.Modifier;
@@ -172,6 +173,23 @@ public final class TypeResolver {
     KType enumSupertype(ClassSymbol cls) {
         return classType("kotlin.Enum", TypeArg.of(defaultType(cls)));
     }
+
+    /**
+     * The type of a vararg parameter seen from inside the function: a
+     * primitive or unsigned array for a non-null primitive or unsigned
+     * element type, {@code Array<out T>} otherwise.
+     */
+    public KType.ClassType varargArrayType(KType element) {
+        if (element instanceof KType.ClassType c && !c.nullable() && c.args().isEmpty()
+                && c.symbol().id().packageName().equals("kotlin")
+                && ARRAY_ELEMENTS.contains(c.symbol().name())) {
+            return classType("kotlin." + c.symbol().name() + "Array");
+        }
+        return classType("kotlin.Array", new TypeArg(Variance.OUT, element));
+    }
+
+    private static final Set<String> ARRAY_ELEMENTS = Set.of("Boolean", "Byte", "Short", "Int", "Long", "Char",
+            "Float", "Double", "UByte", "UShort", "UInt", "ULong");
 
     /** The type of {@code this} in a class: the class applied to its own type parameters. */
     public KType.ClassType defaultType(ClassSymbol cls) {

@@ -7,11 +7,7 @@ import java.util.function.Supplier;
 import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.types.KType;
 
-/**
- * A property, or a Java field.
- *
- * @see #setterVisibility() null for a {@code val}
- */
+/** A property, or a Java field. */
 public final class PropertySymbol extends CallableSymbol {
     private final boolean isVar;
     private final boolean isJavaField;
@@ -36,8 +32,9 @@ public final class PropertySymbol extends CallableSymbol {
         return isJavaField;
     }
 
+    /** Null for a {@code val}; that of the property if not given for a {@code var}. */
     public Visibility setterVisibility() {
-        return setterVisibility;
+        return isVar && setterVisibility == null ? visibility() : setterVisibility;
     }
 
     public KType type() {

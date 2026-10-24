@@ -1,8 +1,12 @@
 package kotlinbootstrap.resolve;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
+import java.util.function.Supplier;
 
+import kotlinbootstrap.ast.Annotation;
 import kotlinbootstrap.ast.Decl;
 import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.ast.Modifiers;
@@ -20,8 +24,10 @@ import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.SymbolTable;
 import kotlinbootstrap.symbols.TypeAliasSymbol;
 import kotlinbootstrap.symbols.TypeParamSymbol;
+import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.symbols.Visibility;
 import kotlinbootstrap.types.KType;
+import kotlinbootstrap.types.TypeArg;
 
 /** A class declared in Kotlin source. */
 public final class KotlinClassSymbol extends ClassSymbol {
@@ -159,9 +165,26 @@ public final class KotlinClassSymbol extends ClassSymbol {
                 case ANNOTATION_CLASS -> resolver.types().classType("kotlin.Annotation");
                 default -> resolver.types().any();
             });
+        } else if (kind() == ClassKind.ENUM_CLASS) {
+            result.addFirst(resolver.types().enumSupertype(this));
+        }
+        if (resolver.builtinClassifier(name()) == this && isSerializableInJava()) {
+            result.add(resolver.types().classType("java.io.Serializable"));
         }
         return result;
     }
+
+    /**
+     * Whether kotlinc adds {@code java.io.Serializable} to the supertypes
+     * of this builtin class, as in JvmBuiltInsSignatures: arrays, and the
+     * classes whose Java counterpart is serializable.
+     */
+    private boolean isSerializableInJava() {
+        return name().endsWith("Array") || SERIALIZABLE_BUILTINS.contains(name());
+    }
+
+    private static final Set<String> SERIALIZABLE_BUILTINS = Set.of("String", "Throwable", "Number", "Enum",
+            "Boolean", "Char", "Byte", "Short", "Int", "Long", "Float", "Double");
 
     private MemberScope buildMembers() {
         MemberScope scope = new MemberScope();
@@ -175,7 +198,7 @@ public final class KotlinClassSymbol extends ClassSymbol {
             for (Decl.Param p : ctor.params()) {
                 if (p.valOrVar() != Decl.ValOrVar.NONE) scope.add(constructorProperty(p));
             }
-        } else if (scope.constructors().isEmpty() && (kind() == ClassKind.CLASS || kind() == ClassKind.ENUM_CLASS)) {
+        } else if (scope.constructors().isEmpty() && kind() != ClassKind.INTERFACE && kind() != ClassKind.OBJECT) {
             scope.add(constructor(Modifiers.EMPTY, List.of(), decl));
         }
         for (Decl.EnumEntry e : decl.enumEntries()) {
@@ -184,7 +207,87 @@ public final class KotlinClassSymbol extends ClassSymbol {
                     Resolver.keywords(e.modifiers()), true, e, false, false, null, List::of,
                     () -> CallableSymbol.Signature.NONE, () -> type));
         }
+        addSynthesizedMembers(scope);
         return scope;
+    }
+
+    // ==== Synthesized members ====
+
+    /**
+     * The members kotlinc generates: componentN and copy for data classes,
+     * equals, hashCode and toString for data and value classes (unless
+     * declared), and the static values, valueOf and entries of enums.
+     */
+    private void addSynthesizedMembers(MemberScope scope) {
+        TypeResolver types = resolver.types();
+        if (has(Modifier.DATA) && decl.primaryConstructor() != null) {
+            List<Decl.Param> params = decl.primaryConstructor().params();
+            int n = 0;
+            for (Decl.Param p : params) {
+                if (p.valOrVar() == Decl.ValOrVar.NONE) continue;
+                PropertySymbol property = scope.properties(p.name()).getFirst();
+                scope.add(synthesized("component" + ++n, Visibility.PUBLIC, EnumSet.of(Modifier.OPERATOR), false, List::of,
+                        property::returnType));
+            }
+            FunctionSymbol ctor = scope.constructors().getFirst();
+            scope.add(synthesized("copy", copyVisibility(ctor), EnumSet.noneOf(Modifier.class), false, () -> {
+                List<ValueParamSymbol> copyParams = new ArrayList<>();
+                for (ValueParamSymbol p : ctor.signature().params()) {
+                    copyParams.add(new ValueParamSymbol(p.name(), p.type(), true, p.modifiers(), p.source()));
+                }
+                return copyParams;
+            }, () -> types.defaultType(this)));
+        }
+        if (has(Modifier.DATA) || has(Modifier.VALUE) || has(Modifier.INLINE)) {
+            if (!declaresFunction(scope, "equals", 1)) {
+                scope.add(synthesized("equals", Visibility.PUBLIC, EnumSet.of(Modifier.OPERATOR, Modifier.OVERRIDE), false,
+                        () -> List.of(new ValueParamSymbol("other", types.nullableAny(), false, Set.of(), null)),
+                        () -> types.classType("kotlin.Boolean")));
+            }
+            if (!declaresFunction(scope, "hashCode", 0)) {
+                scope.add(synthesized("hashCode", Visibility.PUBLIC, EnumSet.of(Modifier.OVERRIDE), false, List::of,
+                        () -> types.classType("kotlin.Int")));
+            }
+            if (!declaresFunction(scope, "toString", 0)) {
+                scope.add(synthesized("toString", Visibility.PUBLIC, EnumSet.of(Modifier.OVERRIDE), false, List::of,
+                        () -> types.classType("kotlin.String")));
+            }
+        }
+        if (kind() == ClassKind.ENUM_CLASS) {
+            scope.add(synthesized("values", Visibility.PUBLIC, EnumSet.noneOf(Modifier.class), true, List::of,
+                    () -> types.classType("kotlin.Array", TypeArg.of(types.defaultType(this)))));
+            scope.add(synthesized("valueOf", Visibility.PUBLIC, EnumSet.noneOf(Modifier.class), true,
+                    () -> List.of(new ValueParamSymbol("value", types.classType("kotlin.String"), false, Set.of(),
+                            null)),
+                    () -> types.defaultType(this)));
+            scope.add(new PropertySymbol("entries", Origin.SYNTHETIC, this, Visibility.PUBLIC, Modality.FINAL,
+                    Set.of(), true, decl, false, false, null, List::of, () -> CallableSymbol.Signature.NONE,
+                    () -> types.classType("kotlin.enums.EnumEntries", TypeArg.of(types.defaultType(this)))));
+        }
+    }
+
+    private FunctionSymbol synthesized(String name, Visibility visibility, Set<Modifier> modifiers, boolean isStatic,
+                                       Supplier<List<ValueParamSymbol>> params, Supplier<KType> returnType) {
+        Modality modality = modifiers.contains(Modifier.OVERRIDE) ? Modality.OPEN : Modality.FINAL;
+        return new FunctionSymbol(name, Origin.SYNTHETIC, this, visibility, modality, modifiers, isStatic,
+                decl, List::of, () -> new CallableSymbol.Signature(null, List.of(), params.get()), returnType);
+    }
+
+    /** The copy function is as visible as the constructor, unless the class opts out. */
+    private Visibility copyVisibility(FunctionSymbol ctor) {
+        for (Annotation a : decl.modifiers().annotations()) {
+            if (a.type().segments().getLast().name().equals("ExposedCopyVisibility")) return Visibility.PUBLIC;
+        }
+        return ctor.visibility();
+    }
+
+    private static boolean declaresFunction(MemberScope scope, String name, int params) {
+        for (FunctionSymbol f : scope.functions(name)) {
+            if (f.source() instanceof Decl.Function d && d.receiver() == null && d.params().size() == params) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void addMember(MemberScope scope, Decl member, Scope body, boolean isStatic) {
@@ -211,8 +314,8 @@ public final class KotlinClassSymbol extends ClassSymbol {
 
     private FunctionSymbol constructor(Modifiers modifiers, List<Decl.Param> params,
                                        Object source) {
-        Visibility defaultVisibility = kind() == ClassKind.ENUM_CLASS || modality() == Modality.SEALED
-                ? Visibility.PRIVATE : Visibility.PUBLIC;
+        Visibility defaultVisibility = kind() == ClassKind.ENUM_CLASS ? Visibility.PRIVATE
+                : modality() == Modality.SEALED ? Visibility.PROTECTED : Visibility.PUBLIC;
         Scope scope = bodyScope(true);
         return new FunctionSymbol(FunctionSymbol.CONSTRUCTOR_NAME, Origin.KOTLIN_SOURCE, this,
                 Resolver.visibility(modifiers, defaultVisibility), Modality.FINAL, Resolver.keywords(modifiers),
@@ -222,12 +325,15 @@ public final class KotlinClassSymbol extends ClassSymbol {
     }
 
     private PropertySymbol constructorProperty(Decl.Param p) {
-        Visibility visibility = Resolver.visibility(p.modifiers(), Visibility.PUBLIC);
+        Visibility visibility = Resolver.memberVisibility(p.modifiers());
         boolean isVar = p.valOrVar() == Decl.ValOrVar.VAR;
         Scope scope = bodyScope(true);
         return new PropertySymbol(p.name(), Origin.KOTLIN_SOURCE, this, visibility,
                 Resolver.modality(p.modifiers(), this, false), Resolver.keywords(p.modifiers()), false, p, isVar,
-                false, isVar ? visibility : null, List::of, () -> CallableSymbol.Signature.NONE,
-                () -> resolver.types().resolve(p.type(), scope, file));
+                false, null, List::of, () -> CallableSymbol.Signature.NONE,
+                () -> {
+                    KType type = resolver.types().resolve(p.type(), scope, file);
+                    return p.modifiers().has(Modifier.VARARG) ? resolver.types().varargArrayType(type) : type;
+                });
     }
 }

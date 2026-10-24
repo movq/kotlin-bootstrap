@@ -1,7 +1,6 @@
 package kotlinbootstrap.types;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.TypeParamSymbol;
@@ -36,13 +35,10 @@ public sealed interface KType {
                     : new ClassType(symbol, args, nullable, extensionFunction, contextParams);
         }
 
+
         @Override
         public String toString() {
-            String s = symbol.id().fqName();
-            if (!args.isEmpty()) s += args.stream().map(TypeArg::toString).collect(Collectors.joining(", ", "<", ">"));
-            if (extensionFunction) s = "@ExtensionFunctionType " + s;
-            if (contextParams > 0) s = "@ContextFunctionTypeParams(" + contextParams + ") " + s;
-            return nullable ? s + "?" : s;
+            return TypeRenderer.render(this);
         }
     }
 
@@ -52,9 +48,10 @@ public sealed interface KType {
             return nullable == this.nullable ? this : new TypeParamType(symbol, nullable);
         }
 
+
         @Override
         public String toString() {
-            return nullable ? symbol.name() + "?" : symbol.name();
+            return TypeRenderer.render(this);
         }
     }
 
@@ -70,9 +67,10 @@ public sealed interface KType {
             return nullable ? inner.withNullable(true) : this;
         }
 
+
         @Override
         public String toString() {
-            return inner.withNullable(false) + " & Any";
+            return TypeRenderer.render(this);
         }
     }
 
@@ -92,9 +90,10 @@ public sealed interface KType {
             return nullable ? upper.withNullable(true) : lower.withNullable(false);
         }
 
+
         @Override
         public String toString() {
-            return "(" + lower + ".." + upper + ")";
+            return TypeRenderer.render(this);
         }
     }
 }

@@ -24,7 +24,7 @@ KOTLINC_SHA256  := 7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e7
 KOTLINC_HOME    := tools/kotlinc-$(KOTLINC_VERSION)
 KOTLINC         := $(KOTLINC_HOME)/bin/kotlinc
 
-.PHONY: all clean test test-golden test-psi corpus update-golden fetch-kotlinc
+.PHONY: all clean test test-golden test-psi corpus update-golden fetch-kotlinc test-oracle
 
 all: $(JARFILE)
 
@@ -45,6 +45,16 @@ $(TEST_CLASSES)/.stamp: $(MAIN_CLASSES)/.stamp $(TEST_SRC)
 
 TEST_CP := $(MAIN_CLASSES):$(TEST_CLASSES)
 
+ORACLE_SRC     := $(shell find test-oracle -name '*.java')
+ORACLE_CLASSES := $(BUILD)/oracle-classes
+ORACLE_CP      := $(MAIN_CLASSES):$(KOTLINC_HOME)/lib/kotlin-stdlib.jar:$(KOTLINC_HOME)/lib/kotlin-reflect.jar
+
+$(ORACLE_CLASSES)/.stamp: $(MAIN_CLASSES)/.stamp $(KOTLINC_HOME)/.stamp $(ORACLE_SRC)
+	@rm -rf $(ORACLE_CLASSES)
+	@mkdir -p $(ORACLE_CLASSES)
+	$(JAVAC) $(JFLAGS) -cp $(ORACLE_CP) -d $(ORACLE_CLASSES) $(ORACLE_SRC)
+	@touch $@
+
 test: test-golden test-psi
 
 # Golden AST dumps under tests/parser.
@@ -62,6 +72,10 @@ test-psi: $(TEST_CLASSES)/.stamp
 # Parse every non-test-data .kt file in the Kotlin tree.
 corpus: $(TEST_CLASSES)/.stamp
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.CorpusTests $(KOTLIN_SRC)
+
+# Tests against the reference kotlinc; not part of `make test`.
+test-oracle: $(ORACLE_CLASSES)/.stamp
+	$(JAVA) -cp $(ORACLE_CP):$(ORACLE_CLASSES) kotlinbootstrap.oracle.StdlibSignatureOracle $(KOTLIN_SRC)
 
 fetch-kotlinc: $(KOTLINC_HOME)/.stamp
 

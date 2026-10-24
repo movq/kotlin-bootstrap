@@ -20,7 +20,7 @@ public abstract sealed class CallableSymbol implements Symbol permits FunctionSy
     private final String name;
     private final Origin origin;
     private final Symbol owner;
-    private final Visibility visibility;
+    private Visibility visibility;
     private final Modality modality;
     private final Set<Modifier> modifiers;
     private final boolean isStatic;
@@ -32,6 +32,8 @@ public abstract sealed class CallableSymbol implements Symbol permits FunctionSy
     /**
      * @param owner      the containing class, or the {@link PackageSymbol} of a
      *                   top-level declaration; null for a local declaration
+     * @param visibility null for an override without a visibility modifier,
+     *                   which has that of the member it overrides
      * @param isStatic   a Java static member
      * @param source     the declaring AST node or element
      * @param returnType for a property, its type
@@ -68,6 +70,10 @@ public abstract sealed class CallableSymbol implements Symbol permits FunctionSy
     }
 
     public Visibility visibility() {
+        if (visibility == null) {
+            List<CallableSymbol> overridden = Overrides.overridden(this);
+            visibility = overridden.isEmpty() ? Visibility.PUBLIC : overridden.getFirst().visibility();
+        }
         return visibility;
     }
 

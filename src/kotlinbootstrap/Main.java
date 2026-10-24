@@ -1,20 +1,14 @@
 package kotlinbootstrap;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Stream;
 
 import kotlinbootstrap.ast.AstPrinter;
-import kotlinbootstrap.ast.KtFile;
-import kotlinbootstrap.java.JavaSourceClasses;
-import kotlinbootstrap.java.JdkClasses;
 import kotlinbootstrap.resolve.ResolveException;
 import kotlinbootstrap.resolve.Resolver;
 import kotlinbootstrap.resolve.SignatureCompleter;
-import kotlinbootstrap.symbols.SymbolTable;
 import kotlinbootstrap.syntax.Parser;
 import kotlinbootstrap.syntax.SourceFile;
 import kotlinbootstrap.syntax.SyntaxError;
@@ -68,40 +62,12 @@ public final class Main {
             }
         }
         try {
-            SymbolTable table = new SymbolTable();
-            Resolver resolver = new Resolver(table);
-            table.addFinder(new JavaSourceClasses(table, sourceFiles(paths, ".java")));
-            table.addFinder(new JdkClasses(table, release));
-            resolver.enter(parseAll(sourceFiles(paths, ".kt")));
+            Resolver resolver = Frontend.load(paths, release);
             int count = SignatureCompleter.completeAll(resolver);
             System.out.println(resolver.files().size() + " files, " + count + " classifiers resolved");
         } catch (SyntaxError | ResolveException e) {
             System.err.println(e);
             System.exit(1);
         }
-    }
-
-    /**
-     * The files with the extension among the paths and under the directories
-     * among them, in a stable order.
-     */
-    public static List<Path> sourceFiles(List<Path> paths, String extension) throws IOException {
-        List<Path> result = new ArrayList<>();
-        for (Path path : paths) {
-            if (Files.isDirectory(path)) {
-                try (Stream<Path> files = Files.walk(path)) {
-                    files.filter(f -> f.toString().endsWith(extension)).sorted().forEach(result::add);
-                }
-            } else if (path.toString().endsWith(extension)) {
-                result.add(path);
-            }
-        }
-        return result;
-    }
-
-    public static List<KtFile> parseAll(List<Path> files) throws IOException {
-        List<KtFile> result = new ArrayList<>();
-        for (Path f : files) result.add(Parser.parse(SourceFile.read(f)));
-        return result;
     }
 }
