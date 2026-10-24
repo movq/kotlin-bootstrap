@@ -24,7 +24,7 @@ public final class Overrides {
     public static List<CallableSymbol> overridden(CallableSymbol member) {
         List<CallableSymbol> result = new ArrayList<>();
         if (member.owner() instanceof ClassSymbol cls && !member.isStatic()) {
-            collect(member, cls, Substitution.of(List.of(), List.of()), result, new HashSet<>());
+            collect(member, cls, Substitution.EMPTY, result, new HashSet<>());
         }
         return result;
     }
@@ -36,7 +36,7 @@ public final class Overrides {
             KType.ClassType supertype = (KType.ClassType) subst.apply(st);
             ClassSymbol sup = supertype.symbol();
             Substitution supSubst = supertype.args().size() == allTypeParams(sup).size()
-                    ? Substitution.of(allTypeParams(sup), supertype.args()) : Substitution.of(List.of(), List.of());
+                    ? Substitution.of(allTypeParams(sup), supertype.args()) : Substitution.EMPTY;
             boolean found = false;
             for (CallableSymbol candidate : candidates(sup, member)) {
                 if (matches(member, candidate, supSubst)) {
@@ -106,7 +106,7 @@ public final class Overrides {
             case KType.TypeParamType ta -> b instanceof KType.TypeParamType tb && ta.symbol() == tb.symbol();
             case KType.DefinitelyNotNull da -> b instanceof KType.DefinitelyNotNull db
                     && sameType(da.inner(), db.inner());
-            case KType.Flexible f -> throw new AssertionError();
+            default -> a.equals(b);
         };
     }
 

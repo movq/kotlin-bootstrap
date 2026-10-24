@@ -24,23 +24,30 @@ import kotlinbootstrap.types.TypeArg;
 import kotlinbootstrap.types.Variance;
 
 /**
- * The function interfaces, which the stdlib does not declare:
+ * The builtin classes that the stdlib does not declare. The function interfaces:
  * <pre>
  * interface FunctionN&lt;in P1, ..., in PN, out R&gt; : Function&lt;R&gt; {
  *     operator fun invoke(p1: P1, ..., pN: PN): R
  * }
  * </pre>
  * and likewise {@code kotlin.coroutines.SuspendFunctionN}, with a suspend {@code invoke}.
+ * And {@code kotlin.Cloneable}, which {@code java.lang.Cloneable} maps to:
+ * <pre>
+ * interface Cloneable {
+ *     protected open fun clone(): Any
+ * }
+ * </pre>
  */
-final class FunctionClasses implements ClassFinder {
+final class SyntheticClasses implements ClassFinder {
     private final Resolver resolver;
 
-    FunctionClasses(Resolver resolver) {
+    SyntheticClasses(Resolver resolver) {
         this.resolver = resolver;
     }
 
     @Override
     public ClassSymbol findClass(ClassId id) {
+        if (id.packageName().equals("kotlin") && id.relativeName().equals("Cloneable")) return new CloneableClass(id);
         String prefix = switch (id.packageName()) {
             case "kotlin" -> "Function";
             case "kotlin.coroutines" -> "SuspendFunction";
@@ -98,6 +105,36 @@ final class FunctionClasses implements ClassFinder {
         @Override
         public List<KType> supertypes() {
             return List.of(resolver.types().classType("kotlin.Function", TypeArg.of(type(typeParams.getLast()))));
+        }
+
+        @Override
+        public MemberScope members() {
+            return members.get();
+        }
+    }
+
+    private final class CloneableClass extends ClassSymbol {
+        private final Lazy<MemberScope> members;
+
+        CloneableClass(ClassId id) {
+            super(id, null, ClassKind.INTERFACE, Origin.SYNTHETIC, Visibility.PUBLIC, Modality.ABSTRACT, Set.of());
+            this.members = new Lazy<>(() -> {
+                MemberScope scope = new MemberScope();
+                scope.add(new FunctionSymbol("clone", Origin.SYNTHETIC, this, Visibility.PROTECTED, Modality.OPEN,
+                        Set.of(), false, null, List::of, () -> CallableSymbol.Signature.NONE,
+                        () -> resolver.types().any()));
+                return scope;
+            });
+        }
+
+        @Override
+        public List<TypeParamSymbol> typeParams() {
+            return List.of();
+        }
+
+        @Override
+        public List<KType> supertypes() {
+            return List.of(resolver.types().any());
         }
 
         @Override

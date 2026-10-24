@@ -57,7 +57,7 @@ public final class Resolver {
     public Resolver(SymbolTable table) {
         this.table = table;
         this.types = new TypeResolver(this);
-        table.addFinder(new FunctionClasses(this));
+        table.addFinder(new SyntheticClasses(this));
     }
 
     public SymbolTable table() {

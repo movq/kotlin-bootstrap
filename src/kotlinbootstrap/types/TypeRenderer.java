@@ -18,8 +18,12 @@ public final class TypeRenderer {
         return switch (type) {
             case KType.ClassType c -> renderClassType(c);
             case KType.TypeParamType t -> t.nullable() ? t.symbol().name() + "?" : t.symbol().name();
-            case KType.DefinitelyNotNull d -> d.inner().symbol().name() + " & Any";
+            case KType.DefinitelyNotNull d -> render(d.inner()) + " & Any";
             case KType.Flexible f -> renderFlexible(f);
+            case KType.TypeVariableType v -> v.nullable() ? v.variable().name() + "?" : v.variable().name();
+            case KType.Intersection i -> String.join(" & ", i.components().stream().map(TypeRenderer::render).toList());
+            case KType.Captured c -> "Captured(" + render(c.constructor().projection()) + ")" + (c.nullable() ? "?" : "");
+            case KType.IntegerLiteral l -> "ILT(" + l.value() + ")" + (l.nullable() ? "?" : "");
         };
     }
 
