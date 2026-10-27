@@ -28,6 +28,15 @@ record Context(FileContext file, Scope typeScope, List<LocalScope> locals, List<
     }
 
     /**
+     * A scope: of the file's imports or package, or of statics and nested
+     * classes of a class.
+     *
+     * @param staticOwner the class whose statics these are, if any
+     */
+    record ScopeElement(TowerScope scope, ClassSymbol staticOwner) implements TowerElement {
+    }
+
+    /**
      * An implicit receiver: of a class body, or of a function or lambda with
      * an extension receiver.
      *
@@ -69,6 +78,16 @@ record Context(FileContext file, Scope typeScope, List<LocalScope> locals, List<
             if (v != null) return v;
         }
         return null;
+    }
+
+    /** The local scopes, innermost first, as the levels Local(0), Local(1)... of the tower. */
+    List<LocalScope> localsInnermostFirst() {
+        return locals.reversed();
+    }
+
+    /** The non-local elements of the tower, innermost first, as the levels of depth 0, 1... */
+    List<TowerElement> elementsInnermostFirst() {
+        return elements.reversed();
     }
 
     /** The implicit receivers, innermost first. */

@@ -21,7 +21,7 @@ public final class FileContext {
      * is {@code kotlin.Array} even with {@code import java.lang.reflect.*}.
      * See kotlinc's JvmDefaultImportsProvider and computeImportingScopes.
      */
-    private static final List<String> DEFAULT_IMPORTS = List.of(
+    public static final List<String> DEFAULT_IMPORTS = List.of(
             "kotlin", "kotlin.annotation", "kotlin.collections", "kotlin.comparisons", "kotlin.io",
             "kotlin.ranges", "kotlin.sequences", "kotlin.text", "kotlin.jvm");
 

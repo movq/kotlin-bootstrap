@@ -62,29 +62,41 @@ public final class Overrides {
     }
 
     private static boolean matches(CallableSymbol member, CallableSymbol candidate, Substitution classSubst) {
-        List<TypeParamSymbol> ours = member.typeParams();
-        List<TypeParamSymbol> theirs = candidate.typeParams();
+        return sameSignature(member, Substitution.EMPTY, candidate, classSubst);
+    }
+
+    /**
+     * Whether two members of the same kind have the same receiver and
+     * parameter types, each with its class's type parameters substituted.
+     */
+    public static boolean sameSignature(CallableSymbol a, Substitution aSubst, CallableSymbol b, Substitution bSubst) {
+        if ((a instanceof FunctionSymbol) != (b instanceof FunctionSymbol)) return false;
+        List<TypeParamSymbol> ours = a.typeParams();
+        List<TypeParamSymbol> theirs = b.typeParams();
         if (ours.size() != theirs.size()) return false;
         List<TypeArg> oursAsArgs = new ArrayList<>();
         for (TypeParamSymbol tp : ours) oursAsArgs.add(TypeArg.of(new KType.TypeParamType(tp, false)));
         Substitution fnSubst = Substitution.of(theirs, oursAsArgs);
 
-        CallableSymbol.Signature a = member.signature();
-        CallableSymbol.Signature b = candidate.signature();
-        if ((a.receiver() == null) != (b.receiver() == null)) return false;
-        if (a.params().size() != b.params().size() || a.contextParams().size() != b.contextParams().size()) {
+        CallableSymbol.Signature sa = a.signature();
+        CallableSymbol.Signature sb = b.signature();
+        if ((sa.receiver() == null) != (sb.receiver() == null)) return false;
+        if (sa.params().size() != sb.params().size() || sa.contextParams().size() != sb.contextParams().size()) {
             return false;
         }
-        if (a.receiver() != null && !sameType(a.receiver(), substitute(b.receiver(), classSubst, fnSubst))) {
+        if (sa.receiver() != null
+                && !sameType(aSubst.apply(sa.receiver()), substitute(sb.receiver(), bSubst, fnSubst))) {
             return false;
         }
-        for (int i = 0; i < a.contextParams().size(); i++) {
-            if (!sameType(a.contextParams().get(i), substitute(b.contextParams().get(i), classSubst, fnSubst))) {
+        for (int i = 0; i < sa.contextParams().size(); i++) {
+            if (!sameType(aSubst.apply(sa.contextParams().get(i)),
+                    substitute(sb.contextParams().get(i), bSubst, fnSubst))) {
                 return false;
             }
         }
-        for (int i = 0; i < a.params().size(); i++) {
-            if (!sameType(a.params().get(i).type(), substitute(b.params().get(i).type(), classSubst, fnSubst))) {
+        for (int i = 0; i < sa.params().size(); i++) {
+            if (!sameType(aSubst.apply(sa.params().get(i).type()),
+                    substitute(sb.params().get(i).type(), bSubst, fnSubst))) {
                 return false;
             }
         }

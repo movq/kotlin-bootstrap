@@ -17,6 +17,7 @@ import kotlinbootstrap.resolve.KotlinClassSymbol;
 import kotlinbootstrap.resolve.ResolveException;
 import kotlinbootstrap.resolve.Resolver;
 import kotlinbootstrap.symbols.CallableSymbol;
+import kotlinbootstrap.symbols.ClassKind;
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassifierSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
@@ -41,11 +42,15 @@ public final class Checker {
     /** Checked bodies by AST node: a {@link CheckedFunction} or, for an initializer, a {@link TExpr}. */
     private final Map<Object, Object> results = new HashMap<>();
     private final Map<Object, RuntimeException> failures = new HashMap<>();
+    private final MemberScopes memberScopes;
+    private final Map<FileContext, List<Context.TowerElement>> importingScopes = new HashMap<>();
+    private final Map<ClassSymbol, ClassContexts> classContexts = new HashMap<>();
 
     public Checker(Resolver resolver) {
         this.resolver = resolver;
         this.ts = new TypeSystem(resolver.table());
         this.synthetic = new SyntheticCalls(ts, new ArgumentChecker(ts));
+        this.memberScopes = new MemberScopes(ts, resolver.types());
         resolver.setBodyTyper(this::inferredType);
     }
 
@@ -59,6 +64,10 @@ public final class Checker {
 
     SyntheticCalls synthetic() {
         return synthetic;
+    }
+
+    MemberScopes memberScopes() {
+        return memberScopes;
     }
 
     // ==== All declarations ====
@@ -233,30 +242,93 @@ public final class Checker {
         return new BodyChecker(this, dc.file().file().source());
     }
 
-    /**
-     * The context of a declaration's body: the implicit receivers of the
-     * classes it is in, outermost first. The companion object comes before
-     * its class, which takes priority.
-     */
+    /** The context of a declaration's body: the tower of the file and the classes it is in. */
     private Context context(Resolver.DeclarationContext dc) {
-        List<Context.TowerElement> elements = new ArrayList<>();
-        if (dc.cls() != null) addReceivers(dc.cls(), true, elements);
-        return new Context(dc.file(), dc.scope(), List.of(), List.copyOf(elements), null, null);
+        List<Context.TowerElement> elements = dc.cls() != null ? classContexts(dc.cls()).regular() : importing(dc.file());
+        return new Context(dc.file(), dc.scope(), List.of(), elements, null, null);
     }
 
-    // TODO: the full tower: static scopes of classes and their supertypes' companions
-    private void addReceivers(ClassSymbol cls, boolean withInstance, List<Context.TowerElement> elements) {
-        if (cls.outer() != null) addReceivers(cls.outer(), withInstance && cls.isInner(), elements);
+    // ==== Towers ====
+
+    private List<Context.TowerElement> importing(FileContext file) {
+        return importingScopes.computeIfAbsent(file, f -> ImportingScopes.of(f, resolver, memberScopes).stream()
+                .map(s -> (Context.TowerElement) new Context.ScopeElement(s, null)).toList());
+    }
+
+    /**
+     * The towers in a class body, outermost first, as FIR's
+     * FirRegularTowerDataContexts: for members; for nested classes, which
+     * have no instance of the class, unless it is an object; and for the
+     * companion object, which is not its own receiver as the companion.
+     */
+    private record ClassContexts(List<Context.TowerElement> regular, List<Context.TowerElement> forNestedClasses,
+                                 List<Context.TowerElement> forCompanionObject) {
+    }
+
+    /** As FIR's withScopesForClass and collectTowerDataElementsForClass. */
+    private ClassContexts classContexts(ClassSymbol cls) {
+        ClassContexts cached = classContexts.get(cls);
+        if (cached != null) return cached;
+        List<Context.TowerElement> base;
+        if (cls.outer() == null) {
+            if (cls.isLocal()) throw new IllegalStateException("Local classes are not supported yet: " + cls);
+            base = importing(((KotlinClassSymbol) cls).file());
+        } else {
+            ClassContexts outer = classContexts(cls.outer());
+            base = cls.isInner() ? outer.regular()
+                    : cls.has(Modifier.COMPANION) ? outer.forCompanionObject() : outer.forNestedClasses();
+        }
+        // Superclasses' statics and companions, the nearest innermost.
+        List<Context.TowerElement> supers = new ArrayList<>();
+        for (ClassSymbol sup : superclasses(cls)) {
+            supers.add(new Context.ScopeElement(new TowerScope.ClassStatics(sup, memberScopes), sup));
+            ClassSymbol companion = sup.companion();
+            if (companion != null) supers.add(receiver(companion, null));
+        }
+        List<Context.TowerElement> withSupers = new ArrayList<>(base);
+        withSupers.addAll(supers.reversed());
+
         ClassSymbol companion = cls.companion();
+        List<Context.TowerElement> staticScopes = new ArrayList<>();
         if (companion != null) {
-            elements.add(new Context.ImplicitReceiver(resolver.types().defaultType(companion), companion,
-                    companion.name()));
+            staticScopes.add(new Context.ScopeElement(new TowerScope.ClassStatics(companion, memberScopes), null));
         }
-        // A companion object is a receiver already as its outer class's companion.
-        boolean added = !elements.isEmpty() && elements.getLast() instanceof Context.ImplicitReceiver r && r.owner() == cls;
-        if ((withInstance || cls.isObject()) && !added) {
-            elements.add(new Context.ImplicitReceiver(resolver.types().defaultType(cls), cls, cls.name()));
+        staticScopes.add(new Context.ScopeElement(new TowerScope.ClassStatics(cls, memberScopes), cls));
+
+        List<Context.TowerElement> statics = new ArrayList<>(withSupers);
+        statics.addAll(staticScopes);
+        List<Context.TowerElement> staticsAndCompanion = new ArrayList<>(withSupers);
+        if (companion != null) staticsAndCompanion.add(receiver(companion, null));
+        staticsAndCompanion.addAll(staticScopes);
+        List<Context.TowerElement> regular = new ArrayList<>(staticsAndCompanion);
+        regular.add(receiver(cls, cls.name()));
+
+        boolean singleton = cls.isObject() || cls.kind() == ClassKind.ENUM_ENTRY;
+        ClassContexts result = new ClassContexts(List.copyOf(regular),
+                singleton ? List.copyOf(regular) : List.copyOf(staticsAndCompanion), List.copyOf(statics));
+        classContexts.put(cls, result);
+        return result;
+    }
+
+    private Context.ImplicitReceiver receiver(ClassSymbol cls, String label) {
+        return new Context.ImplicitReceiver(resolver.types().defaultType(cls), cls, label);
+    }
+
+    /** The superclasses, nearest first, not including interfaces (FIR's lookupSuperTypes without interfaces). */
+    private static List<ClassSymbol> superclasses(ClassSymbol cls) {
+        List<ClassSymbol> result = new ArrayList<>();
+        for (ClassSymbol c = cls; c != null; ) {
+            ClassSymbol next = null;
+            for (KType st : c.supertypes()) {
+                if (st instanceof KType.ClassType t && !t.symbol().isInterface() && !result.contains(t.symbol())) {
+                    next = t.symbol();
+                    break;
+                }
+            }
+            if (next != null) result.add(next);
+            c = next;
         }
+        return result;
     }
 
     // ==== Results ====

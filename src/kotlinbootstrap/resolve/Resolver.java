@@ -191,7 +191,7 @@ public final class Resolver {
             "kotlin", "kotlin.collections", "kotlin.ranges", "kotlin.annotation");
 
     /** A builtin class by short name, or null. */
-    ClassifierSymbol builtinClassifier(String name) {
+    public ClassifierSymbol builtinClassifier(String name) {
         return builtinClassifiers.get(name);
     }
 
@@ -240,7 +240,7 @@ public final class Resolver {
     }
 
     /** For a star import {@code path.*}: the classifier called name in the package or class. */
-    ClassifierSymbol findInPackageOrClass(List<String> path, String name) {
+    public ClassifierSymbol findInPackageOrClass(List<String> path, String name) {
         String pkg = String.join(".", path);
         ClassifierSymbol c = table.packageExists(pkg) ? table.findClassifier(new ClassId(pkg, name)) : null;
         if (c != null) return c;
