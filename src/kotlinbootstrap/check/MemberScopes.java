@@ -205,7 +205,7 @@ final class MemberScopes {
     }
 
     /** All the members a member overrides, directly or not. */
-    private Set<CallableSymbol> overridden(CallableSymbol member) {
+    Set<CallableSymbol> overridden(CallableSymbol member) {
         Set<CallableSymbol> cached = overridden.get(member);
         if (cached != null) return cached;
         Set<CallableSymbol> result = new HashSet<>();

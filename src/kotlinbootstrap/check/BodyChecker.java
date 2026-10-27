@@ -1,16 +1,26 @@
 package kotlinbootstrap.check;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.function.Function;
 
 import kotlinbootstrap.ast.Decl;
 import kotlinbootstrap.ast.Expr;
 import kotlinbootstrap.ast.Stmt;
 import kotlinbootstrap.ast.TypeRef;
+import kotlinbootstrap.ast.ValueArg;
 import kotlinbootstrap.infer.ConstraintSystem;
+import kotlinbootstrap.symbols.ClassKind;
+import kotlinbootstrap.symbols.ClassSymbol;
+import kotlinbootstrap.symbols.ClassifierSymbol;
+import kotlinbootstrap.symbols.Modality;
+import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.syntax.SourceFile;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeApproximator;
+import kotlinbootstrap.types.TypeArg;
 import kotlinbootstrap.types.TypeSystem;
 import kotlinbootstrap.types.Types;
 
@@ -24,12 +34,14 @@ final class BodyChecker {
     private final TypeSystem ts;
     private final SourceFile source;
     private final CallCompleter completer;
+    private final CallResolver calls;
 
     BodyChecker(Checker owner, SourceFile source) {
         this.owner = owner;
         this.ts = owner.ts();
         this.source = source;
         this.completer = new CallCompleter(ts, this);
+        this.calls = new CallResolver(owner, completer);
     }
 
     CheckException error(int pos, String message) {
@@ -49,7 +61,7 @@ final class BodyChecker {
 
     TExpr expr(Expr e, Context ctx, Mode mode) {
         return switch (e) {
-            case Expr.IntLit l -> integerLiteral(l, mode);
+            case Expr.IntLit l -> integerLiteral(l, false, mode);
             case Expr.FloatLit l -> floatLiteral(l);
             case Expr.CharLit l -> new TExpr.Const(l.pos(), type("kotlin.Char"), l.value());
             case Expr.BoolLit l -> new TExpr.Const(l.pos(), bool(), l.value());
@@ -57,7 +69,14 @@ final class BodyChecker {
             case Expr.StringTemplate s -> stringTemplate(s, ctx);
             case Expr.Paren p -> expr(p.expr(), ctx, mode);
             case Expr.Annotated a -> expr(a.expr(), ctx, mode);
-            case Expr.Name n -> name(n, ctx);
+            case Expr.Name n -> name(n, ctx, mode);
+            case Expr.Member m -> member(m, ctx, mode);
+            case Expr.Call c -> call(c, ctx, mode);
+            case Expr.InfixCall i -> operatorCall(i.pos(), i.name(), receiver(i.left(), ctx),
+                    List.of(i.right()), TExpr.CallOrigin.INFIX, ctx, mode);
+            case Expr.Index i -> operatorCall(i.pos(), "get", receiver(i.receiver(), ctx), i.indices(),
+                    TExpr.CallOrigin.OPERATOR, ctx, mode);
+            case Expr.Prefix p -> prefix(p, ctx, mode);
             case Expr.This t -> thisExpr(t, ctx);
             case Expr.Block b -> block(b.pos(), b.statements(), ctx, mode);
             case Expr.DeclExpr d -> declaration(d.decl(), ctx);
@@ -66,8 +85,11 @@ final class BodyChecker {
             case Expr.Try t -> tryExpr(t, ctx, mode);
             case Expr.Binary b -> binary(b, ctx, mode);
             case Expr.Postfix p when p.op() == Expr.PostfixOp.NOT_NULL -> checkNotNull(p, ctx, mode);
-            case Expr.Is i -> new TExpr.TypeCheck(i.pos(), bool(), expr(i.expr(), ctx, Mode.INDEPENDENT),
-                    resolveType(i.type(), ctx), i.negated());
+            case Expr.Is i -> {
+                TExpr operand = expr(i.expr(), ctx, Mode.INDEPENDENT);
+                yield new TExpr.TypeCheck(i.pos(), bool(), operand, typeOperand(i.type(), operand.type(), ctx),
+                        i.negated());
+            }
             case Expr.As a -> cast(a, ctx);
             case Expr.Assign a -> assign(a, ctx);
             case Expr.Return r -> returnExpr(r, ctx);
@@ -87,8 +109,10 @@ final class BodyChecker {
     /**
      * An integer literal: without a suffix, an integer literal type, which
      * becomes a definite type at once unless the literal is an argument.
+     *
+     * @param negate for {@code -1}, which is a literal rather than a call when without a suffix
      */
-    private TExpr integerLiteral(Expr.IntLit l, Mode mode) {
+    private TExpr integerLiteral(Expr.IntLit l, boolean negate, Mode mode) {
         String text = l.text().replace("_", "");
         boolean unsignedLong = text.endsWith("ul") || text.endsWith("uL") || text.endsWith("Ul") || text.endsWith("UL");
         boolean unsigned = !unsignedLong && (text.endsWith("u") || text.endsWith("U"));
@@ -110,6 +134,7 @@ final class BodyChecker {
         }
         if (unsignedLong) return new TExpr.Const(l.pos(), type("kotlin.ULong"), value);
         if (isLong) return new TExpr.Const(l.pos(), type("kotlin.Long"), value);
+        if (negate) value = -value;
         KType literalType = integerLiteralType(value, unsigned);
         if (literalType instanceof KType.IntegerLiteral ilt) {
             literalType = switch (mode) {
@@ -169,11 +194,10 @@ final class BodyChecker {
 
     // ==== Names ====
 
-    private TExpr name(Expr.Name n, Context ctx) {
+    private TExpr name(Expr.Name n, Context ctx, Mode mode) {
         LocalVariable v = ctx.findLocal(n.name());
         if (v != null) return new TExpr.LocalGet(n.pos(), v.type(), v);
-        // TODO: properties and objects through the tower
-        throw error(n.pos(), "Unresolved reference " + n.name());
+        return completer.completeCall(resolved(variable(n.pos(), n.name(), null), ctx), mode);
     }
 
     private TExpr thisExpr(Expr.This t, Context ctx) {
@@ -182,6 +206,155 @@ final class BodyChecker {
         }
         throw error(t.pos(), t.label() == null ? "'this' is not defined in this context"
                 : "Unresolved label " + t.label());
+    }
+
+    // ==== Calls ====
+
+    private static CallInfo variable(int pos, String name, CallInfo.Receiver receiver) {
+        return new CallInfo(CallInfo.Kind.VARIABLE, name, receiver, List.of(), List.of(), TExpr.CallOrigin.PLAIN,
+                false, pos);
+    }
+
+    private static CallInfo function(int pos, String name, CallInfo.Receiver receiver, List<CallInfo.Argument> args,
+                                     List<TypeArg> typeArgs, TExpr.CallOrigin origin) {
+        return new CallInfo(CallInfo.Kind.FUNCTION, name, receiver, args, typeArgs, origin, false, pos);
+    }
+
+    /** The candidate a call resolves to, or an error if none or more than one. */
+    private Candidate resolved(CallInfo info, Context ctx) {
+        return resolved(info, calls.resolve(info, ctx));
+    }
+
+    private Candidate resolved(CallInfo info, CallResolver.Result result) {
+        List<Candidate> candidates = result.candidates();
+        if (result.success() && candidates.size() == 1) return candidates.getFirst();
+        if (candidates.isEmpty()) throw error(info.pos(), "Unresolved reference " + info.name());
+        if (result.success()) throw error(info.pos(), "Ambiguous call of " + info.name() + ": " + candidates);
+        throw error(info.pos(), "No applicable " + info.name() + ": " + candidates);
+    }
+
+    /** {@code a.b} or {@code a?.b} as a value. */
+    private TExpr member(Expr.Member m, Context ctx, Mode mode) {
+        return onReceiver(m.pos(), receiver(m.receiver(), ctx), m.safe(),
+                r -> completer.completeCall(resolved(variable(m.pos(), m.name(), r), ctx), mode));
+    }
+
+    private TExpr call(Expr.Call c, Context ctx, Mode mode) {
+        List<TypeArg> typeArgs = typeArguments(c.typeArgs(), ctx);
+        return switch (c.callee()) {
+            case Expr.Name n -> completer.completeCall(resolved(function(c.pos(), n.name(), null,
+                    arguments(c.args(), c.lambdas(), ctx), typeArgs, TExpr.CallOrigin.PLAIN), ctx), mode);
+            case Expr.Member m -> {
+                CallInfo.Receiver receiver = receiver(m.receiver(), ctx);
+                List<CallInfo.Argument> args = arguments(c.args(), c.lambdas(), ctx);
+                yield onReceiver(m.pos(), receiver, m.safe(), r -> completer.completeCall(
+                        resolved(function(c.pos(), m.name(), r, args, typeArgs, TExpr.CallOrigin.PLAIN), ctx), mode));
+            }
+            default -> {
+                // (f)(x): the invoke of a value.
+                TExpr callee = expr(c.callee(), ctx, Mode.RECEIVER);
+                CallInfo info = new CallInfo(CallInfo.Kind.FUNCTION, "invoke", new CallInfo.ValueReceiver(callee),
+                        arguments(c.args(), c.lambdas(), ctx), typeArgs, TExpr.CallOrigin.PLAIN, true, c.pos());
+                yield completer.completeCall(resolved(info, ctx), mode);
+            }
+        };
+    }
+
+    /** The arguments of a call, checked without completing their calls. */
+    private List<CallInfo.Argument> arguments(List<ValueArg> args, List<Expr> lambdas, Context ctx) {
+        List<CallInfo.Argument> result = new ArrayList<>();
+        for (ValueArg a : args) {
+            result.add(new CallInfo.Argument(expr(a.value(), ctx, Mode.DEPENDENT), a.name(), a.spread(), false));
+        }
+        for (Expr l : lambdas) result.add(new CallInfo.Argument(expr(l, ctx, Mode.DEPENDENT), null, false, true));
+        return result;
+    }
+
+    /** Explicit type arguments; {@code _} is null, to be inferred. */
+    private List<TypeArg> typeArguments(List<TypeRef.TypeArg> args, Context ctx) {
+        List<TypeArg> result = new ArrayList<>();
+        for (TypeRef.TypeArg a : args) {
+            boolean underscore = a.type() instanceof TypeRef.Simple t && t.segments().size() == 1
+                    && t.segments().getFirst().name().equals("_") && t.segments().getFirst().args().isEmpty();
+            if (a.type() == null) throw error(a.pos(), "Projections are not allowed as type arguments of a call");
+            result.add(underscore ? null : TypeArg.of(resolveType(a.type(), ctx)));
+        }
+        return result;
+    }
+
+    /**
+     * A call on a receiver; for a safe call, on the receiver's value in a
+     * variable, which the selector sees as not null.
+     */
+    private TExpr onReceiver(int pos, CallInfo.Receiver receiver, boolean safe,
+                             Function<CallInfo.Receiver, TExpr> selector) {
+        if (!safe) return selector.apply(receiver);
+        if (!(receiver instanceof CallInfo.ValueReceiver v)) throw error(pos, "A safe call needs a value as receiver");
+        LocalVariable subject = new LocalVariable("<safe>", Types.makeDefinitelyNotNull(v.value().type()),
+                LocalVariable.Kind.TEMPORARY, false, null);
+        TExpr result = selector.apply(new CallInfo.ValueReceiver(new TExpr.LocalGet(pos, subject.type(), subject)));
+        KType type = TExprs.isStatement(result) ? result.type() : Types.makeNullable(result.type());
+        return new TExpr.SafeCall(pos, type, v.value(), subject, result);
+    }
+
+    /** The receiver of a member access or call: a value, {@code super}, or a class or package as a qualifier. */
+    private CallInfo.Receiver receiver(Expr e, Context ctx) {
+        return switch (e) {
+            case Expr.Super s -> superReceiver(s, ctx);
+            case Expr.Name n when ctx.findLocal(n.name()) == null -> qualifiedName(n.pos(), n.name(), null, ctx);
+            case Expr.Member m when !m.safe() -> qualifiedName(m.pos(), m.name(), receiver(m.receiver(), ctx), ctx);
+            default -> new CallInfo.ValueReceiver(expr(e, ctx, Mode.RECEIVER));
+        };
+    }
+
+    /**
+     * A name as a receiver: a value, or a class (with its object or
+     * companion object, if any) or package, as FIR's resolved qualifiers.
+     */
+    private CallInfo.Receiver qualifiedName(int pos, String name, CallInfo.Receiver receiver, Context ctx) {
+        CallInfo info = variable(pos, name, receiver);
+        CallResolver.Result result = calls.resolve(info, ctx);
+        Applicability best = Applicability.HIDDEN;
+        for (Candidate c : result.candidates()) {
+            if (c.applicability().compareTo(best) > 0) best = c.applicability();
+        }
+        for (Candidate c : result.candidates()) {
+            if (c.symbol instanceof ClassifierSymbol classifier && c.applicability() == best
+                    && (result.success() || best == Applicability.K2_NO_COMPANION_OBJECT)) {
+                TExpr value = result.success() ? completer.completeCall(c, Mode.RECEIVER) : null;
+                return new CallInfo.Qualifier(pos, null, classifier, List.of(), value);
+            }
+        }
+        if (!result.success()) {
+            String pkg = switch (receiver) {
+                case null -> name;
+                case CallInfo.Qualifier q when q.classifier() == null -> q.packageName() + "." + name;
+                default -> null;
+            };
+            if (pkg != null && ts.table().packageExists(pkg)) {
+                return new CallInfo.Qualifier(pos, pkg, null, List.of(), null);
+            }
+        }
+        return new CallInfo.ValueReceiver(completer.completeCall(resolved(info, result), Mode.RECEIVER));
+    }
+
+    private CallInfo.Receiver superReceiver(Expr.Super s, Context ctx) {
+        for (Context.ImplicitReceiver r : ctx.receivers()) {
+            if (!(r.owner() instanceof ClassSymbol cls) || s.label() != null && !s.label().equals(r.label())) continue;
+            List<KType> supertypes = cls.supertypes();
+            KType supertype;
+            if (s.qualifier() != null) {
+                KType written = resolveType(s.qualifier(), ctx);
+                supertype = supertypes.stream()
+                        .filter(t -> t instanceof KType.ClassType c && written instanceof KType.ClassType w
+                                && c.symbol() == w.symbol())
+                        .findFirst().orElseThrow(() -> error(s.pos(), written + " is not a supertype"));
+            } else {
+                supertype = supertypes.size() == 1 ? supertypes.getFirst() : ts.intersect(supertypes);
+            }
+            return new CallInfo.SuperReceiver(new TExpr.This(s.pos(), r.type(), cls, false), supertype);
+        }
+        throw error(s.pos(), "'super' is not allowed here");
     }
 
     // ==== Blocks and declarations ====
@@ -320,7 +493,6 @@ final class BodyChecker {
         }
         if (w.entries().isEmpty()) return new TExpr.When(w.pos(), unit(), subject, List.of(), false);
 
-        boolean exhaustive = isExhaustive(w, subjectVariable);
         Mode branchMode = branchMode(w.entries().size(), mode);
         List<TExpr> conditions = new ArrayList<>();
         List<TExpr> bodies = new ArrayList<>();
@@ -328,6 +500,7 @@ final class BodyChecker {
             conditions.add(whenCondition(entry, subjectVariable, inner));
             bodies.add(branch(entry.pos(), entry.body(), inner, branchMode));
         }
+        boolean exhaustive = isExhaustive(w, subjectVariable, conditions);
         TExpr finalSubject = subject;
         if (branchMode == Mode.INDEPENDENT) {
             return new TExpr.When(w.pos(), exhaustive ? bodies.getFirst().type() : unit(), subject,
@@ -355,7 +528,8 @@ final class BodyChecker {
                 case Expr.ExprCondition e -> equality(e.pos(), Expr.BinaryOp.EQ,
                         new TExpr.LocalGet(e.pos(), subject.type(), subject), e.expr(), ctx, Mode.INDEPENDENT);
                 case Expr.IsCondition i when subject != null -> new TExpr.TypeCheck(i.pos(), bool(),
-                        new TExpr.LocalGet(i.pos(), subject.type(), subject), resolveType(i.type(), ctx), i.negated());
+                        new TExpr.LocalGet(i.pos(), subject.type(), subject), typeOperand(i.type(), subject.type(), ctx),
+                        i.negated());
                 case Expr.InCondition i when subject != null ->
                         throw error(i.pos(), "'in' conditions are not supported yet");
                 default -> throw error(c.pos(), "A when without a subject needs Boolean conditions");
@@ -369,26 +543,86 @@ final class BodyChecker {
         return condition;
     }
 
-    /** Whether some branch is always taken. */
-    private boolean isExhaustive(Expr.When w, LocalVariable subject) {
+    // ==== Exhaustiveness ====
+
+    /** What the conditions of a when match of its subject. */
+    private static final class Coverage {
+        boolean isNull;
+        final Set<Boolean> booleans = new HashSet<>();
+        /** Enum entries and objects compared with. */
+        final Set<Object> values = new HashSet<>();
+        /** Classes tested with is. */
+        final List<ClassSymbol> classes = new ArrayList<>();
+    }
+
+    /**
+     * Whether some branch is always taken, as FIR's
+     * FirWhenExhaustivenessTransformer: there is an else, or the conditions
+     * without guards match every value of the subject's type.
+     */
+    private boolean isExhaustive(Expr.When w, LocalVariable subject, List<TExpr> conditions) {
         for (Expr.WhenEntry entry : w.entries()) {
             if (entry.conditions().isEmpty() && entry.guard() == null) return true;
         }
         if (subject == null) return false;
-        // TODO: enum entries and sealed subclasses
-        if (Types.lowerBound(subject.type()) instanceof KType.ClassType c && !c.nullable()
-                && c.symbol().id().fqName().equals("kotlin.Boolean")) {
-            boolean sawTrue = false;
-            boolean sawFalse = false;
-            for (Expr.WhenEntry entry : w.entries()) {
-                if (entry.guard() != null) continue;
-                for (Expr.WhenCondition cond : entry.conditions()) {
-                    if (cond instanceof Expr.ExprCondition e && unparenthesized(e.expr()) instanceof Expr.BoolLit b) {
-                        if (b.value()) sawTrue = true; else sawFalse = true;
+        Coverage coverage = new Coverage();
+        for (int i = 0; i < conditions.size(); i++) {
+            if (w.entries().get(i).guard() == null) collect(conditions.get(i), subject, coverage);
+        }
+        return covers(subject.type(), coverage);
+    }
+
+    private static void collect(TExpr condition, LocalVariable subject, Coverage coverage) {
+        switch (condition) {
+            case TExpr.Logical l when !l.and() -> {
+                collect(l.left(), subject, coverage);
+                collect(l.right(), subject, coverage);
+            }
+            case TExpr.Equality e when (e.op() == TExpr.EqualityOp.EQ || e.op() == TExpr.EqualityOp.IDENTITY_EQ)
+                    && e.left() instanceof TExpr.LocalGet g && g.variable() == subject -> {
+                switch (e.right()) {
+                    case TExpr.Const c when c.value() == null -> coverage.isNull = true;
+                    case TExpr.Const c when c.value() instanceof Boolean b -> coverage.booleans.add(b);
+                    case TExpr.PropertyGet p when p.property().isEnumEntry() -> coverage.values.add(p.property());
+                    case TExpr.ObjectValue o -> coverage.values.add(o.object());
+                    default -> {
                     }
                 }
             }
-            return sawTrue && sawFalse;
+            case TExpr.TypeCheck t when !t.negated() && t.expr() instanceof TExpr.LocalGet g
+                    && g.variable() == subject -> {
+                if (Types.isMarkedNullable(t.target())) coverage.isNull = true;
+                if (Types.lowerBound(t.target()) instanceof KType.ClassType c) coverage.classes.add(c.symbol());
+            }
+            default -> {
+            }
+        }
+    }
+
+    private boolean covers(KType type, Coverage coverage) {
+        return switch (type) {
+            case KType.Flexible f -> covers(Types.makeDefinitelyNotNull(f.lower()), coverage);
+            case KType.DefinitelyNotNull d -> covers(d.inner().withNullable(false), coverage);
+            case KType.ClassType c -> (!c.nullable() || coverage.isNull) && covers(c.symbol(), coverage);
+            case KType.Intersection i -> i.components().stream().anyMatch(t -> covers(t, coverage));
+            case KType.TypeParamType t -> (!t.nullable() || coverage.isNull)
+                    && t.symbol().bounds().stream().anyMatch(b -> covers(Types.makeDefinitelyNotNull(b), coverage));
+            default -> false;
+        };
+    }
+
+    private boolean covers(ClassSymbol cls, Coverage coverage) {
+        for (ClassSymbol tested : coverage.classes) {
+            if (VisibilityChecker.isSubclassOf(cls, tested)) return true;
+        }
+        if (cls.id().fqName().equals("kotlin.Boolean")) return coverage.booleans.size() == 2;
+        if (cls.isObject()) return coverage.values.contains(cls);
+        if (cls.kind() == ClassKind.ENUM_CLASS) {
+            return cls.members().properties().values().stream().flatMap(List::stream)
+                    .filter(PropertySymbol::isEnumEntry).allMatch(coverage.values::contains);
+        }
+        if (cls.modality() == Modality.SEALED) {
+            return owner.sealedInheritors(cls).stream().allMatch(sub -> covers(sub, coverage));
         }
         return false;
     }
@@ -444,8 +678,67 @@ final class BodyChecker {
                     expr(b.left(), ctx, Mode.expecting(bool())), expr(b.right(), ctx, Mode.expecting(bool())));
             case EQ, NE, IDENTITY_EQ, IDENTITY_NE ->
                     equality(b.pos(), b.op(), expr(b.left(), ctx, Mode.INDEPENDENT), b.right(), ctx, mode);
+            case MUL, DIV, REM, PLUS, MINUS, RANGE, RANGE_UNTIL -> operatorCall(b.pos(), operatorName(b.op()),
+                    receiver(b.left(), ctx), List.of(b.right()), TExpr.CallOrigin.OPERATOR, ctx, mode);
+            case IN -> operatorCall(b.pos(), "contains", receiver(b.right(), ctx), List.of(b.left()),
+                    TExpr.CallOrigin.OPERATOR, ctx, mode);
+            // a !in b is !(b.contains(a)).
+            case NOT_IN -> operatorCall(b.pos(), "not", new CallInfo.ValueReceiver(operatorCall(b.pos(), "contains",
+                    receiver(b.right(), ctx), List.of(b.left()), TExpr.CallOrigin.OPERATOR, ctx, Mode.RECEIVER)),
+                    List.of(), TExpr.CallOrigin.OPERATOR, ctx, mode);
+            case LT, GT, LE, GE -> new TExpr.Comparison(b.pos(), bool(), comparisonOp(b.op()),
+                    operatorCall(b.pos(), "compareTo", receiver(b.left(), ctx), List.of(b.right()),
+                            TExpr.CallOrigin.OPERATOR, ctx, Mode.INDEPENDENT));
             default -> throw error(b.pos(), "Operator " + b.op() + " is not supported yet");
         };
+    }
+
+    private static String operatorName(Expr.BinaryOp op) {
+        return switch (op) {
+            case MUL -> "times";
+            case DIV -> "div";
+            case REM -> "rem";
+            case PLUS -> "plus";
+            case MINUS -> "minus";
+            case RANGE -> "rangeTo";
+            case RANGE_UNTIL -> "rangeUntil";
+            default -> throw new IllegalArgumentException(op.toString());
+        };
+    }
+
+    private static TExpr.ComparisonOp comparisonOp(Expr.BinaryOp op) {
+        return switch (op) {
+            case LT -> TExpr.ComparisonOp.LT;
+            case GT -> TExpr.ComparisonOp.GT;
+            case LE -> TExpr.ComparisonOp.LE;
+            default -> TExpr.ComparisonOp.GE;
+        };
+    }
+
+    /** A call of an operator or infix function: {@code a + b} is {@code a.plus(b)}. */
+    private TExpr operatorCall(int pos, String name, CallInfo.Receiver receiver, List<Expr> args,
+                               TExpr.CallOrigin origin, Context ctx, Mode mode) {
+        List<CallInfo.Argument> arguments = new ArrayList<>();
+        for (Expr a : args) arguments.add(new CallInfo.Argument(expr(a, ctx, Mode.DEPENDENT), null, false, false));
+        return completer.completeCall(resolved(function(pos, name, receiver, arguments, List.of(), origin), ctx), mode);
+    }
+
+    private TExpr prefix(Expr.Prefix p, Context ctx, Mode mode) {
+        String name = switch (p.op()) {
+            case MINUS -> "unaryMinus";
+            case PLUS -> "unaryPlus";
+            case NOT -> "not";
+            default -> throw error(p.pos(), "Operator " + p.op() + " is not supported yet");
+        };
+        if ((p.op() == Expr.PrefixOp.MINUS || p.op() == Expr.PrefixOp.PLUS)
+                && unparenthesized(p.expr()) instanceof Expr.IntLit l && isUnsuffixed(l)) {
+            return integerLiteral(l, p.op() == Expr.PrefixOp.MINUS, mode);
+        }
+        return operatorCall(p.pos(), name, receiver(p.expr(), ctx), List.of(), TExpr.CallOrigin.OPERATOR, ctx, mode);
+    }
+
+    private static boolean isUnsuffixed(Expr.IntLit l) {
+        return !l.text().matches(".*[lLuU]$");
     }
 
     /**
@@ -525,9 +818,9 @@ final class BodyChecker {
     }
 
     private TExpr cast(Expr.As a, Context ctx) {
-        KType target = resolveType(a.type(), ctx);
         // TODO: the expected type from the cast for calls, as kotlinc's fromCast mode
         TExpr operand = expr(a.expr(), ctx, Mode.INDEPENDENT);
+        KType target = typeOperand(a.type(), operand.type(), ctx);
         return new TExpr.Cast(a.pos(), a.safe() ? target.withNullable(true) : target, operand, target, a.safe());
     }
 
@@ -590,6 +883,16 @@ final class BodyChecker {
 
     KType resolveType(TypeRef ref, Context ctx) {
         return owner.resolver().types().resolve(ref, ctx.typeScope(), ctx.file());
+    }
+
+    /** The type after {@code is} or {@code as}, a bare type with the arguments the operand's type implies. */
+    private KType typeOperand(TypeRef ref, KType operandType, Context ctx) {
+        KType type = owner.resolver().types().resolveAllowingBare(ref, ctx.typeScope(), ctx.file());
+        if (!BareTypes.isBare(type)) return type;
+        KType.ClassType bare = (KType.ClassType) Types.lowerBound(type);
+        KType.ClassType result = BareTypes.representative(ts, owner.resolver().types(), bare, operandType);
+        if (result == null) throw error(ref.pos(), "No type arguments for " + bare.symbol());
+        return result;
     }
 
     private KType.ClassType type(String fqName) {

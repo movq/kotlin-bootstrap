@@ -10,6 +10,7 @@ import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.Symbol;
+import kotlinbootstrap.symbols.TypeAliasSymbol;
 import kotlinbootstrap.symbols.TypeParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.Substitution;
@@ -41,8 +42,20 @@ final class Candidate {
     /** Which receiver the explicit receiver of the call is, if any. */
     ExplicitReceiverKind explicitReceiverKind = ExplicitReceiverKind.NONE;
     TowerGroup group = TowerGroup.START_GROUP;
-    /** For a member, from the type parameters of its class to the arguments of the receiver's type. */
+    /**
+     * For a member, from the type parameters of its class to the arguments of
+     * the receiver's type; for a constructor through a type alias, to the
+     * alias's expansion.
+     */
     Substitution memberSubstitution = Substitution.EMPTY;
+    /** The type parameters to infer, if not the symbol's: for a constructor through a type alias, the alias's. */
+    List<TypeParamSymbol> typeParams;
+    /** For a constructor through a type alias, the alias. */
+    TypeAliasSymbol typeAlias;
+    /** For a classifier used as a value, the type of the object it stands for. */
+    KType valueType;
+    /** For an implicit invoke, the candidate of the variable it is called on, as FIR's candidateForCommonInvokeReceiver. */
+    Candidate invokeReceiver;
     /** From the symbol's type parameters (and its class's, for a member) to the fresh variables and receiver's arguments. */
     Substitution substitutor = Substitution.EMPTY;
     List<TypeVariable> freshVariables = List.of();
@@ -91,25 +104,34 @@ final class Candidate {
         return applicability;
     }
 
+    List<TypeParamSymbol> typeParams() {
+        if (typeParams != null) return typeParams;
+        return symbol instanceof CallableSymbol c ? c.typeParams() : List.of();
+    }
+
     /**
      * Creates a variable for each type parameter, constrained by the
      * parameter's bounds, as FIR's CreateFreshTypeVariableSubstitutorStage.
      */
     void createFreshVariables() {
-        List<TypeParamSymbol> typeParams = symbol instanceof CallableSymbol c ? c.typeParams() : List.of();
+        List<TypeParamSymbol> typeParams = typeParams();
         if (typeParams.isEmpty()) {
             substitutor = memberSubstitution;
             return;
         }
         List<TypeVariable> variables = new ArrayList<>();
-        Map<Object, TypeArg> map = new HashMap<>(memberSubstitution.map());
+        Map<Object, TypeArg> fresh = new HashMap<>();
         for (TypeParamSymbol tp : typeParams) {
             TypeVariable v = new TypeVariable(tp.name(), tp);
             variables.add(v);
-            map.put(tp, TypeArg.of(v.type()));
+            fresh.put(tp, TypeArg.of(v.type()));
             system.registerVariable(v);
         }
         freshVariables = variables;
+        // The member substitution may be in terms of the type parameters, as for a type alias.
+        Substitution toVariables = new Substitution(fresh);
+        Map<Object, TypeArg> map = new HashMap<>(fresh);
+        memberSubstitution.map().forEach((k, v) -> map.putIfAbsent(k, toVariables.applyArg(v)));
         substitutor = new Substitution(map);
         for (TypeVariable v : variables) {
             for (KType bound : v.typeParam().bounds()) {
@@ -132,7 +154,7 @@ final class Candidate {
 
     /** The type of the call before completion: the return type with the fresh variables. */
     KType returnType() {
-        return substitutor.apply(callable().returnType());
+        return symbol instanceof CallableSymbol c ? substitutor.apply(c.returnType()) : valueType;
     }
 
     boolean isSuccessful() {

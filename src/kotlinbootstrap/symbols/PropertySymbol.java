@@ -11,16 +11,18 @@ import kotlinbootstrap.types.KType;
 public final class PropertySymbol extends CallableSymbol {
     private final boolean isVar;
     private final boolean isJavaField;
+    private final boolean isEnumEntry;
     private final Visibility setterVisibility;
 
     public PropertySymbol(String name, Origin origin, Symbol owner, Visibility visibility, Modality modality,
                           Set<Modifier> modifiers, boolean isStatic, Object source, boolean isVar,
-                          boolean isJavaField, Visibility setterVisibility,
+                          boolean isJavaField, boolean isEnumEntry, Visibility setterVisibility,
                           Supplier<List<TypeParamSymbol>> typeParams, Supplier<Signature> signature,
                           Supplier<KType> type) {
         super(name, origin, owner, visibility, modality, modifiers, isStatic, source, typeParams, signature, type);
         this.isVar = isVar;
         this.isJavaField = isJavaField;
+        this.isEnumEntry = isEnumEntry;
         this.setterVisibility = setterVisibility;
     }
 
@@ -30,6 +32,11 @@ public final class PropertySymbol extends CallableSymbol {
 
     public boolean isJavaField() {
         return isJavaField;
+    }
+
+    /** An entry of a Kotlin enum class, or a constant of a Java enum. */
+    public boolean isEnumEntry() {
+        return isEnumEntry;
     }
 
     /** Null for a {@code val}; that of the property if not given for a {@code var}. */

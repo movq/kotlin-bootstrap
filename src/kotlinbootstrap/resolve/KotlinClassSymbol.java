@@ -204,7 +204,7 @@ public final class KotlinClassSymbol extends ClassSymbol {
         for (Decl.EnumEntry e : decl.enumEntries()) {
             KType type = resolver.types().defaultType(this);
             scope.add(new PropertySymbol(e.name(), Origin.KOTLIN_SOURCE, this, Visibility.PUBLIC, Modality.FINAL,
-                    Resolver.keywords(e.modifiers()), true, e, false, false, null, List::of,
+                    Resolver.keywords(e.modifiers()), true, e, false, false, true, null, List::of,
                     () -> CallableSymbol.Signature.NONE, () -> type));
         }
         addSynthesizedMembers(scope);
@@ -261,7 +261,7 @@ public final class KotlinClassSymbol extends ClassSymbol {
                             null)),
                     () -> types.defaultType(this)));
             scope.add(new PropertySymbol("entries", Origin.SYNTHETIC, this, Visibility.PUBLIC, Modality.FINAL,
-                    Set.of(), true, decl, false, false, null, List::of, () -> CallableSymbol.Signature.NONE,
+                    Set.of(), true, decl, false, false, false, null, List::of, () -> CallableSymbol.Signature.NONE,
                     () -> types.classType("kotlin.enums.EnumEntries", TypeArg.of(types.defaultType(this)))));
         }
     }
@@ -330,7 +330,7 @@ public final class KotlinClassSymbol extends ClassSymbol {
         Scope scope = bodyScope(true);
         return new PropertySymbol(p.name(), Origin.KOTLIN_SOURCE, this, visibility,
                 Resolver.modality(p.modifiers(), this, false), Resolver.keywords(p.modifiers()), false, p, isVar,
-                false, null, List::of, () -> CallableSymbol.Signature.NONE,
+                false, false, null, List::of, () -> CallableSymbol.Signature.NONE,
                 () -> {
                     KType type = resolver.types().resolve(p.type(), scope, file);
                     return p.modifiers().has(Modifier.VARARG) ? resolver.types().varargArrayType(type) : type;

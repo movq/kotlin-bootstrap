@@ -6,6 +6,7 @@ import java.util.List;
 import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassifierSymbol;
+import kotlinbootstrap.types.Substitution;
 
 /**
  * A scope of declarations found by name, a level of the tower that has no
@@ -17,11 +18,12 @@ interface TowerScope {
      * A function or property found in a scope.
      *
      * @param importedFromObject the object it is a member of, when imported from one; its dispatch receiver
+     * @param substitution       for a member of an object, as for the object's type
      */
-    record ScopeMember(CallableSymbol symbol, ClassSymbol importedFromObject) {
+    record ScopeMember(CallableSymbol symbol, ClassSymbol importedFromObject, Substitution substitution) {
         static List<ScopeMember> of(List<? extends CallableSymbol> symbols) {
             List<ScopeMember> result = new ArrayList<>(symbols.size());
-            for (CallableSymbol s : symbols) result.add(new ScopeMember(s, null));
+            for (CallableSymbol s : symbols) result.add(new ScopeMember(s, null, Substitution.EMPTY));
             return result;
         }
     }

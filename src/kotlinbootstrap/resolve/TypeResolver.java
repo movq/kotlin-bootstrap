@@ -16,6 +16,7 @@ import kotlinbootstrap.symbols.TypeParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.Substitution;
 import kotlinbootstrap.types.TypeArg;
+import kotlinbootstrap.types.Types;
 import kotlinbootstrap.types.Variance;
 
 /** Resolves types as written ({@link TypeRef}) to {@link KType}s. */
@@ -27,9 +28,22 @@ public final class TypeResolver {
     }
 
     public KType resolve(TypeRef ref, Scope scope, FileContext file) {
+        return resolve(ref, scope, file, false);
+    }
+
+    /**
+     * A type that may be a bare type, a generic class without type
+     * arguments, as after {@code is} and {@code as}: then a class type with
+     * no arguments, whose arguments the checker infers.
+     */
+    public KType resolveAllowingBare(TypeRef ref, Scope scope, FileContext file) {
+        return resolve(ref, scope, file, true);
+    }
+
+    private KType resolve(TypeRef ref, Scope scope, FileContext file, boolean bare) {
         return switch (ref) {
-            case TypeRef.Simple s -> resolveSimple(s, scope, file);
-            case TypeRef.Nullable n -> resolve(n.inner(), scope, file).withNullable(true);
+            case TypeRef.Simple s -> resolveSimple(s, scope, file, bare);
+            case TypeRef.Nullable n -> resolve(n.inner(), scope, file, bare).withNullable(true);
             case TypeRef.Function f -> functionType(f, false, scope, file);
             case TypeRef.Modified m -> {
                 boolean extension = false;
@@ -40,7 +54,7 @@ public final class TypeResolver {
                     if (!(m.inner() instanceof TypeRef.Function f)) throw error(file, ref, "Only function types can be suspend");
                     yield functionType(f, true, scope, file);
                 }
-                KType inner = resolve(m.inner(), scope, file);
+                KType inner = resolve(m.inner(), scope, file, bare);
                 if (extension && inner instanceof KType.ClassType c) {
                     yield new KType.ClassType(c.symbol(), c.args(), c.nullable(), true, c.contextParams());
                 }
@@ -58,7 +72,7 @@ public final class TypeResolver {
         };
     }
 
-    private KType resolveSimple(TypeRef.Simple ref, Scope scope, FileContext file) {
+    private KType resolveSimple(TypeRef.Simple ref, Scope scope, FileContext file, boolean bare) {
         List<TypeRef.Segment> segments = ref.segments();
         // Find the classifier named by the first segments: a name in scope, or a qualified name.
         ClassifierSymbol c = scope.findClassifier(segments.getFirst().name());
@@ -89,11 +103,16 @@ public final class TypeResolver {
                 if (!written.isEmpty()) throw error(file, ref, "Type parameter with type arguments");
                 yield new KType.TypeParamType(tp, false);
             }
+            case TypeAliasSymbol alias when bare && written.isEmpty() && !alias.typeParams().isEmpty()
+                    && Types.lowerBound(alias.expansion()) instanceof KType.ClassType expanded ->
+                    new KType.ClassType(expanded.symbol(), List.of(), false);
             case TypeAliasSymbol alias -> {
                 List<TypeArg> args = typeArgs(written, scope, file);
                 if (args.size() != alias.typeParams().size()) throw error(file, ref, "Wrong number of type arguments");
                 yield Substitution.of(alias.typeParams(), args).apply(alias.expansion());
             }
+            case ClassSymbol cls when bare && written.isEmpty() && !cls.typeParams().isEmpty() ->
+                    new KType.ClassType(cls, List.of(), false);
             case ClassSymbol cls -> {
                 if (written.size() != cls.typeParams().size()) {
                     throw error(file, ref, "Wrong number of type arguments for " + cls);

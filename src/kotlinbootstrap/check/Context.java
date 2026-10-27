@@ -19,9 +19,10 @@ import kotlinbootstrap.types.KType;
  * @param elements  the other levels of the tower, outermost first
  * @param function  the innermost function or lambda, for return
  * @param loop      the innermost loop, for break and continue; nullable
+ * @param containingClass the innermost class whose body this is in, for visibility; nullable
  */
 record Context(FileContext file, Scope typeScope, List<LocalScope> locals, List<TowerElement> elements,
-               FunctionFrame function, LoopFrame loop) {
+               FunctionFrame function, LoopFrame loop, ClassSymbol containingClass) {
 
     /** A non-local level of the tower: a scope of static declarations, or an implicit receiver. */
     sealed interface TowerElement {
@@ -106,25 +107,25 @@ record Context(FileContext file, Scope typeScope, List<LocalScope> locals, List<
         List<LocalScope> newLocals = new ArrayList<>(locals);
         newLocals.add(scope);
         Scope newTypeScope = Scope.of(scope::classifier, typeScope);
-        return new Context(file, newTypeScope, List.copyOf(newLocals), elements, function, loop);
+        return new Context(file, newTypeScope, List.copyOf(newLocals), elements, function, loop, containingClass);
     }
 
     Context withElement(TowerElement element) {
         List<TowerElement> newElements = new ArrayList<>(elements);
         newElements.add(element);
-        return new Context(file, typeScope, locals, List.copyOf(newElements), function, loop);
+        return new Context(file, typeScope, locals, List.copyOf(newElements), function, loop, containingClass);
     }
 
     Context withTypeScope(Scope scope) {
-        return new Context(file, scope, locals, elements, function, loop);
+        return new Context(file, scope, locals, elements, function, loop, containingClass);
     }
 
     Context withFunction(FunctionFrame frame) {
-        return new Context(file, typeScope, locals, elements, frame, null);
+        return new Context(file, typeScope, locals, elements, frame, null, containingClass);
     }
 
     Context withLoop(TExpr.Loop l) {
-        return new Context(file, typeScope, locals, elements, function, new LoopFrame(l, loop));
+        return new Context(file, typeScope, locals, elements, function, new LoopFrame(l, loop), containingClass);
     }
 
     ClassifierSymbol findClassifier(String name) {

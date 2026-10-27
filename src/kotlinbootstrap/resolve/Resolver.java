@@ -343,7 +343,7 @@ public final class Resolver {
                 || p.getter() != null && p.getter().body() != null;
         PropertySymbol result = new PropertySymbol(p.name(), Origin.KOTLIN_SOURCE, owner, visibility,
                 modality(p.modifiers(), cls, !hasBody), keywords(p.modifiers()), isStatic, p,
-                p.isVar(), false, setterVisibility, tps::symbols,
+                p.isVar(), false, false, setterVisibility, tps::symbols,
                 () -> new CallableSymbol.Signature(
                         p.receiver() == null ? null : types.resolve(p.receiver(), scope, file),
                         contextParams(p.modifiers(), scope, file), List.of()),

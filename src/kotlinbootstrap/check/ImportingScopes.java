@@ -111,8 +111,10 @@ final class ImportingScopes {
                 List<TowerScope.ScopeMember> result = new ArrayList<>();
                 List<MemberScopes.Member> members = functions
                         ? scopes.functions(type, name) : scopes.properties(type, name);
-                for (MemberScopes.Member m : members) result.add(new TowerScope.ScopeMember(m.symbol(), parent));
-                for (var s : scopes.statics(parent, name, functions)) result.add(new TowerScope.ScopeMember(s, null));
+                for (MemberScopes.Member m : members) {
+                    result.add(new TowerScope.ScopeMember(m.symbol(), parent, m.substitution()));
+                }
+                result.addAll(TowerScope.ScopeMember.of(scopes.statics(parent, name, functions)));
                 return result;
             }
             return TowerScope.ScopeMember.of(scopes.statics(parent, name, functions));
@@ -120,6 +122,11 @@ final class ImportingScopes {
         MemberScope pkg = resolver.table().existingPackageScope(imp.packageName());
         if (pkg == null) return List.of();
         return TowerScope.ScopeMember.of(functions ? pkg.functions(name) : pkg.properties(name));
+    }
+
+    /** The top-level declarations of a package, as a qualifier: {@code kotlin.collections.listOf()}. */
+    static TowerScope packageScope(SymbolTable table, String packageName) {
+        return new Package(table, packageName, Set.of());
     }
 
     private static ClassifierSymbol classifier(Resolver resolver, ResolvedImport imp, String name) {

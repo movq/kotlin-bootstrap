@@ -295,7 +295,7 @@ public final class JavaSourceClasses implements ClassFinder {
             boolean isFinal = isInterface() || flags.contains(Modifier.FINAL);
             Visibility visibility = javaVisibility(v.getModifiers(), this);
             return new PropertySymbol(v.getName().toString(), Origin.JAVA_SOURCE, this, visibility, Modality.FINAL,
-                    Set.of(), isStatic, v, !isFinal, true, isFinal ? null : visibility, List::of,
+                    Set.of(), isStatic, v, !isFinal, true, isEnumConstant(v), isFinal ? null : visibility, List::of,
                     () -> CallableSymbol.Signature.NONE,
                     () -> isEnumConstant(v) ? new KType.ClassType(this, List.of(), false)
                             : JavaTypes.withNullability(type(v.getType(), bodyScope), nullability(v.getModifiers())));

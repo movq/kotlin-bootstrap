@@ -295,7 +295,7 @@ public final class JdkClasses implements ClassFinder {
         private PropertySymbol field(VariableElement e) {
             boolean isFinal = e.getModifiers().contains(javax.lang.model.element.Modifier.FINAL);
             return new PropertySymbol(e.getSimpleName().toString(), Origin.JAVA_BINARY, this, javaVisibility(e),
-                    Modality.FINAL, Set.of(), isStatic(e), e, !isFinal, true, isFinal ? null : javaVisibility(e),
+                    Modality.FINAL, Set.of(), isStatic(e), e, !isFinal, true, e.getKind() == ElementKind.ENUM_CONSTANT, isFinal ? null : javaVisibility(e),
                     List::of, () -> CallableSymbol.Signature.NONE,
                     () -> e.getKind() == ElementKind.ENUM_CONSTANT
                             ? new KType.ClassType(this, List.of(), false) : type(e.asType()));

@@ -22,6 +22,7 @@ import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassifierSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.MemberScope;
+import kotlinbootstrap.symbols.Modality;
 import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.types.KType;
@@ -43,14 +44,20 @@ public final class Checker {
     private final Map<Object, Object> results = new HashMap<>();
     private final Map<Object, RuntimeException> failures = new HashMap<>();
     private final MemberScopes memberScopes;
+    private final ResolutionStages stages;
+    private final OverloadResolver overloads;
     private final Map<FileContext, List<Context.TowerElement>> importingScopes = new HashMap<>();
     private final Map<ClassSymbol, ClassContexts> classContexts = new HashMap<>();
+    /** The direct subclasses of the sealed classes of the sources; computed on first use. */
+    private Map<ClassSymbol, List<ClassSymbol>> sealedInheritors;
 
     public Checker(Resolver resolver) {
         this.resolver = resolver;
         this.ts = new TypeSystem(resolver.table());
         this.synthetic = new SyntheticCalls(ts, new ArgumentChecker(ts));
         this.memberScopes = new MemberScopes(ts, resolver.types());
+        this.stages = new ResolutionStages(resolver.types(), new ArgumentChecker(ts), new VisibilityChecker(resolver));
+        this.overloads = new OverloadResolver(ts, memberScopes, stages);
         resolver.setBodyTyper(this::inferredType);
     }
 
@@ -68,6 +75,14 @@ public final class Checker {
 
     MemberScopes memberScopes() {
         return memberScopes;
+    }
+
+    ResolutionStages stages() {
+        return stages;
+    }
+
+    OverloadResolver overloads() {
+        return overloads;
     }
 
     // ==== All declarations ====
@@ -96,6 +111,22 @@ public final class Checker {
             }
         }
         return new Report(count, errors);
+    }
+
+    /** The direct subclasses of a sealed class, which must all be in the sources. */
+    List<ClassSymbol> sealedInheritors(ClassSymbol sealed) {
+        if (sealedInheritors == null) {
+            sealedInheritors = new HashMap<>();
+            for (ClassifierSymbol c : resolver.table().kotlinClassifiers().values()) {
+                if (!(c instanceof ClassSymbol cls)) continue;
+                for (KType st : cls.supertypes()) {
+                    if (st instanceof KType.ClassType t && t.symbol().modality() == Modality.SEALED) {
+                        sealedInheritors.computeIfAbsent(t.symbol(), k -> new ArrayList<>()).add(cls);
+                    }
+                }
+            }
+        }
+        return sealedInheritors.getOrDefault(sealed, List.of());
     }
 
     private static void collect(MemberScope scope, List<CallableSymbol> out) {
@@ -196,8 +227,24 @@ public final class Checker {
         return memo(d.initializer(), () -> {
             Resolver.DeclarationContext dc = resolver.context(p);
             Mode mode = Resolver.hasDeclaredType(p) ? Mode.expecting(p.returnType()) : Mode.INDEPENDENT;
-            return checker(dc).expr(d.initializer(), context(dc).withLocalScope(new LocalScope()), mode);
+            LocalScope scope = dc.cls() != null && p.owner() == dc.cls() ? primaryConstructorScope(dc.cls())
+                    : new LocalScope();
+            return checker(dc).expr(d.initializer(), context(dc).withLocalScope(scope), mode);
         });
+    }
+
+    /** The parameters of a class's primary constructor, which the initializers of its properties see. */
+    private LocalScope primaryConstructorScope(ClassSymbol cls) {
+        LocalScope scope = new LocalScope();
+        if (!(cls instanceof KotlinClassSymbol k) || k.decl().primaryConstructor() == null) return scope;
+        for (FunctionSymbol c : cls.members().constructors()) {
+            if (c.source() != k.decl().primaryConstructor()) continue;
+            for (ValueParamSymbol p : c.signature().params()) {
+                KType type = p.isVararg() ? resolver.types().varargArrayType(p.type()) : p.type();
+                scope.add(new LocalVariable(p.name(), type, LocalVariable.Kind.PARAMETER, false, p));
+            }
+        }
+        return scope;
     }
 
     private CheckedFunction accessor(PropertySymbol p, Decl.Property d, Decl.Accessor accessor) {
@@ -245,12 +292,13 @@ public final class Checker {
     /** The context of a declaration's body: the tower of the file and the classes it is in. */
     private Context context(Resolver.DeclarationContext dc) {
         List<Context.TowerElement> elements = dc.cls() != null ? classContexts(dc.cls()).regular() : importing(dc.file());
-        return new Context(dc.file(), dc.scope(), List.of(), elements, null, null);
+        return new Context(dc.file(), dc.scope(), List.of(), elements, null, null, dc.cls());
     }
 
     // ==== Towers ====
 
-    private List<Context.TowerElement> importing(FileContext file) {
+    /** The importing scopes of a file, outermost first. */
+    List<Context.TowerElement> importing(FileContext file) {
         return importingScopes.computeIfAbsent(file, f -> ImportingScopes.of(f, resolver, memberScopes).stream()
                 .map(s -> (Context.TowerElement) new Context.ScopeElement(s, null)).toList());
     }
