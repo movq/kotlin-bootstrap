@@ -76,6 +76,8 @@ final class BodyChecker {
                     List.of(i.right()), TExpr.CallOrigin.INFIX, ctx, mode);
             case Expr.Index i -> operatorCall(i.pos(), "get", receiver(i.receiver(), ctx), i.indices(),
                     TExpr.CallOrigin.OPERATOR, ctx, mode);
+            case Expr.Prefix p when p.op() == Expr.PrefixOp.INC || p.op() == Expr.PrefixOp.DEC ->
+                    incrementOrDecrement(p.pos(), p.expr(), p.op() == Expr.PrefixOp.INC, true, ctx);
             case Expr.Prefix p -> prefix(p, ctx, mode);
             case Expr.This t -> thisExpr(t, ctx);
             case Expr.Block b -> block(b.pos(), b.statements(), ctx, mode);
@@ -85,6 +87,7 @@ final class BodyChecker {
             case Expr.Try t -> tryExpr(t, ctx, mode);
             case Expr.Binary b -> binary(b, ctx, mode);
             case Expr.Postfix p when p.op() == Expr.PostfixOp.NOT_NULL -> checkNotNull(p, ctx, mode);
+            case Expr.Postfix p -> incrementOrDecrement(p.pos(), p.expr(), p.op() == Expr.PostfixOp.INC, false, ctx);
             case Expr.Is i -> {
                 TExpr operand = expr(i.expr(), ctx, Mode.INDEPENDENT);
                 yield new TExpr.TypeCheck(i.pos(), bool(), operand, typeOperand(i.type(), operand.type(), ctx),
@@ -197,6 +200,16 @@ final class BodyChecker {
 
     private TExpr name(Expr.Name n, Context ctx, Mode mode) {
         LocalVariable v = ctx.findLocal(n.name());
+        if (v != null && v.kind() == LocalVariable.Kind.BACKING_FIELD) {
+            TExpr receiver = null;
+            for (Context.ImplicitReceiver r : ctx.receivers()) {
+                if (r.owner() == ctx.containingClass()) {
+                    receiver = r.expr(n.pos());
+                    break;
+                }
+            }
+            return new TExpr.FieldGet(n.pos(), v.type(), v.property(), receiver);
+        }
         if (v != null) return new TExpr.LocalGet(n.pos(), v.type(), v);
         return completer.completeCall(resolved(variable(n.pos(), n.name(), null), ctx), mode);
     }
@@ -486,16 +499,228 @@ final class BodyChecker {
         return TypeApproximator.approximateToSuperTypeOrSelf(ts, type, TypeApproximator.Config.LOCAL_DECLARATION);
     }
 
+    // ==== Assignments ====
+
+    /** {@code a = b}, {@code a[i] = b} (which is {@code a.set(i, b)}), and {@code a += b} and the like. */
     private TExpr assign(Expr.Assign a, Context ctx) {
-        if (a.op() != Expr.AssignOp.ASSIGN) throw error(a.pos(), "Compound assignments are not supported yet");
-        if (a.target() instanceof Expr.Name n) {
-            LocalVariable v = ctx.findLocal(n.name());
-            if (v != null) {
-                TExpr value = expr(a.value(), ctx, Mode.expecting(v.type()));
-                return new TExpr.LocalSet(a.pos(), unit(), v, value);
+        Expr target = assignable(a.target());
+        if (a.op() != Expr.AssignOp.ASSIGN) {
+            String operator = switch (a.op()) {
+                case PLUS_ASSIGN -> "plus";
+                case MINUS_ASSIGN -> "minus";
+                case MUL_ASSIGN -> "times";
+                case DIV_ASSIGN -> "div";
+                default -> "rem";
+            };
+            if (target instanceof Expr.Index i) return indexedAugmentedAssign(a.pos(), i, operator, a.value(), ctx);
+            return onVariable(target, ctx, Mode.RECEIVER, left -> augmentedAssign(a.pos(), left, operator,
+                    expr(a.value(), ctx, Mode.DEPENDENT), ctx));
+        }
+        if (target instanceof Expr.Index i) {
+            List<Expr> args = new ArrayList<>(i.indices());
+            args.add(a.value());
+            return operatorCall(a.pos(), "set", receiver(i.receiver(), ctx), args, TExpr.CallOrigin.OPERATOR, ctx,
+                    Mode.INDEPENDENT);
+        }
+        return onVariable(target, ctx, Mode.INDEPENDENT,
+                v -> assignment(a.pos(), v, expr(a.value(), ctx, Mode.expecting(v.type()))));
+    }
+
+    /** The target of an assignment or increment, without parentheses, labels and annotations. */
+    private static Expr assignable(Expr e) {
+        while (true) {
+            switch (e) {
+                case Expr.Paren p -> e = p.expr();
+                case Expr.Labeled l -> e = l.expr();
+                case Expr.Annotated a -> e = a.expr();
+                default -> {
+                    return e;
+                }
             }
         }
-        throw error(a.pos(), "Unsupported assignment target");
+    }
+
+    /**
+     * Applies the action to the read of the variable a name or member
+     * access refers to; for {@code a?.b}, inside the safe call.
+     */
+    private TExpr onVariable(Expr target, Context ctx, Mode mode, Function<TExpr, TExpr> action) {
+        return switch (target) {
+            case Expr.Name n -> action.apply(name(n, ctx, mode));
+            case Expr.Member m -> onReceiver(m.pos(), receiver(m.receiver(), ctx), m.safe(), r -> action.apply(
+                    completer.completeCall(resolved(variable(m.pos(), m.name(), r), ctx), mode)));
+            default -> throw error(target.pos(), "Unsupported assignment target");
+        };
+    }
+
+    /** The write of the variable the expression reads. */
+    private TExpr assignment(int pos, TExpr variable, TExpr value) {
+        return switch (variable) {
+            case TExpr.LocalGet g -> new TExpr.LocalSet(pos, unit(), g.variable(), value);
+            case TExpr.PropertyGet g -> new TExpr.PropertySet(pos, unit(), g.property(), g.typeArgs(),
+                    g.dispatchReceiver(), g.extensionReceiver(), g.superCall(), value);
+            case TExpr.FieldGet g -> new TExpr.FieldSet(pos, unit(), g.property(), g.receiver(), value);
+            default -> throw error(pos, "Not assignable");
+        };
+    }
+
+    /**
+     * {@code a += b}: {@code a.plusAssign(b)} or {@code a = a.plus(b)}, as
+     * FIR chooses; the latter if only it resolves, or if both do, {@code a}
+     * is a var and the result of plus fits it (else it is ambiguous).
+     */
+    private TExpr augmentedAssign(int pos, TExpr left, String operator, TExpr right, Context ctx) {
+        CallInfo assignInfo = operator(pos, operator + "Assign", new CallInfo.ValueReceiver(left), List.of(right));
+        CallResolver.Result assign = calls.resolve(assignInfo, ctx);
+        List<TExpr> statements = new ArrayList<>();
+        TExpr variable = withReceiverTemporaries(left, statements);
+        CallInfo operatorInfo = operator(pos, operator, new CallInfo.ValueReceiver(variable), List.of(right));
+        CallResolver.Result op = calls.resolve(operatorInfo, ctx);
+        boolean isVar = switch (left) {
+            case TExpr.LocalGet g -> g.variable().isVar();
+            case TExpr.PropertyGet g -> g.property().isVar();
+            case TExpr.FieldGet g -> true;
+            default -> false;
+        };
+        boolean chooseAssign;
+        if (isSuccess(assign) && !isVar) {
+            chooseAssign = true;
+        } else if (!isSuccess(assign) && !isSuccess(op)) {
+            chooseAssign = !assign.candidates().isEmpty() || op.candidates().isEmpty();
+        } else if (isSuccess(assign) != isSuccess(op)) {
+            chooseAssign = isSuccess(assign);
+        } else {
+            Candidate c = op.candidates().getFirst();
+            KType returnType = c.system.buildCurrentSubstitutor().apply(c.returnType());
+            if (ts.isSubtype(returnType, left.type())) throw error(pos, "Ambiguous " + operator + "Assign and " + operator);
+            chooseAssign = true;
+        }
+        if (chooseAssign) return completer.completeCall(resolved(assignInfo, assign), Mode.INDEPENDENT);
+        TExpr value = completer.completeCall(resolved(operatorInfo, op), Mode.expecting(variable.type()));
+        statements.add(assignment(pos, variable, value));
+        return statements.size() == 1 ? statements.getFirst() : new TExpr.Block(pos, unit(), statements);
+    }
+
+    /**
+     * {@code a[i] += b}: {@code a.get(i).plusAssign(b)}, or with {@code a}
+     * and {@code i} in temporaries, {@code a.set(i, a.get(i).plus(b))};
+     * ambiguous if both resolve.
+     */
+    private TExpr indexedAugmentedAssign(int pos, Expr.Index target, String operator, Expr value, Context ctx) {
+        CallInfo.Receiver array = receiver(target.receiver(), ctx);
+        List<TExpr> indices = new ArrayList<>();
+        for (Expr e : target.indices()) indices.add(expr(e, ctx, Mode.INDEPENDENT));
+        TExpr get = completer.completeCall(resolved(operator(pos, "get", array, indices), ctx), Mode.INDEPENDENT);
+        TExpr right = expr(value, ctx, Mode.DEPENDENT);
+        CallInfo assignInfo = operator(pos, operator + "Assign", new CallInfo.ValueReceiver(get), List.of(right));
+        CallResolver.Result assign = calls.resolve(assignInfo, ctx);
+
+        List<TExpr> statements = new ArrayList<>();
+        CallInfo.Receiver arrayTemp = array instanceof CallInfo.ValueReceiver v
+                ? new CallInfo.ValueReceiver(temporaryFor("<array>", v.value(), statements)) : array;
+        List<TExpr> indexTemps = new ArrayList<>();
+        for (int k = 0; k < indices.size(); k++) indexTemps.add(temporaryFor("<index" + k + ">", indices.get(k), statements));
+        TExpr tempGet = completer.completeCall(resolved(operator(pos, "get", arrayTemp, indexTemps), ctx),
+                Mode.INDEPENDENT);
+        CallInfo operatorInfo = operator(pos, operator, new CallInfo.ValueReceiver(tempGet), List.of(right));
+        CallResolver.Result op = calls.resolve(operatorInfo, ctx);
+        if (!isSuccess(op)) return completer.completeCall(resolved(assignInfo, assign), Mode.INDEPENDENT);
+
+        List<TExpr> setArgs = new ArrayList<>(indexTemps);
+        setArgs.add(completer.completeCall(resolved(operatorInfo, op), Mode.DEPENDENT));
+        CallInfo setInfo = operator(pos, "set", arrayTemp, setArgs);
+        CallResolver.Result set = calls.resolve(setInfo, ctx);
+        if (isSuccess(assign) && isSuccess(set)) throw error(pos, "Ambiguous " + operator + "Assign and set");
+        if (isSuccess(assign)) return completer.completeCall(resolved(assignInfo, assign), Mode.INDEPENDENT);
+        if (!isSuccess(set)) throw error(pos, "Unresolved reference " + operator + "Assign");
+        statements.add(completer.completeCall(resolved(setInfo, set), Mode.INDEPENDENT));
+        return new TExpr.Block(pos, unit(), statements);
+    }
+
+    /**
+     * {@code ++a} and {@code a++}, as FIR desugars them: {@code a = a.inc()}
+     * then the new value, or the old value in a temporary. For {@code a[i]},
+     * through get and set.
+     */
+    private TExpr incrementOrDecrement(int pos, Expr operand, boolean increment, boolean prefix, Context ctx) {
+        String name = increment ? "inc" : "dec";
+        Expr target = assignable(operand);
+        if (target instanceof Expr.Index i) return indexedIncrementOrDecrement(pos, i, name, prefix, ctx);
+        return onVariable(target, ctx, Mode.INDEPENDENT, read -> {
+            List<TExpr> statements = new ArrayList<>();
+            TExpr variable = withReceiverTemporaries(read, statements);
+            if (prefix) {
+                statements.add(assignment(pos, variable, unaryOperator(pos, name, variable, ctx)));
+                statements.add(variable);
+            } else {
+                TExpr unary = temporaryFor("<unary>", variable, statements);
+                statements.add(assignment(pos, variable, unaryOperator(pos, name, unary, ctx)));
+                statements.add(unary);
+            }
+            return new TExpr.Block(pos, statements.getLast().type(), statements);
+        });
+    }
+
+    /** {@code a[i]++} is {@code a.set(i, a.get(i).inc())} with {@code a}, {@code i} and the old value in temporaries. */
+    private TExpr indexedIncrementOrDecrement(int pos, Expr.Index target, String name, boolean prefix, Context ctx) {
+        List<TExpr> statements = new ArrayList<>();
+        CallInfo.Receiver array = receiver(target.receiver(), ctx);
+        if (array instanceof CallInfo.ValueReceiver v) {
+            array = new CallInfo.ValueReceiver(temporaryFor("<array>", v.value(), statements));
+        }
+        List<TExpr> indices = new ArrayList<>();
+        for (int k = 0; k < target.indices().size(); k++) {
+            indices.add(temporaryFor("<index" + k + ">", expr(target.indices().get(k), ctx, Mode.INDEPENDENT),
+                    statements));
+        }
+        TExpr get = completer.completeCall(resolved(operator(pos, "get", array, indices), ctx), Mode.INDEPENDENT);
+        TExpr old = prefix ? get : temporaryFor("<unary>", get, statements);
+        List<TExpr> setArgs = new ArrayList<>(indices);
+        setArgs.add(unaryOperator(pos, name, old, ctx));
+        statements.add(completer.completeCall(resolved(operator(pos, "set", array, setArgs), ctx), Mode.INDEPENDENT));
+        statements.add(prefix ? completer.completeCall(resolved(operator(pos, "get", array, indices), ctx),
+                Mode.INDEPENDENT) : old);
+        return new TExpr.Block(pos, statements.getLast().type(), statements);
+    }
+
+    private TExpr unaryOperator(int pos, String name, TExpr receiver, Context ctx) {
+        return completer.completeCall(resolved(operator(pos, name, new CallInfo.ValueReceiver(receiver), List.of()), ctx),
+                Mode.INDEPENDENT);
+    }
+
+    /** An operator call with checked arguments. */
+    private static CallInfo operator(int pos, String name, CallInfo.Receiver receiver, List<TExpr> args) {
+        return function(pos, name, receiver, args.stream().map(a -> new CallInfo.Argument(a, null, false, false)).toList(),
+                List.of(), TExpr.CallOrigin.OPERATOR);
+    }
+
+    private static boolean isSuccess(CallResolver.Result result) {
+        return result.success() && result.candidates().size() == 1;
+    }
+
+    /**
+     * The variable read with its explicit receiver, if any, in a temporary
+     * added to the statements, so that it is evaluated once for both the
+     * read and the write. Qualifiers and {@code this} need none.
+     */
+    private TExpr withReceiverTemporaries(TExpr variable, List<TExpr> statements) {
+        if (!(variable instanceof TExpr.PropertyGet g)) return variable;
+        TExpr dispatch = g.dispatchReceiver();
+        TExpr extension = g.extensionReceiver();
+        if (needsTemporary(dispatch)) dispatch = temporaryFor("<receiver>", dispatch, statements);
+        if (needsTemporary(extension)) extension = temporaryFor("<receiver>", extension, statements);
+        return new TExpr.PropertyGet(g.pos(), g.type(), g.property(), g.typeArgs(), dispatch, extension, g.superCall());
+    }
+
+    private static boolean needsTemporary(TExpr receiver) {
+        return receiver != null && !(receiver instanceof TExpr.This || receiver instanceof TExpr.ObjectValue);
+    }
+
+    /** Declares a temporary with the value, added to the statements, and returns its read. */
+    private TExpr temporaryFor(String name, TExpr value, List<TExpr> statements) {
+        LocalVariable v = temporary(name, value.type());
+        statements.add(new TExpr.LocalVarDecl(value.pos(), unit(), v, value));
+        return new TExpr.LocalGet(value.pos(), v.type(), v);
     }
 
     // ==== When and if ====
@@ -781,7 +1006,7 @@ final class BodyChecker {
             case MINUS -> "unaryMinus";
             case PLUS -> "unaryPlus";
             case NOT -> "not";
-            default -> throw error(p.pos(), "Operator " + p.op() + " is not supported yet");
+            default -> throw new IllegalArgumentException(p.op().toString());
         };
         if ((p.op() == Expr.PrefixOp.MINUS || p.op() == Expr.PrefixOp.PLUS)
                 && unparenthesized(p.expr()) instanceof Expr.IntLit l && isUnsuffixed(l)) {

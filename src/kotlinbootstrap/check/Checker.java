@@ -256,6 +256,7 @@ public final class Checker {
             KType propertyType = typeKnown || !accessor.isGetter() ? p.returnType() : null;
             List<LocalVariable> params = new ArrayList<>();
             LocalScope scope = new LocalScope();
+            if (propertyType != null) scope.add(LocalVariable.backingField(p, propertyType));
             if (!accessor.isGetter()) {
                 Decl.Param param = accessor.param();
                 KType type = param.type() != null ? checker.resolveType(param.type(), context(dc)) : propertyType;
