@@ -80,6 +80,7 @@ public final class JavaSourceClasses implements ClassFinder {
         JavacTask task = (JavacTask) compiler.getTask(null, fm, null, List.of("-proc:none"), null,
                 fm.getJavaFileObjectsFromPaths(files));
         this.positions = Trees.instance(task).getSourcePositions();
+        if (files.isEmpty()) return; // javac rejects an empty task
         try {
             for (CompilationUnitTree unit : task.parse()) enterUnit(unit);
         } catch (IOException e) {

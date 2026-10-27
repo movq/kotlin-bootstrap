@@ -80,8 +80,24 @@ final class JavaTypes {
                 upperArgs.add(TypeArg.STAR);
             }
         }
-        return new KType.Flexible(new KType.ClassType(mutable, args, false),
-                new KType.ClassType(readOnly, upperArgs, true));
+        return new KType.Flexible(new KType.ClassType(mutable, withParamVariance(args, mutable), false),
+                new KType.ClassType(readOnly, withParamVariance(upperArgs, readOnly), true));
+    }
+
+    /** A wildcard conflicting with the variance of the parameter, e.g. {@code ? super T} for {@code out E}, is a star. */
+    private static List<TypeArg> withParamVariance(List<TypeArg> args, ClassSymbol cls) {
+        List<TypeParamSymbol> params = cls.typeParams();
+        if (args.size() != params.size()) return args;
+        List<TypeArg> result = new ArrayList<>(args);
+        for (int i = 0; i < args.size(); i++) {
+            TypeArg a = args.get(i);
+            Variance declared = params.get(i).variance();
+            if (!a.isStar() && a.variance() != Variance.INVARIANT && declared != Variance.INVARIANT
+                    && declared != a.variance()) {
+                result.set(i, TypeArg.STAR);
+            }
+        }
+        return result;
     }
 
     /** @param primitiveElement the Kotlin name of a primitive element type, or null */
