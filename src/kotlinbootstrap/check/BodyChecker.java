@@ -1,6 +1,7 @@
 package kotlinbootstrap.check;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -8,9 +9,11 @@ import java.util.function.Function;
 
 import kotlinbootstrap.ast.Decl;
 import kotlinbootstrap.ast.Expr;
+import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.ast.Stmt;
 import kotlinbootstrap.ast.TypeRef;
 import kotlinbootstrap.ast.ValueArg;
+import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.symbols.ClassKind;
 import kotlinbootstrap.symbols.ClassSymbol;
@@ -18,7 +21,9 @@ import kotlinbootstrap.symbols.ClassifierSymbol;
 import kotlinbootstrap.symbols.Modality;
 import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.syntax.SourceFile;
+import kotlinbootstrap.types.FunctionTypes;
 import kotlinbootstrap.types.KType;
+import kotlinbootstrap.types.Substitution;
 import kotlinbootstrap.types.TypeApproximator;
 import kotlinbootstrap.types.TypeArg;
 import kotlinbootstrap.types.TypeSystem;
@@ -35,6 +40,8 @@ final class BodyChecker {
     private final SourceFile source;
     private final CallCompleter completer;
     private final CallResolver calls;
+    /** The name of the call whose arguments are being checked, as FIR's calleeNamesForLambda; nullable. */
+    private String calleeNameForLambda;
 
     BodyChecker(Checker owner, SourceFile source) {
         this.owner = owner;
@@ -52,9 +59,8 @@ final class BodyChecker {
         return owner.synthetic();
     }
 
-    /** Analyzes a lambda or callable reference during the completion of its call. */
-    void analyzePostponed(ConstraintSystem system, PostponedArgument argument, Candidate candidate) {
-        throw error(candidate.pos, "Lambdas and callable references are not supported yet");
+    ArgumentChecker arguments() {
+        return owner.arguments();
     }
 
     // ==== Expressions ====
@@ -104,6 +110,8 @@ final class BodyChecker {
             case Expr.DoWhile w -> doWhileLoop(w, null, ctx);
             case Expr.For f -> forLoop(f, null, ctx);
             case Expr.Labeled l -> labeled(l, ctx, mode);
+            case Expr.Lambda l -> lambda(l, null, ctx, mode);
+            case Expr.AnonymousFunction f -> lambda(f, null, ctx, mode);
             default -> throw error(e.pos(), "Unsupported expression: " + e.getClass().getSimpleName());
         };
     }
@@ -257,10 +265,10 @@ final class BodyChecker {
         List<TypeArg> typeArgs = typeArguments(c.typeArgs(), ctx);
         return switch (c.callee()) {
             case Expr.Name n -> completer.completeCall(resolved(function(c.pos(), n.name(), null,
-                    arguments(c.args(), c.lambdas(), ctx), typeArgs, TExpr.CallOrigin.PLAIN), ctx), mode);
+                    arguments(n.name(), c.args(), c.lambdas(), ctx), typeArgs, TExpr.CallOrigin.PLAIN), ctx), mode);
             case Expr.Member m -> {
                 CallInfo.Receiver receiver = receiver(m.receiver(), ctx);
-                List<CallInfo.Argument> args = arguments(c.args(), c.lambdas(), ctx);
+                List<CallInfo.Argument> args = arguments(m.name(), c.args(), c.lambdas(), ctx);
                 yield onReceiver(m.pos(), receiver, m.safe(), r -> completer.completeCall(
                         resolved(function(c.pos(), m.name(), r, args, typeArgs, TExpr.CallOrigin.PLAIN), ctx), mode));
             }
@@ -268,20 +276,30 @@ final class BodyChecker {
                 // (f)(x): the invoke of a value.
                 TExpr callee = expr(c.callee(), ctx, Mode.RECEIVER);
                 CallInfo info = new CallInfo(CallInfo.Kind.FUNCTION, "invoke", new CallInfo.ValueReceiver(callee),
-                        arguments(c.args(), c.lambdas(), ctx), typeArgs, TExpr.CallOrigin.PLAIN, true, c.pos());
+                        arguments("invoke", c.args(), c.lambdas(), ctx), typeArgs, TExpr.CallOrigin.PLAIN, true, c.pos());
                 yield completer.completeCall(resolved(info, ctx), mode);
             }
         };
     }
 
-    /** The arguments of a call, checked without completing their calls. */
-    private List<CallInfo.Argument> arguments(List<ValueArg> args, List<Expr> lambdas, Context ctx) {
-        List<CallInfo.Argument> result = new ArrayList<>();
-        for (ValueArg a : args) {
-            result.add(new CallInfo.Argument(expr(a.value(), ctx, Mode.DEPENDENT), a.name(), a.spread(), false));
+    /**
+     * The arguments of a call, checked without completing their calls.
+     *
+     * @param callee the name of the function called, the default label of lambdas in the arguments
+     */
+    private List<CallInfo.Argument> arguments(String callee, List<ValueArg> args, List<Expr> lambdas, Context ctx) {
+        String outerCallee = calleeNameForLambda;
+        calleeNameForLambda = callee;
+        try {
+            List<CallInfo.Argument> result = new ArrayList<>();
+            for (ValueArg a : args) {
+                result.add(new CallInfo.Argument(expr(a.value(), ctx, Mode.DEPENDENT), a.name(), a.spread(), false));
+            }
+            for (Expr l : lambdas) result.add(new CallInfo.Argument(expr(l, ctx, Mode.DEPENDENT), null, false, true));
+            return result;
+        } finally {
+            calleeNameForLambda = outerCallee;
         }
-        for (Expr l : lambdas) result.add(new CallInfo.Argument(expr(l, ctx, Mode.DEPENDENT), null, false, true));
-        return result;
     }
 
     /** Explicit type arguments; {@code _} is null, to be inferred. */
@@ -997,7 +1015,14 @@ final class BodyChecker {
     private TExpr operatorCall(int pos, String name, CallInfo.Receiver receiver, List<Expr> args,
                                TExpr.CallOrigin origin, Context ctx, Mode mode) {
         List<CallInfo.Argument> arguments = new ArrayList<>();
-        for (Expr a : args) arguments.add(new CallInfo.Argument(expr(a, ctx, Mode.DEPENDENT), null, false, false));
+        String outerCallee = calleeNameForLambda;
+        // Only infix calls label their lambdas.
+        calleeNameForLambda = origin == TExpr.CallOrigin.INFIX ? name : null;
+        try {
+            for (Expr a : args) arguments.add(new CallInfo.Argument(expr(a, ctx, Mode.DEPENDENT), null, false, false));
+        } finally {
+            calleeNameForLambda = outerCallee;
+        }
         return completer.completeCall(resolved(function(pos, name, receiver, arguments, List.of(), origin), ctx), mode);
     }
 
@@ -1113,11 +1138,14 @@ final class BodyChecker {
             throw error(r.pos(), r.label() == null ? "'return' is not allowed here" : "Unresolved label " + r.label());
         }
         KType returnType = target.function.returnType();
+        // A lambda whose return type is not known yet returns values completed with its call.
+        boolean isLambda = target.function.symbol() == null;
         TExpr value = null;
         if (r.value() != null) {
-            value = expr(r.value(), ctx, returnType != null ? Mode.expecting(returnType) : Mode.INDEPENDENT);
+            value = expr(r.value(), ctx, returnType != null ? Mode.expecting(returnType)
+                    : isLambda ? Mode.DEPENDENT : Mode.INDEPENDENT);
         }
-        if (target.isLambda) target.returns.add(value);
+        if (isLambda) target.returns.add(value);
         return new TExpr.Return(r.pos(), ts.nothing(), target.function, value);
     }
 
@@ -1135,7 +1163,8 @@ final class BodyChecker {
             case Expr.While w -> whileLoop(w, l.label(), ctx);
             case Expr.DoWhile w -> doWhileLoop(w, l.label(), ctx);
             case Expr.For f -> forLoop(f, l.label(), ctx);
-            // TODO: labeled lambdas
+            case Expr.Lambda lambda -> lambda(lambda, l.label(), ctx, mode);
+            case Expr.AnonymousFunction f -> lambda(f, l.label(), ctx, mode);
             default -> expr(inner, ctx, mode);
         };
     }
@@ -1190,6 +1219,231 @@ final class BodyChecker {
         TExpr body = blockInScope(w.pos(), statements, inner, Mode.INDEPENDENT);
         TExpr condition = expr(w.condition(), inner, Mode.expecting(bool()));
         return new TExpr.While(w.pos(), unit(), loop, condition, body, true);
+    }
+
+    // ==== Lambdas ====
+
+    /**
+     * A lambda or anonymous function. As an argument, it is analyzed with
+     * its call; otherwise, as FIR's ResolveTopLevelLambdasAsSyntheticCallArgument,
+     * as the argument of a call of {@code fun accept(p: expected)}.
+     *
+     * @param label the explicit label, if any
+     */
+    private TExpr lambda(Expr e, String label, Context ctx, Mode mode) {
+        LambdaExpression lambda = lambdaExpression(e, label != null ? label : calleeNameForLambda, ctx);
+        TExpr.Unresolved argument = new TExpr.Unresolved(e.pos(), null, lambda);
+        if (mode instanceof Mode.ContextDependent) return argument;
+        KType expected = mode instanceof Mode.WithExpectedType w ? adaptExpectedTypeForLambda(w.type(), lambda) : null;
+        KType parameterType = expected != null && !isUnitOrFlexibleUnit(expected) ? expected : ts.any();
+        Candidate candidate = synthetic().acceptCall(e.pos(), parameterType, argument,
+                w -> w.writeArgument(argument, parameterType));
+        return completer.completeCall(candidate, Mode.INDEPENDENT);
+    }
+
+    /** {@code val f: A.(B) -> C = { a, b -> ... }}: the receiver is a parameter, so expected as {@code (A, B) -> C}. */
+    private static KType adaptExpectedTypeForLambda(KType expected, LambdaExpression lambda) {
+        if (!lambda.hasExplicitParameterList || !FunctionTypes.isFunctionType(expected)) return expected;
+        if (!(Types.lowerBound(expected) instanceof KType.ClassType c)) return expected;
+        if (!c.extensionFunction() && c.contextParams() == 0) return expected;
+        if (lambda.declaredParamTypes.size() != c.args().size() - 1) return expected;
+        return new KType.ClassType(c.symbol(), c.args(), c.nullable(), false, 0);
+    }
+
+    /** The lambda with the types it declares resolved. */
+    private LambdaExpression lambdaExpression(Expr e, String label, Context ctx) {
+        List<KType> paramTypes = new ArrayList<>();
+        if (e instanceof Expr.Lambda l) {
+            for (Expr.Binding b : l.params()) paramTypes.add(b.type() == null ? null : resolveType(b.type(), ctx));
+            return new LambdaExpression(e, label, ctx, null, Collections.unmodifiableList(paramTypes), null, true,
+                    l.hasArrow(), false);
+        }
+        Decl.Function f = ((Expr.AnonymousFunction) e).function();
+        if (!f.modifiers().contextParams().isEmpty()) {
+            throw error(e.pos(), "Anonymous functions with context parameters are not supported yet");
+        }
+        for (Decl.Param p : f.params()) paramTypes.add(p.type() == null ? null : resolveType(p.type(), ctx));
+        KType receiver = f.receiver() == null ? null : resolveType(f.receiver(), ctx);
+        KType returnType = f.returnType() != null ? resolveType(f.returnType(), ctx)
+                : f.body() == null || f.body() instanceof Expr.Block ? unit() : null;
+        return new LambdaExpression(e, label, ctx, receiver, Collections.unmodifiableList(paramTypes), returnType, false,
+                true, f.modifiers().has(Modifier.SUSPEND));
+    }
+
+    /** Analyzes a lambda or callable reference during the completion of its call. */
+    void analyzePostponed(ConstraintSystem system, PostponedArgument argument, Candidate candidate) {
+        switch (argument) {
+            case LambdaAtom l -> analyzeLambda(system, l, candidate);
+            case LambdaWithTypeVariableAtom l ->
+                    analyzeLambda(system, arguments().transformToResolvedLambda(system, l, null), candidate);
+            default -> throw new IllegalStateException("Unexpected postponed argument " + argument);
+        }
+    }
+
+    /**
+     * Checks the body of a lambda whose parameter types are known, as FIR's
+     * PostponedArgumentsAnalyzer.analyzeLambda: the values it returns are
+     * arguments for its return type. With the return type not known yet,
+     * they are checked as arguments of the call, to be completed with it.
+     */
+    private void analyzeLambda(ConstraintSystem system, LambdaAtom atom, Candidate candidate) {
+        LambdaExpression lambda = atom.expression;
+        Substitution current = system.buildCurrentSubstitutor();
+        KType receiver = atom.receiverType == null ? null : current.apply(atom.receiverType);
+        List<KType> parameters = new ArrayList<>();
+        if (atom.coerceFirstParameterToExtensionReceiver) parameters.add(receiver);
+        for (KType t : atom.parameterTypes) parameters.add(current.apply(t));
+        if (atom.coerceFirstParameterToExtensionReceiver) receiver = null;
+        KType expectedReturnType;
+        if (system.containsOnlyFixedVariables(atom.returnType)) {
+            expectedReturnType = current.apply(atom.returnType);
+        } else if (willEventuallyBecomeUnit(system, atom.returnType)) {
+            expectedReturnType = unit();
+        } else {
+            expectedReturnType = null;
+        }
+
+        // The parameters.
+        Context outer = lambda.context;
+        LocalScope scope = new LocalScope();
+        List<LocalVariable> params = new ArrayList<>();
+        List<Expr.Binding> bindings = lambda.expr instanceof Expr.Lambda l ? l.params() : List.of();
+        List<Decl.Param> declared = lambda.expr instanceof Expr.AnonymousFunction f ? f.function().params() : List.of();
+        int count = lambda.isLambda ? bindings.size() : declared.size();
+        if (lambda.isLambda && count == 0 && atom.parameterTypes.size() == 1) {
+            LocalVariable it = new LocalVariable("it", lambdaInputType(lambda, parameters.getFirst(), false),
+                    LocalVariable.Kind.PARAMETER, false, null);
+            params.add(it);
+            scope.add(it);
+        }
+        for (int i = 0; i < count; i++) {
+            int pos = lambda.isLambda ? bindings.get(i).pos() : declared.get(i).pos();
+            if (i >= parameters.size()) throw error(pos, "The lambda has more parameters than expected");
+            String name = lambda.isLambda && bindings.get(i).destructuring() != null ? "<destruct>"
+                    : lambda.isLambda ? bindings.get(i).name() : declared.get(i).name();
+            LocalVariable v = new LocalVariable(name, lambdaInputType(lambda, parameters.get(i), false),
+                    LocalVariable.Kind.PARAMETER, false, null);
+            params.add(v);
+            if (!name.equals("_") && !name.equals("<destruct>")) scope.add(v);
+        }
+        if (receiver != null) receiver = lambdaInputType(lambda, receiver, true);
+
+        CheckedFunction function = new CheckedFunction(null, lambda.label, receiver, List.of(), params, expectedReturnType);
+        Context ctx = outer.withLocalScope(scope);
+        if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, function, lambda.label));
+        Context.FunctionFrame frame = new Context.FunctionFrame(function, lambda.label, lambda.isLambda, outer.function());
+        ctx = ctx.withFunction(frame);
+
+        // The body; a lambda returns the value of its last statement.
+        String outerCallee = calleeNameForLambda;
+        calleeNameForLambda = null;
+        TExpr body;
+        TExpr last = null;
+        try {
+            if (lambda.expr instanceof Expr.Lambda l) {
+                List<TExpr> prologue = new ArrayList<>();
+                for (int i = 0; i < bindings.size(); i++) {
+                    Decl.Destructuring d = bindings.get(i).destructuring();
+                    if (d != null) destructure(d, params.get(i), ctx, prologue);
+                }
+                TExpr block = block(l.pos(), l.body(), ctx,
+                        expectedReturnType != null ? Mode.expecting(expectedReturnType) : Mode.DEPENDENT);
+                List<TExpr> statements = new ArrayList<>(prologue);
+                statements.addAll(((TExpr.Block) block).statements());
+                body = new TExpr.Block(block.pos(), block.type(), statements);
+                if (!l.body().isEmpty()) {
+                    TExpr s = statements.getLast();
+                    if (TExprs.isStatement(s)) {
+                        // Not the last expression, which may be coerced to Unit, but a Unit value.
+                        frame.returns.add(unitValue(s.pos()));
+                    } else if (!(s instanceof TExpr.Return r && r.target() == function)) {
+                        last = s;
+                        frame.returns.add(s);
+                    }
+                }
+            } else {
+                Decl.Function f = ((Expr.AnonymousFunction) lambda.expr).function();
+                if (f.body() == null) throw error(f.pos(), "An anonymous function needs a body");
+                if (f.body() instanceof Expr.Block b) {
+                    body = block(b.pos(), b.statements(), ctx, Mode.INDEPENDENT);
+                } else {
+                    TExpr value = expr(f.body(), ctx,
+                            expectedReturnType != null ? Mode.expecting(expectedReturnType) : Mode.DEPENDENT);
+                    frame.returns.add(value);
+                    body = new TExpr.Return(f.body().pos(), ts.nothing(), function, value);
+                }
+            }
+        } finally {
+            calleeNameForLambda = outerCallee;
+        }
+        function.setBody(body);
+
+        // The returned values constrain the return type.
+        KType returnType = expectedReturnType != null ? expectedReturnType : current.apply(atom.returnType);
+        boolean explicitEmptyReturn = frame.returns.contains(null);
+        boolean lastCoercedToUnit = isUnitOrFlexibleUnit(returnType) || willEventuallyBecomeUnit(system, returnType)
+                || lambda.isLambda && explicitEmptyReturn;
+        ConstraintPosition position = ConstraintPosition.of(ConstraintPosition.Kind.LAMBDA_ARGUMENT);
+        List<TExpr> returned = new ArrayList<>();
+        boolean hasExpression = false;
+        for (TExpr value : frame.returns) {
+            TExpr r = value != null ? value : unitValue(lambda.pos());
+            returned.add(r);
+            boolean haveSubsystem = ArgumentChecker.addSubsystemFromArgument(system, r);
+            if (r == last && lastCoercedToUnit) {
+                // A call's type is not forced to Unit, as put in buildMap { put(k, v) }.
+                if (haveSubsystem) ArgumentChecker.addSubtypeConstraintIfCompatible(system, r.type(), returnType, position);
+                continue;
+            }
+            hasExpression = true;
+            // Nested lambdas are analyzed even with a contradiction.
+            if (!system.hasContradiction() || r instanceof TExpr.Unresolved u && u.state() instanceof LambdaExpression) {
+                arguments().resolveArgument(candidate, atom.containingCandidate, r, current.apply(atom.returnType),
+                        false, false);
+            }
+        }
+        if (!hasExpression) addLambdaReturnTypeUnitConstraint(system, atom, candidate, current);
+
+        atom.returnValues = returned;
+        atom.explicitEmptyReturn = explicitEmptyReturn;
+        FunctionTypes.Kind kind = atom.kind != null ? atom.kind.nonReflect() : FunctionTypes.Kind.FUNCTION;
+        KType type = FunctionTypes.create(ts.table(), kind, List.of(), receiver,
+                params.stream().map(LocalVariable::type).toList(), current.apply(atom.returnType));
+        atom.setResult(new TExpr.Lambda(lambda.pos(), type, function, !lambda.isLambda));
+    }
+
+    private void addLambdaReturnTypeUnitConstraint(ConstraintSystem system, LambdaAtom atom, Candidate candidate,
+                                                   Substitution current) {
+        if (system.hasContradiction()) return;
+        KType returnType = current.apply(atom.returnType);
+        ConstraintPosition position = ConstraintPosition.of(ConstraintPosition.Kind.LAMBDA_ARGUMENT);
+        if (ArgumentChecker.addSubtypeConstraintIfCompatible(system, unit(), returnType, position)) return;
+        if (atom.expectedType != null) {
+            candidate.addDiagnostic(Applicability.INAPPLICABLE, "The lambda returns Unit, not " + returnType);
+        } else {
+            system.addSubtypeConstraint(unit(), returnType, position);
+        }
+    }
+
+    private static boolean willEventuallyBecomeUnit(ConstraintSystem system, KType type) {
+        return !Types.isMarkedNullable(type) && system.hasUpperOrEqualUnitConstraint(type);
+    }
+
+    /**
+     * The type of a parameter or receiver of a lambda, approximated; it
+     * must not be a variable, as one that could not be inferred before.
+     */
+    private KType lambdaInputType(LambdaExpression lambda, KType type, boolean isReceiver) {
+        if (type instanceof KType.TypeVariableType) {
+            throw error(lambda.pos(), isReceiver ? "Cannot infer the receiver type of the lambda"
+                    : "Cannot infer a parameter type of the lambda");
+        }
+        return TypeApproximator.approximateToSuperTypeOrSelf(ts, type,
+                TypeApproximator.Config.INTERMEDIATE_APPROXIMATION_AFTER_COMPLETION);
+    }
+
+    private TExpr unitValue(int pos) {
+        return new TExpr.ObjectValue(pos, unit(), ts.table().requireClass("kotlin.Unit"));
     }
 
     // ==== Types ====

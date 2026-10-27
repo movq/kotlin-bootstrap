@@ -8,7 +8,7 @@ import kotlinbootstrap.types.TypeVariable;
 /**
  * An argument analyzed during the completion of its call, once the types
  * it depends on are known: a lambda or a callable reference. Until then it
- * is a {@link TExpr.Unresolved} with this as its state.
+ * is a {@link TExpr.Unresolved} whose state refers to it.
  */
 abstract class PostponedArgument implements PostponedAtom {
     private boolean analyzed;
@@ -17,6 +17,10 @@ abstract class PostponedArgument implements PostponedAtom {
     @Override
     public boolean analyzed() {
         return analyzed;
+    }
+
+    void setAnalyzed() {
+        this.analyzed = true;
     }
 
     /** The analyzed argument, whose types may still have the call's type variables. */
@@ -29,6 +33,13 @@ abstract class PostponedArgument implements PostponedAtom {
         this.analyzed = true;
         this.result = result;
     }
+
+    /**
+     * Makes this the atom of its expression. Each candidate of an
+     * overloaded call has its own atoms for the same expression; the one
+     * completed activates its own.
+     */
+    abstract void activate();
 
     /** Type variables the argument adds to the system, like a lambda's return type. */
     List<TypeVariable> typeVariables() {

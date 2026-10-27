@@ -1,8 +1,11 @@
 package kotlinbootstrap.infer;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
+import kotlinbootstrap.types.FunctionTypes;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeVariable;
 
@@ -23,6 +26,12 @@ public final class ConstraintSystemCompleter {
 
         /** Analyzes the argument, adding constraints for its output type to the system. */
         void analyze(PostponedAtom argument);
+
+        /**
+         * Replaces a lambda expected to have the type of a variable by one
+         * expected to have the function type built for it.
+         */
+        void transformToResolvedLambda(LambdaWithTypeVariableAsExpectedType argument, KType expectedType);
     }
 
     private ConstraintSystemCompleter() {
@@ -34,6 +43,16 @@ public final class ConstraintSystemCompleter {
      */
     public static void complete(ConstraintSystem c, CompletionMode mode, KType topLevelType, Context context) {
         VariableFixationFinder finder = new VariableFixationFinder(c);
+        PostponedArgumentInputTypes inputTypes = new PostponedArgumentInputTypes(c, finder);
+        Set<TypeVariable> topLevelTypeVariables = new LinkedHashSet<>();
+        if (topLevelType != null) {
+            InferenceTypes.contains(topLevelType, t -> {
+                TypeVariable v = InferenceTypes.typeVariable(t);
+                if (v != null) topLevelTypeVariables.add(v);
+                return false;
+            });
+        }
+        completion:
         while (true) {
             if (mode.shouldForkPointConstraintsBeResolved) c.resolveForkPointsConstraints();
 
@@ -54,11 +73,48 @@ public final class ConstraintSystemCompleter {
             // Nothing to do.
             if (postponedArguments.isEmpty() && variableForFixation == null) break;
 
-            // Stage 6: fix the next ready variable.
-            if (variableForFixation != null && variableForFixation.isReady()) {
-                fixVariable(c, c.notFixedTypeVariables().get(variableForFixation.variable()));
+            List<PostponedAtomWithRevisableExpectedType> withRevisableType = new ArrayList<>();
+            for (PostponedAtom a : postponedArguments) {
+                if (a instanceof PostponedAtomWithRevisableExpectedType r) withRevisableType.add(r);
+            }
+            TypeVariableDependencies dependencies =
+                    new TypeVariableDependencies(c.notFixedTypeVariables(), postponedArguments, topLevelType);
+
+            // Stage 2: build function types for arguments expected to have the type of a variable.
+            if (inputTypes.collectParameterTypesAndBuildNewExpectedTypes(withRevisableType, mode, dependencies,
+                    topLevelTypeVariables)) {
                 continue;
             }
+
+            if (mode.allLambdasShouldBeAnalyzed()) {
+                // Stage 3: fix variables for the parameter types of postponed arguments.
+                for (PostponedAtom argument : postponedArguments) {
+                    VariableFixationFinder.VariableForFixation next = inputTypes.findNextReadyVariableForParameterType(
+                            argument, postponedArguments, topLevelType, CompletionMode.FULL, dependencies);
+                    if (next != null && fixVariableIfReady(c, next)) continue completion;
+                }
+
+                // Stage 4: lambdas with function types built for them become lambdas expected to have those.
+                for (PostponedAtomWithRevisableExpectedType argument : withRevisableType) {
+                    KType revised = argument.revisedExpectedType();
+                    if (revised == null || !FunctionTypes.isFunctionType(revised)) continue;
+                    if (argument instanceof LambdaWithTypeVariableAsExpectedType lambda) {
+                        context.transformToResolvedLambda(lambda, revised);
+                        continue completion;
+                    }
+                }
+
+                // Stage 5: analyze the next argument with a revisable expected type.
+                if (!withRevisableType.isEmpty()) {
+                    context.analyze(withRevisableType.getFirst());
+                    continue;
+                }
+            }
+
+            // Stage 6: fix the next ready variable.
+            if (variableForFixation != null && fixVariableIfReady(c, variableForFixation)) continue;
+
+            // Stage 7, builder inference, is not supported yet.
 
             // Stage 9: "not enough information" for the variables without proper constraints.
             if (mode.fixNotInferredTypeVariablesToErrorType) {
@@ -104,6 +160,12 @@ public final class ConstraintSystemCompleter {
             // kotlinc fixes to an error type; the error makes the result unused anyway.
             c.fixVariable(variable, c.ts().nullableAny(), new ConstraintPosition(ConstraintPosition.Kind.FIX_VARIABLE, variable));
         }
+    }
+
+    private static boolean fixVariableIfReady(ConstraintSystem c, VariableFixationFinder.VariableForFixation v) {
+        if (!v.isReady()) return false;
+        fixVariable(c, c.notFixedTypeVariables().get(v.variable()));
+        return true;
     }
 
     private static void fixVariable(ConstraintSystem c, VariableWithConstraints v) {

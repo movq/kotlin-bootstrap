@@ -48,6 +48,11 @@ public final class ConstraintSystem {
     private final List<InitialConstraint> initialConstraints = new ArrayList<>();
     private final List<ConstraintError> errors = new ArrayList<>();
     private final List<ForkPoint> forkPoints = new ArrayList<>();
+    /** Function types built for postponed arguments, by their expected type's variable. */
+    private final Map<TypeVariable, KType> builtFunctionTypesByExpectedType = new HashMap<>();
+    /** Function types built for postponed arguments, by a variable of the call's type and the path to them in it. */
+    private final Map<TypeVariable, Map<List<PostponedArgumentInputTypes.PathStep>, KType>> builtFunctionTypesByTopLevelVariable =
+            new HashMap<>();
 
     private boolean inTransaction;
     private final List<TypeVariable> typeVariablesTransaction = new ArrayList<>();
@@ -162,7 +167,26 @@ public final class ConstraintSystem {
         forkPoints.addAll(other.forkPoints);
         errors.addAll(other.errors);
         fixed.putAll(other.fixed);
+        builtFunctionTypesByExpectedType.putAll(other.builtFunctionTypesByExpectedType);
+        builtFunctionTypesByTopLevelVariable.putAll(other.builtFunctionTypesByTopLevelVariable);
         hasContradictionInForkPointsCache = null;
+    }
+
+    KType builtFunctionType(TypeVariable expectedType) {
+        return builtFunctionTypesByExpectedType.get(expectedType);
+    }
+
+    void putBuiltFunctionType(TypeVariable expectedType, KType functionType) {
+        builtFunctionTypesByExpectedType.put(expectedType, functionType);
+    }
+
+    KType builtFunctionType(TypeVariable topLevelVariable, List<PostponedArgumentInputTypes.PathStep> path) {
+        return builtFunctionTypesByTopLevelVariable.getOrDefault(topLevelVariable, Map.of()).get(path);
+    }
+
+    void putBuiltFunctionType(TypeVariable topLevelVariable, List<PostponedArgumentInputTypes.PathStep> path,
+                              KType functionType) {
+        builtFunctionTypesByTopLevelVariable.computeIfAbsent(topLevelVariable, k -> new HashMap<>()).put(path, functionType);
     }
 
     // ==== Transactions ====

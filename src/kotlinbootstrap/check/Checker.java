@@ -39,6 +39,7 @@ import kotlinbootstrap.types.TypeSystem;
 public final class Checker {
     private final Resolver resolver;
     private final TypeSystem ts;
+    private final ArgumentChecker arguments;
     private final SyntheticCalls synthetic;
     /** Checked bodies by AST node: a {@link CheckedFunction} or, for an initializer, a {@link TExpr}. */
     private final Map<Object, Object> results = new HashMap<>();
@@ -54,9 +55,10 @@ public final class Checker {
     public Checker(Resolver resolver) {
         this.resolver = resolver;
         this.ts = new TypeSystem(resolver.table());
-        this.synthetic = new SyntheticCalls(ts, new ArgumentChecker(ts));
+        this.arguments = new ArgumentChecker(ts);
+        this.synthetic = new SyntheticCalls(ts, arguments);
         this.memberScopes = new MemberScopes(ts, resolver.types());
-        this.stages = new ResolutionStages(resolver.types(), new ArgumentChecker(ts), new VisibilityChecker(resolver));
+        this.stages = new ResolutionStages(resolver.types(), arguments, new VisibilityChecker(resolver));
         this.overloads = new OverloadResolver(ts, memberScopes, stages);
         resolver.setBodyTyper(this::inferredType);
     }
@@ -67,6 +69,10 @@ public final class Checker {
 
     Resolver resolver() {
         return resolver;
+    }
+
+    ArgumentChecker arguments() {
+        return arguments;
     }
 
     SyntheticCalls synthetic() {

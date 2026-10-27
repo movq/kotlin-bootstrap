@@ -1,13 +1,21 @@
 package kotlinbootstrap.check;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
+import kotlinbootstrap.infer.Constraint;
+import kotlinbootstrap.infer.ConstraintKind;
 import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
+import kotlinbootstrap.infer.VariableWithConstraints;
+import kotlinbootstrap.types.FunctionTypes;
 import kotlinbootstrap.types.KType;
+import kotlinbootstrap.types.SubtypeChecker;
 import kotlinbootstrap.types.TypeSystem;
+import kotlinbootstrap.types.TypeVariable;
 import kotlinbootstrap.types.Types;
 
 /**
@@ -38,10 +46,11 @@ final class ArgumentChecker {
         };
     }
 
-    /** Adds the system of the argument's uncompleted call, if any. */
-    static void addSubsystemFromArgument(ConstraintSystem system, TExpr argument) {
+    /** Adds the system of the argument's uncompleted call, if any; returns whether there was one. */
+    static boolean addSubsystemFromArgument(ConstraintSystem system, TExpr argument) {
         Candidate sub = subCandidate(argument);
         if (sub != null) system.addOtherSystem(sub.system);
+        return sub != null;
     }
 
     // ==== Arguments ====
@@ -53,9 +62,19 @@ final class ArgumentChecker {
      * @param expected null if there is nothing to check
      */
     void resolveArgument(Candidate candidate, TExpr argument, KType expected, boolean isReceiver, boolean isDispatch) {
+        resolveArgument(candidate, candidate, argument, expected, isReceiver, isDispatch);
+    }
+
+    /**
+     * @param candidate  the call whose system and diagnostics get the constraints
+     * @param containing the call the argument is of, which its lambdas are registered in: for a value
+     *                   returned from a lambda during completion, the lambda's call
+     */
+    void resolveArgument(Candidate candidate, Candidate containing, TExpr argument, KType expected,
+                         boolean isReceiver, boolean isDispatch) {
         switch (argument) {
-            case TExpr.Unresolved u when u.state() instanceof PostponedArgument p ->
-                    throw new IllegalStateException("Postponed arguments are not supported yet");
+            case TExpr.Unresolved u when u.state() instanceof LambdaExpression l ->
+                    preprocessLambda(candidate, containing, l, expected);
             case TExpr.SafeCall s -> {
                 if (TExprs.isStatement(s.selector())) {
                     checkApplicability(candidate, s, unit(), expected, isReceiver, isDispatch);
@@ -68,7 +87,7 @@ final class ArgumentChecker {
                 if (last == null) {
                     checkApplicability(candidate, b, b.type(), expected, false, false);
                 } else {
-                    resolveArgument(candidate, last, expected, isReceiver, isDispatch);
+                    resolveArgument(candidate, containing, last, expected, isReceiver, isDispatch);
                 }
             }
             default -> resolvePlainArgument(candidate, argument, expected, false, isReceiver, isDispatch);
@@ -189,6 +208,142 @@ final class ArgumentChecker {
             }
             case KType.IntegerLiteral l -> result.add(l.possibleTypes().getFirst().withNullable(l.nullable()));
         }
+    }
+
+    // ==== Lambdas ====
+
+    /**
+     * Registers the atom for a lambda argument, as FIR's
+     * preprocessLambdaArgument: one expected to have a variable's type,
+     * if the variable may become a function type, or one with its types.
+     */
+    private void preprocessLambda(Candidate candidate, Candidate containing, LambdaExpression lambda, KType expected) {
+        PostponedArgument atom = createLambdaWithTypeVariableAtomIfNeeded(candidate.system, containing, lambda, expected);
+        if (atom == null) atom = createResolvedLambdaAtom(candidate, candidate.system, containing, lambda, expected, false);
+        containing.postponedArguments.add(atom);
+        atom.activate();
+    }
+
+    private static LambdaWithTypeVariableAtom createLambdaWithTypeVariableAtomIfNeeded(
+            ConstraintSystem system, Candidate containing, LambdaExpression lambda, KType expected) {
+        if (expected == null || !system.isTypeVariable(expected)) return null;
+        VariableWithConstraints variable = system.notFixedTypeVariables().get((TypeVariable) SubtypeChecker.constructor(expected));
+        if (variable == null) return null;
+        // An explicit type argument that is not generic is not a function type.
+        for (Constraint c : variable.constraints()) {
+            if (c.kind() != ConstraintKind.EQUALITY
+                    || c.position().fromKind() != ConstraintPosition.Kind.EXPLICIT_TYPE_ARGUMENT) {
+                continue;
+            }
+            if (!(Types.lowerBound(c.type()) instanceof KType.ClassType ct) || ct.args().isEmpty()) return null;
+            break;
+        }
+        return new LambdaWithTypeVariableAtom(lambda, expected, containing);
+    }
+
+    /**
+     * Replaces a lambda expected to have a variable's type by one with its
+     * types, from the function type built for it if any, as FIR's
+     * transformToResolvedLambda.
+     */
+    LambdaAtom transformToResolvedLambda(ConstraintSystem system, LambdaWithTypeVariableAtom argument,
+                                         KType expectedType) {
+        KType fixed = system.buildCurrentSubstitutor().apply(expectedType != null ? expectedType : argument.expectedType());
+        LambdaAtom atom = createResolvedLambdaAtom(null, system, argument.containingCandidate, argument.expression,
+                fixed, true);
+        argument.setSubAtom(atom);
+        return atom;
+    }
+
+    /**
+     * The atom for a lambda with its types, which must make a subtype of
+     * the expected type.
+     *
+     * @param candidate for diagnostics; null during completion, where a mismatch is a contradiction
+     */
+    private LambdaAtom createResolvedLambdaAtom(Candidate candidate, ConstraintSystem system, Candidate containing,
+                                                LambdaExpression lambda, KType expected, boolean duringCompletion) {
+        LambdaAtom atom = extractLambdaInfoFromFunctionType(expected, lambda, duringCompletion, containing);
+        if (atom == null) atom = extractLambdaInfo(system, expected, lambda, containing);
+        if (expected != null) {
+            FunctionTypes.Kind kind = atom.kind != null ? atom.kind.nonReflect() : FunctionTypes.Kind.FUNCTION;
+            KType lambdaType = FunctionTypes.create(ts.table(), kind, atom.contextParameterTypes, atom.receiverType,
+                    atom.parameterTypes, atom.returnType);
+            ConstraintPosition position = ConstraintPosition.of(ConstraintPosition.Kind.ARGUMENT);
+            if (duringCompletion) {
+                system.addSubtypeConstraint(lambdaType, expected, position);
+            } else if (!addSubtypeConstraintIfCompatible(system, lambdaType, expected, position)) {
+                candidate.addDiagnostic(Applicability.INAPPLICABLE,
+                        "Argument type mismatch: " + lambdaType + " is not " + expected);
+            }
+        }
+        return atom;
+    }
+
+    /** The lambda's types from the function type expected of it, as kotlinc's extractLambdaInfoFromFunctionType. */
+    private LambdaAtom extractLambdaInfoFromFunctionType(KType expected, LambdaExpression lambda,
+                                                        boolean allowCoercionToExtensionReceiver, Candidate containing) {
+        if (expected == null || !(Types.lowerBound(expected) instanceof KType.ClassType expectedClass)) return null;
+        FunctionTypes.Kind expectedKind = FunctionTypes.kind(expectedClass.symbol());
+        if (expectedKind == null) return null;
+        // No conversion of anonymous functions to suspend functions.
+        FunctionTypes.Kind actualKind = lambda.isSuspend ? FunctionTypes.Kind.SUSPEND_FUNCTION
+                : !lambda.isLambda ? FunctionTypes.Kind.FUNCTION : null;
+        KType returnType = lambda.declaredReturnType != null ? lambda.declaredReturnType
+                : FunctionTypes.returnType(ts, expectedClass);
+        // A lambda has the receiver the expected type has; an anonymous function, the one it declares.
+        KType receiverType = lambda.isLambda ? FunctionTypes.receiverType(ts, expectedClass) : lambda.receiverType;
+        int contextParameterCount = lambda.isLambda ? expectedClass.contextParams() : 0;
+        List<KType> includingReceiver = FunctionTypes.valueParameterTypesIncludingReceiver(ts, expectedClass);
+        boolean isExtensionFunctionType = expectedClass.extensionFunction();
+        int toDrop = (receiverType != null && isExtensionFunctionType ? 1 : 0) + contextParameterCount;
+        List<KType> expectedParameters = includingReceiver.subList(toDrop, includingReceiver.size());
+
+        boolean coerceFirstParameterToExtensionReceiver = false;
+        List<KType> parameters;
+        if (lambda.isLambda && !lambda.hasExplicitParameterList && expectedParameters.size() < 2) {
+            // The implicit parameter it, if any.
+            parameters = expectedParameters;
+        } else {
+            List<KType> declared = lambda.declaredParamTypes;
+            if (allowCoercionToExtensionReceiver && lambda.isLambda && isExtensionFunctionType
+                    && includingReceiver.size() == declared.size()) {
+                coerceFirstParameterToExtensionReceiver = true;
+                declared = declared.subList(1, declared.size());
+            }
+            parameters = new ArrayList<>();
+            for (int i = 0; i < declared.size(); i++) {
+                KType t = declared.get(i);
+                // A parameter too many: any type does, as the arity does not match.
+                parameters.add(t != null ? t : i < expectedParameters.size() ? expectedParameters.get(i) : ts.nullableAny());
+            }
+        }
+        List<KType> contextParameters = includingReceiver.subList(0, contextParameterCount);
+        return new LambdaAtom(lambda, expectedClass, actualKind != null ? actualKind : expectedKind, receiverType,
+                contextParameters, parameters, returnType, null, coerceFirstParameterToExtensionReceiver, containing);
+    }
+
+    /** The lambda's types from its shape, with variables for those not declared, as kotlinc's extractLambdaInfo. */
+    private static LambdaAtom extractLambdaInfo(ConstraintSystem system, KType expected, LambdaExpression lambda,
+                                                Candidate containing) {
+        TypeVariable returnVariable = new TypeVariable("_R", null);
+        KType returnType = lambda.declaredReturnType;
+        if (returnType == null) {
+            returnType = returnVariable.type();
+            system.registerVariable(returnVariable);
+        }
+        List<KType> parameters = new ArrayList<>();
+        for (int i = 0; i < lambda.declaredParamTypes.size(); i++) {
+            KType t = lambda.declaredParamTypes.get(i);
+            if (t == null) {
+                TypeVariable v = new TypeVariable("_RP" + i, null);
+                system.registerVariable(v);
+                t = v.type();
+            }
+            parameters.add(t);
+        }
+        return new LambdaAtom(lambda, expected, null, lambda.receiverType, List.of(), parameters, returnType,
+                lambda.declaredReturnType == null ? returnVariable : null, false, containing);
     }
 
     private KType unit() {

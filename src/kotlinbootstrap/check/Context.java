@@ -57,7 +57,7 @@ record Context(FileContext file, Scope typeScope, List<LocalScope> locals, List<
         /** A lambda, which an unlabeled return passes through; not an anonymous function. */
         final boolean isLambda;
         final FunctionFrame outer;
-        /** For a lambda, the values its returns return. */
+        /** For a lambda or anonymous function, the values its returns return; null for none. */
         final List<TExpr> returns = new ArrayList<>();
 
         FunctionFrame(CheckedFunction function, String label, boolean isLambda, FunctionFrame outer) {

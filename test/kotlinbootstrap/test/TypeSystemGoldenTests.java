@@ -18,6 +18,7 @@ import kotlinbootstrap.infer.CompletionMode;
 import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.infer.ConstraintSystemCompleter;
+import kotlinbootstrap.infer.LambdaWithTypeVariableAsExpectedType;
 import kotlinbootstrap.infer.PostponedAtom;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.Resolver;
@@ -180,6 +181,11 @@ public final class TypeSystemGoldenTests {
 
             @Override
             public void analyze(PostponedAtom argument) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void transformToResolvedLambda(LambdaWithTypeVariableAsExpectedType argument, KType expectedType) {
                 throw new UnsupportedOperationException();
             }
         });

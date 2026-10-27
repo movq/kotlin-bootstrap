@@ -12,6 +12,7 @@ import kotlinbootstrap.infer.CompletionModeCalculator;
 import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.infer.ConstraintSystemCompleter;
+import kotlinbootstrap.infer.LambdaWithTypeVariableAsExpectedType;
 import kotlinbootstrap.infer.PostponedAtom;
 import kotlinbootstrap.symbols.Origin;
 import kotlinbootstrap.types.KType;
@@ -35,6 +36,7 @@ final class CallCompleter {
     }
 
     TExpr completeCall(Candidate candidate, Mode mode) {
+        for (PostponedArgument p : candidate.postponedArguments) p.activate();
         KType initialType = candidate.returnType();
         addConstraintFromExpectedType(candidate, initialType, mode);
         CompletionMode completionMode = mode.forceFullCompletion() ? CompletionMode.FULL
@@ -117,6 +119,11 @@ final class CallCompleter {
             public void analyze(PostponedAtom argument) {
                 checker.analyzePostponed(system, (PostponedArgument) argument, candidate);
             }
+
+            @Override
+            public void transformToResolvedLambda(LambdaWithTypeVariableAsExpectedType argument, KType expectedType) {
+                checker.arguments().transformToResolvedLambda(system, (LambdaWithTypeVariableAtom) argument, expectedType);
+            }
         });
     }
 
@@ -158,16 +165,22 @@ final class CallCompleter {
                                          Visitor<PostponedArgument> postponed, Map<Object, Boolean> visited) {
         switch (argument) {
             case TExpr.Unresolved u when u.state() instanceof Candidate c -> traverse(c, candidates, postponed, visited);
-            case TExpr.Unresolved u when u.state() instanceof PostponedArgument p -> {
-                if (visited.put(p, true) != null) return;
-                postponed.visit(p);
-                for (TExpr nested : p.nestedArguments()) traverseArgument(nested, candidates, postponed, visited);
-            }
+            case TExpr.Unresolved u when u.state() instanceof PostponedArgument p ->
+                    traversePostponed(p, candidates, postponed, visited);
+            case TExpr.Unresolved u when u.state() instanceof LambdaExpression l && l.atom != null ->
+                    traversePostponed(l.atom, candidates, postponed, visited);
             case TExpr.Block b when TExprs.lastExpression(b) != null ->
                     traverseArgument(TExprs.lastExpression(b), candidates, postponed, visited);
             case TExpr.SafeCall s -> traverseArgument(s.selector(), candidates, postponed, visited);
             default -> {
             }
         }
+    }
+
+    private static void traversePostponed(PostponedArgument p, Visitor<Candidate> candidates,
+                                          Visitor<PostponedArgument> postponed, Map<Object, Boolean> visited) {
+        if (visited.put(p, true) != null) return;
+        postponed.visit(p);
+        for (TExpr nested : p.nestedArguments()) traverseArgument(nested, candidates, postponed, visited);
     }
 }
