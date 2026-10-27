@@ -40,7 +40,7 @@ final class CompletionWriter {
     /** The type arguments of a call, for the type parameters of the candidate's symbol. */
     List<KType> typeArguments(Candidate candidate) {
         List<KType> result = new ArrayList<>();
-        for (var tp : candidate.symbol.typeParams()) {
+        for (var tp : candidate.callable().typeParams()) {
             KType substituted = substitute(candidate.substitutor.apply(new KType.TypeParamType(tp, false)));
             result.add(TypeApproximator.approximateToSuperTypeOrSelf(ts, substituted,
                     TypeApproximator.Config.TYPE_ARGUMENT_AFTER_COMPLETION));

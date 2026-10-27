@@ -94,21 +94,26 @@ final class ArgumentChecker {
                 isReceiver ? ConstraintPosition.Kind.RECEIVER : ConstraintPosition.Kind.ARGUMENT);
         if (isReceiver && isDispatch) {
             if (!Types.isMarkedOrFlexiblyNullable(expected) && Types.isMarkedNullable(argumentType)) {
-                candidate.errors.add("Nullable receiver of type " + argumentType);
+                candidate.addDiagnostic(Applicability.INAPPLICABLE_WRONG_RECEIVER,
+                        "Nullable receiver of type " + argumentType);
             }
             return;
         }
         if (addSubtypeConstraintIfCompatible(system, argumentType, expected, position)) return;
         // TODO: unstable smart casts
         if (!isReceiver) {
-            candidate.errors.add("Argument type mismatch: " + argumentType + " is not " + expected);
+            boolean isNull = argument instanceof TExpr.Const c && c.value() == null && ts.isNothing(c.type().withNullable(false));
+            boolean dueToNullability = !isNull && ts.isSubtype(argumentType, Types.makeNullable(expected));
+            candidate.addDiagnostic(dueToNullability ? Applicability.UNSAFE_CALL : Applicability.INAPPLICABLE,
+                    "Argument type mismatch: " + argumentType + " is not " + expected);
             return;
         }
         if (addSubtypeConstraintIfCompatible(system, argumentType, expected.withNullable(true), position)) {
-            candidate.errors.add("Unsafe call on nullable receiver of type " + argumentType);
+            candidate.addDiagnostic(Applicability.UNSAFE_CALL, "Unsafe call on nullable receiver of type " + argumentType);
         } else {
             system.addSubtypeConstraint(argumentType, expected, position);
-            candidate.errors.add("Wrong receiver: " + argumentType + " is not " + expected);
+            candidate.addDiagnostic(Applicability.INAPPLICABLE_WRONG_RECEIVER,
+                    "Wrong receiver: " + argumentType + " is not " + expected);
         }
     }
 

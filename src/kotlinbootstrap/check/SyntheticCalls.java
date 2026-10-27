@@ -125,7 +125,7 @@ final class SyntheticCalls {
                            Function<CompletionWriter, TExpr> builder) {
         ConstraintSystem system = new ConstraintSystem(ts);
         for (TExpr arg : args) ArgumentChecker.addSubsystemFromArgument(system, arg);
-        Candidate candidate = new Candidate(function, pos, system, args);
+        Candidate candidate = new Candidate(function, pos, system, null, args);
         candidate.builder = builder;
         candidate.createFreshVariables();
         List<ValueParamSymbol> params = function.signature().params();
@@ -138,7 +138,7 @@ final class SyntheticCalls {
 
     /** The type the parameter of the synthetic function for the argument has, with the candidate's variables. */
     static KType parameterType(Candidate candidate, int argument) {
-        List<ValueParamSymbol> params = candidate.symbol.signature().params();
+        List<ValueParamSymbol> params = candidate.callable().signature().params();
         return candidate.substitutor.apply(params.get(Math.min(argument, params.size() - 1)).type());
     }
 }

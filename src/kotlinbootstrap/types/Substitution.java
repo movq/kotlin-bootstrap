@@ -51,6 +51,10 @@ public final class Substitution {
         return map.get(key);
     }
 
+    public Map<Object, TypeArg> map() {
+        return map;
+    }
+
     /**
      * Substitutes into a type in a position where a projection cannot occur
      * (not a type argument). A star or projected argument there is an error.

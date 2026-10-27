@@ -9,6 +9,7 @@ import java.util.function.Function;
 import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.symbols.CallableSymbol;
+import kotlinbootstrap.symbols.Symbol;
 import kotlinbootstrap.symbols.TypeParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.Substitution;
@@ -27,26 +28,67 @@ import kotlinbootstrap.types.Types;
  * and until then is a {@link TExpr.Unresolved} with the candidate as its state.
  */
 final class Candidate {
-    final CallableSymbol symbol;
+    /** The function or property; or, for a name that is an object or class used as a value, the classifier. */
+    final Symbol symbol;
     final int pos;
     final ConstraintSystem system;
-    /** From the symbol's type parameters to the fresh variables. */
+    /** The call; null for a synthetic call. */
+    final CallInfo call;
+    /** The instance of a member: given, implicit or the object it was imported from; null if none. */
+    TExpr dispatchReceiver;
+    /** The receiver of an extension; null if not an extension. */
+    TExpr extensionReceiver;
+    /** Which receiver the explicit receiver of the call is, if any. */
+    ExplicitReceiverKind explicitReceiverKind = ExplicitReceiverKind.NONE;
+    TowerGroup group = TowerGroup.START_GROUP;
+    /** For a member, from the type parameters of its class to the arguments of the receiver's type. */
+    Substitution memberSubstitution = Substitution.EMPTY;
+    /** From the symbol's type parameters (and its class's, for a member) to the fresh variables and receiver's arguments. */
     Substitution substitutor = Substitution.EMPTY;
     List<TypeVariable> freshVariables = List.of();
     /** The arguments, in source order, which may contain uncompleted calls and postponed arguments. */
     final List<TExpr> arguments;
+    /** For each argument, the index of its parameter; filled in by mapping the arguments. */
+    int[] argumentMapping;
+    /** How many parameters take their default values. */
+    int numDefaults;
     /** Lambdas and callable references among the arguments, analyzed during completion. */
     final List<PostponedArgument> postponedArguments = new ArrayList<>();
-    /** Why the candidate does not apply; empty if it does. */
-    final List<String> errors = new ArrayList<>();
+    /** What is wrong with the candidate, if anything. */
+    final List<Diagnostic> diagnostics = new ArrayList<>();
+    private Applicability applicability = Applicability.RESOLVED;
     /** Builds the call's checked form once completed. */
     Function<CompletionWriter, TExpr> builder;
 
-    Candidate(CallableSymbol symbol, int pos, ConstraintSystem system, List<TExpr> arguments) {
+    enum ExplicitReceiverKind { NONE, DISPATCH, EXTENSION }
+
+    /** Why a candidate is not fully applicable, as FIR's ResolutionDiagnostic. */
+    record Diagnostic(Applicability applicability, String message) {
+        @Override
+        public String toString() {
+            return message;
+        }
+    }
+
+    Candidate(Symbol symbol, int pos, ConstraintSystem system, CallInfo call, List<TExpr> arguments) {
         this.symbol = symbol;
         this.pos = pos;
         this.system = system;
+        this.call = call;
         this.arguments = arguments;
+    }
+
+    CallableSymbol callable() {
+        return (CallableSymbol) symbol;
+    }
+
+    void addDiagnostic(Applicability applicability, String message) {
+        diagnostics.add(new Diagnostic(applicability, message));
+        if (applicability.compareTo(this.applicability) < 0) this.applicability = applicability;
+    }
+
+    Applicability applicability() {
+        return applicability;
     }
 
     /**
@@ -54,10 +96,13 @@ final class Candidate {
      * parameter's bounds, as FIR's CreateFreshTypeVariableSubstitutorStage.
      */
     void createFreshVariables() {
-        List<TypeParamSymbol> typeParams = symbol.typeParams();
-        if (typeParams.isEmpty()) return;
+        List<TypeParamSymbol> typeParams = symbol instanceof CallableSymbol c ? c.typeParams() : List.of();
+        if (typeParams.isEmpty()) {
+            substitutor = memberSubstitution;
+            return;
+        }
         List<TypeVariable> variables = new ArrayList<>();
-        Map<TypeParamSymbol, TypeArg> map = new HashMap<>();
+        Map<Object, TypeArg> map = new HashMap<>(memberSubstitution.map());
         for (TypeParamSymbol tp : typeParams) {
             TypeVariable v = new TypeVariable(tp.name(), tp);
             variables.add(v);
@@ -77,20 +122,25 @@ final class Candidate {
                         ConstraintPosition.of(ConstraintPosition.Kind.DECLARED_UPPER_BOUND));
             }
         }
-        if (system.hasContradiction()) errors.add("Contradictory bounds");
+        if (system.hasContradiction()) addDiagnostic(Applicability.INAPPLICABLE, "Contradictory bounds");
+    }
+
+    /** A type of the symbol's declaration with the candidate's variables and receiver's arguments. */
+    KType substitute(KType type) {
+        return substitutor.apply(type);
     }
 
     /** The type of the call before completion: the return type with the fresh variables. */
     KType returnType() {
-        return substitutor.apply(symbol.returnType());
+        return substitutor.apply(callable().returnType());
     }
 
     boolean isSuccessful() {
-        return errors.isEmpty() && !system.hasContradiction();
+        return applicability.isSuccess() && !system.hasContradiction();
     }
 
     @Override
     public String toString() {
-        return symbol + (isSuccessful() ? " OK" : " FAIL " + errors);
+        return symbol + (isSuccessful() ? " OK" : " FAIL " + diagnostics);
     }
 }

@@ -44,9 +44,9 @@ final class CallCompleter {
 
         ConstraintSystem system = candidate.system;
         system.prepareForReading();
-        if (system.hasContradiction() || !candidate.errors.isEmpty()) {
+        if (system.hasContradiction() || !candidate.applicability().isSuccess()) {
             throw checker.error(candidate.pos, "Inapplicable " + candidate.symbol.name() + ": "
-                    + (candidate.errors.isEmpty() ? system.errors() : candidate.errors));
+                    + (candidate.diagnostics.isEmpty() ? system.errors() : candidate.diagnostics));
         }
         return candidate.builder.apply(new CompletionWriter(ts, system.buildCurrentSubstitutor()));
     }
@@ -78,7 +78,7 @@ final class CallCompleter {
      * not inferred to Nothing from one of the branches.
      */
     private boolean isSyntheticCallThatShouldUseEqualityConstraint(Candidate candidate, KType expected) {
-        if (candidate.symbol.origin() != Origin.SYNTHETIC || candidate.symbol.owner() != null) return false;
+        if (candidate.symbol.origin() != Origin.SYNTHETIC || candidate.callable().owner() != null) return false;
         KType upper = Types.upperBound(expected);
         if (upper instanceof KType.ClassType c && c.args().isEmpty()
                 && (c.symbol() == ts.anyClass() || c.symbol().id().fqName().equals("kotlin.Unit"))) {
