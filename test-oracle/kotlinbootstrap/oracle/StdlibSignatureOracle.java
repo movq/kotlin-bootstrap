@@ -35,6 +35,7 @@ import kotlinbootstrap.Stdlib;
 import kotlinbootstrap.ast.Annotation;
 import kotlinbootstrap.ast.Decl;
 import kotlinbootstrap.ast.Modifier;
+import kotlinbootstrap.check.Checker;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.KotlinClassSymbol;
 import kotlinbootstrap.resolve.Resolver;
@@ -83,6 +84,8 @@ public final class StdlibSignatureOracle {
     private int skippedClasses;
     private int members;
     private int mappedJavaMembers;
+    private int inferred;
+    private int notInferred;
     private final List<String> mismatches = new ArrayList<>();
 
     private StdlibSignatureOracle(Resolver resolver) {
@@ -91,6 +94,7 @@ public final class StdlibSignatureOracle {
 
     public static void main(String[] args) throws Exception {
         Resolver resolver = Frontend.load(Stdlib.sourceRoots(Path.of(args[0])), "8");
+        new Checker(resolver);
         StdlibSignatureOracle oracle = new StdlibSignatureOracle(resolver);
         Map<String, ClassifierSymbol> sorted = new TreeMap<>();
         resolver.table().kotlinClassifiers().forEach((id, c) -> sorted.put(id.fqName(), c));
@@ -100,9 +104,10 @@ public final class StdlibSignatureOracle {
         oracle.checkTopLevel();
         oracle.mismatches.forEach(System.out::println);
         System.out.printf("%d classes (%d not in the reference jar), %d members and top-level declarations "
-                        + "compared, %d Java members of mapped classes skipped, %d mismatches%n",
-                oracle.classes, oracle.skippedClasses, oracle.members, oracle.mappedJavaMembers,
-                oracle.mismatches.size());
+                        + "compared (%d with inferred types, %d not inferred yet), "
+                        + "%d Java members of mapped classes skipped, %d mismatches%n",
+                oracle.classes, oracle.skippedClasses, oracle.members, oracle.inferred, oracle.notInferred,
+                oracle.mappedJavaMembers, oracle.mismatches.size());
         System.exit(oracle.mismatches.isEmpty() ? 0 : 1);
     }
 
@@ -262,7 +267,20 @@ public final class StdlibSignatureOracle {
         if (c instanceof FunctionSymbol) key.append(params);
         String header = c.visibility() + " " + c.modality() + ": ";
         members.computeIfAbsent(asReflectShows(key.toString()), k -> new ArrayList<>())
-                .add(asReflectShows(header + (Resolver.hasDeclaredType(c) ? TypeRenderer.render(c.returnType()) : "?")));
+                .add(asReflectShows(header + returnType(c)));
+    }
+
+    /** The declared or inferred type, or "?" if it cannot be inferred yet. */
+    private String returnType(CallableSymbol c) {
+        if (Resolver.hasDeclaredType(c)) return TypeRenderer.render(c.returnType());
+        try {
+            String type = TypeRenderer.render(c.returnType());
+            inferred++;
+            return type;
+        } catch (RuntimeException e) {
+            notInferred++;
+            return "?";
+        }
     }
 
     /**

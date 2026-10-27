@@ -126,7 +126,7 @@ public final class KotlinClassSymbol extends ClassSymbol {
      * for a nested class), then nested classes of the class, its companion
      * and its supertypes, then the outer scope.
      */
-    Scope bodyScope(boolean withTypeParams) {
+    public Scope bodyScope(boolean withTypeParams) {
         if (bodyScope == null) {
             staticBodyScope = Scope.of(this::findClassifierInBody, outerScope());
             bodyScope = Scope.typeParams(typeParams(), staticBodyScope);

@@ -43,6 +43,21 @@ public final class Types {
         };
     }
 
+    /** The question mark as written: never on intersection or definitely non-null types; of a flexible type, its lower bound's. */
+    public static boolean isMarkedNullable(KType t) {
+        return switch (t) {
+            case KType.Flexible f -> isMarkedNullable(f.lower());
+            case KType.Intersection i -> false;
+            case KType.DefinitelyNotNull d -> false;
+            default -> t.nullable();
+        };
+    }
+
+    /** Marked nullable, or flexible with a nullable upper bound, as kotlinc's isMarkedOrFlexiblyNullable. */
+    public static boolean isMarkedOrFlexiblyNullable(KType t) {
+        return isMarkedNullable(t) || t instanceof KType.Flexible f && isMarkedNullable(f.upper());
+    }
+
     /** Whether null is a value of the type, as kotlinc's canBeNull. */
     public static boolean canBeNull(KType t) {
         return canBeNull(t, new HashSet<>());

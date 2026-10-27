@@ -68,14 +68,8 @@ final class InferenceTypes {
         return new KType.Flexible(Types.makeDefinitelyNotNull(f.lower()), f.upper());
     }
 
-    /** The question mark as written: never on intersection or definitely non-null types; of a flexible type, its lower bound's. */
     static boolean isMarkedNullable(KType t) {
-        return switch (t) {
-            case KType.Flexible f -> isMarkedNullable(f.lower());
-            case KType.Intersection i -> false;
-            case KType.DefinitelyNotNull d -> false;
-            default -> t.nullable();
-        };
+        return Types.isMarkedNullable(t);
     }
 
     /** {@code (A..B?)} or {@code (A?..B)}. */

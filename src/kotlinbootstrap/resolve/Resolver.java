@@ -53,6 +53,8 @@ public final class Resolver {
     private final List<FileContext> files = new ArrayList<>();
     private final Map<Object, Symbol> expectedDeclarations = new HashMap<>();
     private final Map<String, ClassifierSymbol> builtinClassifiers = new HashMap<>();
+    private final Map<CallableSymbol, DeclarationContext> contexts = new HashMap<>();
+    private BodyTyper bodyTyper;
 
     public Resolver(SymbolTable table) {
         this.table = table;
@@ -74,6 +76,31 @@ public final class Resolver {
 
     public Map<Object, Symbol> expectedDeclarations() {
         return expectedDeclarations;
+    }
+
+    /** Infers the types of declarations that have none from their bodies. */
+    public interface BodyTyper {
+        /** The return type of a function, or type of a property, without a declared one. */
+        KType inferredType(CallableSymbol symbol);
+    }
+
+    public void setBodyTyper(BodyTyper bodyTyper) {
+        this.bodyTyper = bodyTyper;
+    }
+
+    /**
+     * Where a function or property is declared.
+     *
+     * @param scope the scope of type names inside the declaration: its type
+     *              parameters, then the scope around it
+     * @param cls   the containing class, null for a top-level or local declaration
+     */
+    public record DeclarationContext(FileContext file, Scope scope, KotlinClassSymbol cls) {
+    }
+
+    /** The context of a function or property declared in Kotlin source, or null. */
+    public DeclarationContext context(CallableSymbol symbol) {
+        return contexts.get(symbol);
     }
 
     // ==== Entering declarations ====
@@ -274,15 +301,16 @@ public final class Resolver {
                             boolean isStatic) {
         TypeParams tps = typeParams(f.typeParams(), f.constraints(), outer, file);
         Scope scope = tps.scope();
+        CallableSymbol[] self = new CallableSymbol[1];
         Supplier<KType> returnType;
         if (f.returnType() != null) {
             returnType = () -> types.resolve(f.returnType(), scope, file);
         } else if (f.body() == null || f.body() instanceof Expr.Block) {
             returnType = types::unit;
         } else {
-            returnType = () -> inferredType(file, f);
+            returnType = () -> inferredType(file, f, self[0]);
         }
-        return new FunctionSymbol(f.name(), Origin.KOTLIN_SOURCE, owner,
+        FunctionSymbol result = new FunctionSymbol(f.name(), Origin.KOTLIN_SOURCE, owner,
                 memberVisibility(f.modifiers()),
                 modality(f.modifiers(), cls, f.body() == null), keywords(f.modifiers()),
                 isStatic, f, tps::symbols,
@@ -291,31 +319,38 @@ public final class Resolver {
                         contextParams(f.modifiers(), scope, file),
                         valueParams(f.params(), scope, file)),
                 returnType);
+        self[0] = result;
+        contexts.put(result, new DeclarationContext(file, scope, (KotlinClassSymbol) cls));
+        return result;
     }
 
     PropertySymbol property(Decl.Property p, Symbol owner, Scope outer, FileContext file, ClassSymbol cls,
                             boolean isStatic) {
         TypeParams tps = typeParams(p.typeParams(), p.constraints(), outer, file);
         Scope scope = tps.scope();
+        CallableSymbol[] self = new CallableSymbol[1];
         Supplier<KType> type;
         if (p.type() != null) {
             type = () -> types.resolve(p.type(), scope, file);
         } else if (p.getter() != null && p.getter().returnType() != null) {
             type = () -> types.resolve(p.getter().returnType(), scope, file);
         } else {
-            type = () -> inferredType(file, p);
+            type = () -> inferredType(file, p, self[0]);
         }
         Visibility visibility = memberVisibility(p.modifiers());
         Visibility setterVisibility = p.isVar() && p.setter() != null ? visibility(p.setter().modifiers(), visibility) : null;
         boolean hasBody = p.initializer() != null || p.delegate() != null
                 || p.getter() != null && p.getter().body() != null;
-        return new PropertySymbol(p.name(), Origin.KOTLIN_SOURCE, owner, visibility,
+        PropertySymbol result = new PropertySymbol(p.name(), Origin.KOTLIN_SOURCE, owner, visibility,
                 modality(p.modifiers(), cls, !hasBody), keywords(p.modifiers()), isStatic, p,
                 p.isVar(), false, setterVisibility, tps::symbols,
                 () -> new CallableSymbol.Signature(
                         p.receiver() == null ? null : types.resolve(p.receiver(), scope, file),
                         contextParams(p.modifiers(), scope, file), List.of()),
                 type);
+        self[0] = result;
+        contexts.put(result, new DeclarationContext(file, scope, (KotlinClassSymbol) cls));
+        return result;
     }
 
     List<ValueParamSymbol> valueParams(List<Decl.Param> params, Scope scope, FileContext file) {
@@ -345,9 +380,9 @@ public final class Resolver {
         };
     }
 
-    /** Placeholder until the expression checker can infer declaration types from their bodies. */
-    private KType inferredType(FileContext file, Node decl) {
-        throw new ResolveException(file.file().source(), decl.pos(), "Type inference is not implemented yet");
+    private KType inferredType(FileContext file, Node decl, CallableSymbol symbol) {
+        if (bodyTyper == null) throw new ResolveException(file.file().source(), decl.pos(), "No body typer to infer the type");
+        return bodyTyper.inferredType(symbol);
     }
 
     // ==== Modifiers ====

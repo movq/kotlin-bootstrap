@@ -16,5 +16,8 @@ public interface PostponedAtom {
     /** The type analysis gives constraints for, e.g. a lambda's return type; or null. */
     KType outputType();
 
+    /** The type the argument is expected to have, e.g. the parameter's function type; or null. */
+    KType expectedType();
+
     boolean analyzed();
 }

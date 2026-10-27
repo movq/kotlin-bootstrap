@@ -290,4 +290,16 @@ public sealed interface TExpr {
     /** {@code object : A { ... }} */
     record ObjectLiteral(int pos, KType type, ClassSymbol cls) implements TExpr {
     }
+
+    // ==== While checking ====
+
+    /**
+     * Only while checking: a call not completed yet, whose type still has
+     * type variables, or a lambda or callable reference not analyzed yet.
+     * Completing the enclosing call replaces it.
+     *
+     * @param state the checker's record of the call or argument
+     */
+    record Unresolved(int pos, KType type, Object state) implements TExpr {
+    }
 }
