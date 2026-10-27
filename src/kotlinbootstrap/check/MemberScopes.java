@@ -5,7 +5,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import kotlinbootstrap.resolve.TypeResolver;
@@ -13,9 +15,12 @@ import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassKind;
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassifierSymbol;
+import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.Origin;
 import kotlinbootstrap.symbols.Overrides;
+import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.TypeParamSymbol;
+import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.symbols.Visibility;
 import kotlinbootstrap.types.CapturedTypeConstructor;
 import kotlinbootstrap.types.KType;
@@ -50,6 +55,8 @@ final class MemberScopes {
     private final Map<CallableSymbol, Set<CallableSymbol>> overridden = new HashMap<>();
     private final Map<ClassSymbol, Map<String, List<CallableSymbol>>> staticFunctions = new HashMap<>();
     private final Map<ClassSymbol, Map<String, List<CallableSymbol>>> staticProperties = new HashMap<>();
+    /** Synthetic Java properties by getter and setter, so that each is one symbol. */
+    private final Map<FunctionSymbol, Map<Optional<FunctionSymbol>, PropertySymbol>> synthetic = new HashMap<>();
 
     MemberScopes(TypeSystem ts, TypeResolver types) {
         this.ts = ts;
@@ -75,6 +82,134 @@ final class MemberScopes {
             }
         }
         return result;
+    }
+
+    // ==== Synthetic Java properties ====
+
+    /**
+     * The synthetic properties named so of the receiver, as FIR's
+     * FirSyntheticPropertiesScope: Java getters {@code getFoo()} and
+     * {@code isFoo()} as {@code foo}, with the setter of the same type if any.
+     */
+    List<Member> syntheticProperties(KType receiver, String name) {
+        List<Member> result = new ArrayList<>();
+        for (String getterName : possibleGetterNames(name)) {
+            for (Member getter : functions(receiver, getterName)) {
+                PropertySymbol p = syntheticProperty(receiver, name, getterName, getter);
+                if (p != null) result.add(new Member(p, getter.substitution()));
+            }
+        }
+        return result;
+    }
+
+    private PropertySymbol syntheticProperty(KType receiver, String name, String getterName, Member getter) {
+        FunctionSymbol f = (FunctionSymbol) getter.symbol();
+        if (!f.typeParams().isEmpty() || !f.signature().params().isEmpty() || f.isStatic()) return null;
+        if (!hasJavaOrigin(f)) return null;
+        // void getters are not properties.
+        if (f.returnType() instanceof KType.ClassType c && c.symbol().id().fqName().equals("kotlin.Unit")) return null;
+        KType type = getter.substitution().apply(f.returnType());
+        FunctionSymbol setter = null;
+        for (Member m : functions(receiver, setterName(getterName))) {
+            FunctionSymbol s = (FunctionSymbol) m.symbol();
+            if (!s.typeParams().isEmpty() || s.isStatic() || s.signature().params().size() != 1) continue;
+            ValueParamSymbol param = s.signature().params().getFirst();
+            // A setter taking a subtype of the getter's type would need the setter's overrides checked; not done.
+            if (!param.isVararg() && ts.equalTypes(type, m.substitution().apply(param.type()))) {
+                setter = s;
+                break;
+            }
+        }
+        FunctionSymbol matchingSetter = setter;
+        return synthetic.computeIfAbsent(f, k -> new HashMap<>()).computeIfAbsent(Optional.ofNullable(setter),
+                k -> PropertySymbol.syntheticJavaProperty(name, f, matchingSetter));
+    }
+
+    /**
+     * Whether the getter is, or overrides, a Java method that overrides
+     * nothing: since Kotlin 2.4, a getter only from Kotlin makes no property.
+     */
+    private boolean hasJavaOrigin(FunctionSymbol getter) {
+        if (isJavaRoot(getter)) return true;
+        for (CallableSymbol o : overridden(getter)) {
+            if (isJavaRoot(o)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isJavaRoot(CallableSymbol c) {
+        return (c.origin() == Origin.JAVA_SOURCE || c.origin() == Origin.JAVA_BINARY) && Overrides.overridden(c).isEmpty();
+    }
+
+    /** As kotlinc's possibleGetMethodNames: for {@code fooBar}, {@code getFooBar}; for {@code isFoo}, also itself. */
+    static List<String> possibleGetterNames(String property) {
+        if (property.isEmpty()) return List.of();
+        char first = property.charAt(0);
+        if (!Character.isJavaIdentifierStart(first) || first >= 'A' && first <= 'Z') return List.of();
+        List<String> result = new ArrayList<>();
+        if (startsWithIsPrefix(property)) result.add(property);
+        String capitalized = capitalizeAsciiOnly(property);
+        String firstWord = capitalizeFirstWord(property);
+        result.add("get" + capitalized);
+        if (!firstWord.equals(capitalized)) result.add("get" + firstWord);
+        // Not "uRL" for getURL.
+        result.removeIf(getter -> !property.equals(propertyNameByGetterName(getter)));
+        return result;
+    }
+
+    private static String propertyNameByGetterName(String getter) {
+        String name = propertyNameFromAccessorName(getter, "get", true);
+        return name != null ? name : propertyNameFromAccessorName(getter, "is", false);
+    }
+
+    private static String propertyNameFromAccessorName(String method, String prefix, boolean removePrefix) {
+        if (!method.startsWith(prefix) || method.length() == prefix.length()) return null;
+        char c = method.charAt(prefix.length());
+        if (c >= 'a' && c <= 'z') return null;
+        if (!removePrefix) return method;
+        String name = decapitalizeSmart(method.substring(prefix.length()));
+        return Character.isJavaIdentifierStart(name.charAt(0)) ? name : null;
+    }
+
+    private static boolean startsWithIsPrefix(String name) {
+        if (!name.startsWith("is") || name.length() == 2) return false;
+        char c = name.charAt(2);
+        return !(c >= 'a' && c <= 'z');
+    }
+
+    private static String setterName(String getterName) {
+        return "set" + getterName.substring(getterName.startsWith("get") ? 3 : 2);
+    }
+
+    private static boolean isAsciiUpper(String s, int i) {
+        char c = s.charAt(i);
+        return c >= 'A' && c <= 'Z';
+    }
+
+    private static boolean isAsciiLower(String s, int i) {
+        char c = s.charAt(i);
+        return c >= 'a' && c <= 'z';
+    }
+
+    private static String capitalizeAsciiOnly(String s) {
+        return isAsciiLower(s, 0) ? Character.toUpperCase(s.charAt(0)) + s.substring(1) : s;
+    }
+
+    /** "fooBar" is "FOOBar": the first word upper case. */
+    private static String capitalizeFirstWord(String s) {
+        int second = 1;
+        while (second < s.length() && isAsciiLower(s, second)) second++;
+        return s.substring(0, second).toUpperCase(Locale.ROOT) + s.substring(second);
+    }
+
+    /** "FooBar" is "fooBar", "URLConnection" is "urlConnection", "URL" is "url". */
+    private static String decapitalizeSmart(String s) {
+        if (s.isEmpty() || !isAsciiUpper(s, 0)) return s;
+        if (s.length() == 1 || !isAsciiUpper(s, 1)) return Character.toLowerCase(s.charAt(0)) + s.substring(1);
+        int i = 0;
+        while (i < s.length() && isAsciiUpper(s, i)) i++;
+        if (i == s.length()) return s.toLowerCase(Locale.ROOT);
+        return s.substring(0, i - 1).toLowerCase(Locale.ROOT) + s.substring(i - 1);
     }
 
     /** The inner classes named so of the receiver's class and its superclasses. */

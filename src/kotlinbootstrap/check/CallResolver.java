@@ -575,6 +575,12 @@ final class CallResolver {
                 consume(task, group, candidate(task, level, member.symbol(), m.dispatch(), m.extension(),
                         member.substitution()));
             }
+            if (info.kind() == CallInfo.Kind.VARIABLE && m.extension() == null) {
+                for (MemberScopes.Member member : scopes.syntheticProperties(type, info.name())) {
+                    consume(task, group, candidate(task, level, member.symbol(), m.dispatch(), null,
+                            member.substitution()));
+                }
+            }
         }
 
         /** As FIR's processConstructorsByName: the constructors of the first class of the name. */

@@ -14,6 +14,7 @@ import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.Modality;
 import kotlinbootstrap.symbols.Origin;
 import kotlinbootstrap.symbols.Overrides;
+import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeArg;
@@ -35,7 +36,7 @@ final class ResolutionStages {
     }
 
     private final List<Stage> variableAccess = List.of(this::checkHidden, this::checkVisibility,
-            this::initializeEmptyArgumentMap, this::createFreshVariables, this::checkDispatchReceiver,
+            this::discriminateSyntheticAndForbiddenProperties, this::initializeEmptyArgumentMap, this::createFreshVariables, this::checkDispatchReceiver,
             this::checkExtensionReceiver, this::checkLowPriority);
     private final List<Stage> function = List.of(this::checkHidden, this::checkVisibility, this::mapArguments,
             this::mapTypeArguments, this::createFreshVariables, this::checkDispatchReceiver,
@@ -77,6 +78,15 @@ final class ResolutionStages {
         }
         if (!visibility.isVisible(c.symbol, ctx, receiver)) {
             c.addDiagnostic(Applicability.K2_VISIBILITY_ERROR, c.symbol + " is not visible");
+        }
+    }
+
+    /** Synthetic Java properties lose to real ones, and an enum entry named {@code entries} to the entries. */
+    private void discriminateSyntheticAndForbiddenProperties(Candidate c, Context ctx) {
+        if (!(c.symbol instanceof PropertySymbol p)) return;
+        if (p.javaGetter() != null) c.addDiagnostic(Applicability.K2_SYNTHETIC_RESOLVED, "Synthetic property");
+        if (p.isEnumEntry() && p.name().equals("entries")) {
+            c.addDiagnostic(Applicability.RESOLVED_LOW_PRIORITY, "Enum entry named entries");
         }
     }
 
