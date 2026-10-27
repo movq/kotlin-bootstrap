@@ -99,6 +99,7 @@ final class BodyChecker {
             case Expr.Continue c -> new TExpr.Continue(c.pos(), ts.nothing(), loop(c.pos(), c.label(), ctx));
             case Expr.While w -> whileLoop(w, null, ctx);
             case Expr.DoWhile w -> doWhileLoop(w, null, ctx);
+            case Expr.For f -> forLoop(f, null, ctx);
             case Expr.Labeled l -> labeled(l, ctx, mode);
             default -> throw error(e.pos(), "Unsupported expression: " + e.getClass().getSimpleName());
         };
@@ -290,8 +291,7 @@ final class BodyChecker {
                              Function<CallInfo.Receiver, TExpr> selector) {
         if (!safe) return selector.apply(receiver);
         if (!(receiver instanceof CallInfo.ValueReceiver v)) throw error(pos, "A safe call needs a value as receiver");
-        LocalVariable subject = new LocalVariable("<safe>", Types.makeDefinitelyNotNull(v.value().type()),
-                LocalVariable.Kind.TEMPORARY, false, null);
+        LocalVariable subject = temporary("<safe>", Types.makeDefinitelyNotNull(v.value().type()));
         TExpr result = selector.apply(new CallInfo.ValueReceiver(new TExpr.LocalGet(pos, subject.type(), subject)));
         KType type = TExprs.isStatement(result) ? result.type() : Types.makeNullable(result.type());
         return new TExpr.SafeCall(pos, type, v.value(), subject, result);
@@ -377,7 +377,11 @@ final class BodyChecker {
                 m = mode instanceof Mode.WithExpectedType w
                         ? new Mode.WithExpectedType(w.type(), true, w.fromCast(), w.forceFullCompletion()) : mode;
             }
-            result.add(statement(statements.get(i), ctx, m));
+            if (statements.get(i) instanceof Decl.Destructuring d) {
+                destructuringDeclaration(d, ctx, result);
+            } else {
+                result.add(statement(statements.get(i), ctx, m));
+            }
         }
         TExpr.Block block = new TExpr.Block(pos, unit(), result);
         KType type;
@@ -427,6 +431,55 @@ final class BodyChecker {
         LocalVariable v = new LocalVariable(p.name(), type, LocalVariable.Kind.LOCAL, p.isVar(), null);
         ctx.locals().getLast().add(v);
         return new TExpr.LocalVarDecl(p.pos(), unit(), v, initializer);
+    }
+
+    /** {@code val (a, b) = x}: a temporary for {@code x}, then the entries. */
+    private void destructuringDeclaration(Decl.Destructuring d, Context ctx, List<TExpr> out) {
+        if (d.initializer() == null) throw error(d.pos(), "A destructuring declaration needs an initializer");
+        TExpr initializer = expr(d.initializer(), ctx, Mode.INDEPENDENT);
+        LocalVariable source = temporary("<destruct>", approximateLocalType(initializer.type()));
+        out.add(new TExpr.LocalVarDecl(d.pos(), unit(), source, initializer));
+        destructure(d, source, ctx, out);
+    }
+
+    /**
+     * The entries of a destructuring of a variable: {@code val a = x.component1()}
+     * and so on, skipping {@code _}; for the full form {@code (val a, val b)},
+     * which destructures by name, {@code val a = x.a}.
+     */
+    private void destructure(Decl.Destructuring d, LocalVariable source, Context ctx, List<TExpr> out) {
+        boolean byName = !d.squareBrackets() && d.valOrVar() == Decl.ValOrVar.NONE
+                && d.entries().stream().allMatch(e -> e.valOrVar() != Decl.ValOrVar.NONE);
+        for (int i = 0; i < d.entries().size(); i++) {
+            Decl.DestructuringEntry e = d.entries().get(i);
+            if (e.name().equals("_") && (!byName || e.sourceName() == null)) continue;
+            KType declared = e.type() == null ? null : resolveType(e.type(), ctx);
+            Mode mode = declared != null ? Mode.expecting(declared) : Mode.INDEPENDENT;
+            CallInfo.Receiver r = localValue(e.pos(), source);
+            TExpr value = byName
+                    ? completer.completeCall(resolved(variable(e.pos(), e.sourceName() != null ? e.sourceName() : e.name(),
+                            r), ctx), mode)
+                    : desugaredCall(e.pos(), "component" + (i + 1), r, ctx, mode);
+            boolean isVar = (byName ? e.valOrVar() : d.valOrVar()) == Decl.ValOrVar.VAR;
+            LocalVariable v = new LocalVariable(e.name(), declared != null ? declared : approximateLocalType(value.type()),
+                    LocalVariable.Kind.LOCAL, isVar, null);
+            if (!e.name().equals("_")) ctx.locals().getLast().add(v);
+            out.add(new TExpr.LocalVarDecl(e.pos(), unit(), v, value));
+        }
+    }
+
+    private static LocalVariable temporary(String name, KType type) {
+        return new LocalVariable(name, type, LocalVariable.Kind.TEMPORARY, false, null);
+    }
+
+    private static CallInfo.Receiver localValue(int pos, LocalVariable v) {
+        return new CallInfo.ValueReceiver(new TExpr.LocalGet(pos, v.type(), v));
+    }
+
+    /** A call of an operator convention without arguments, such as {@code iterator()} or {@code component1()}. */
+    private TExpr desugaredCall(int pos, String name, CallInfo.Receiver receiver, Context ctx, Mode mode) {
+        return completer.completeCall(resolved(function(pos, name, receiver, List.of(), List.of(),
+                TExpr.CallOrigin.DESUGARED), ctx), mode);
     }
 
     KType approximateLocalType(KType type) {
@@ -856,6 +909,7 @@ final class BodyChecker {
         return switch (inner) {
             case Expr.While w -> whileLoop(w, l.label(), ctx);
             case Expr.DoWhile w -> doWhileLoop(w, l.label(), ctx);
+            case Expr.For f -> forLoop(f, l.label(), ctx);
             // TODO: labeled lambdas
             default -> expr(inner, ctx, mode);
         };
@@ -866,6 +920,40 @@ final class BodyChecker {
         TExpr condition = expr(w.condition(), ctx, Mode.expecting(bool()));
         TExpr body = branch(w.pos(), w.body(), ctx.withLoop(loop), Mode.INDEPENDENT);
         return new TExpr.While(w.pos(), unit(), loop, condition, body, false);
+    }
+
+    /**
+     * {@code for (x in r) body}, desugared as kotlinc does: a temporary for
+     * {@code r.iterator()}, and a while loop on its {@code hasNext()} whose
+     * body begins with {@code val x = it.next()}.
+     */
+    private TExpr forLoop(Expr.For f, String label, Context ctx) {
+        TExpr.Loop loop = new TExpr.Loop(label);
+        TExpr iterator = desugaredCall(f.pos(), "iterator", receiver(f.iterable(), ctx), ctx, Mode.INDEPENDENT);
+        LocalVariable it = temporary("<iterator>", approximateLocalType(iterator.type()));
+        TExpr hasNext = desugaredCall(f.pos(), "hasNext", localValue(f.pos(), it), ctx, Mode.expecting(bool()));
+
+        Context inner = ctx.withLocalScope(new LocalScope()).withLoop(loop);
+        Expr.Binding b = f.variable();
+        KType declared = b.type() == null ? null : resolveType(b.type(), inner);
+        TExpr next = desugaredCall(b.pos(), "next", localValue(b.pos(), it), inner,
+                declared != null ? Mode.expecting(declared) : Mode.INDEPENDENT);
+        List<TExpr> statements = new ArrayList<>();
+        KType type = declared != null ? declared : approximateLocalType(next.type());
+        if (b.destructuring() != null) {
+            LocalVariable v = temporary("<destruct>", type);
+            statements.add(new TExpr.LocalVarDecl(b.pos(), unit(), v, next));
+            destructure(b.destructuring(), v, inner, statements);
+        } else {
+            LocalVariable v = new LocalVariable(b.name(), type, LocalVariable.Kind.LOCAL, false, null);
+            if (!b.name().equals("_")) inner.locals().getLast().add(v);
+            statements.add(new TExpr.LocalVarDecl(b.pos(), unit(), v, next));
+        }
+        statements.add(branch(f.pos(), f.body(), inner, Mode.INDEPENDENT));
+        TExpr body = new TExpr.Block(f.pos(), unit(), statements);
+        return new TExpr.Block(f.pos(), unit(), List.of(
+                new TExpr.LocalVarDecl(f.pos(), unit(), it, iterator),
+                new TExpr.While(f.pos(), unit(), loop, hasNext, body, false)));
     }
 
     /** The body and condition of a do-while share a scope: the condition sees the body's variables. */

@@ -657,7 +657,7 @@ final class CallResolver {
             c.memberSubstitution = memberSubstitution;
             c.invokeReceiver = task.invokeReceiver;
             c.builder = w -> build(w, c);
-            if (info.origin() == TExpr.CallOrigin.OPERATOR && (!(symbol instanceof FunctionSymbol)
+            if (info.origin().isOperator() && (!(symbol instanceof FunctionSymbol)
                     || task.invokeReceiver != null && !(task.invokeReceiver.symbol instanceof FunctionSymbol))) {
                 c.addDiagnostic(Applicability.K2_NOT_FUNCTION_AS_OPERATOR, symbol + " is not a function");
             }

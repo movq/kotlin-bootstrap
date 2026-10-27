@@ -88,7 +88,12 @@ public sealed interface TExpr {
         /** {@code a f b} */
         INFIX,
         /** part of a desugaring: iterator, hasNext, next, componentN, getValue, ... */
-        DESUGARED
+        DESUGARED;
+
+        /** Whether the function called must be an operator. */
+        public boolean isOperator() {
+            return this == OPERATOR || this == DESUGARED;
+        }
     }
 
     /**

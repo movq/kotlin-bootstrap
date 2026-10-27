@@ -292,7 +292,7 @@ final class ResolutionStages {
         if (!(c.symbol instanceof FunctionSymbol f)) return;
         TExpr.CallOrigin origin = c.call.origin();
         if (f.isConstructor()) {
-            if (origin == TExpr.CallOrigin.OPERATOR) {
+            if (origin.isOperator()) {
                 c.addDiagnostic(Applicability.CONVENTION_ERROR, "A constructor cannot be called as an operator");
             }
             return;
@@ -300,7 +300,7 @@ final class ResolutionStages {
         boolean eligibleOperator = isOperator(f) && c.call.name().equals(f.name());
         if (origin == TExpr.CallOrigin.INFIX && !isInfix(f)) {
             c.addDiagnostic(Applicability.CONVENTION_ERROR, f + " is not infix");
-        } else if (origin == TExpr.CallOrigin.OPERATOR && !eligibleOperator) {
+        } else if (origin.isOperator() && !eligibleOperator) {
             c.addDiagnostic(Applicability.CONVENTION_ERROR, f + " is not an operator");
         } else if (c.call.isImplicitInvoke() && !eligibleOperator) {
             c.addDiagnostic(Applicability.CONVENTION_ERROR, f + " is not an operator");
