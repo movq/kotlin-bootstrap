@@ -57,11 +57,12 @@ public final class ConstraintSystemCompleter {
             if (mode.shouldForkPointConstraintsBeResolved) c.resolveForkPointsConstraints();
 
             List<PostponedAtom> postponedArguments = notAnalyzed(context.postponedArguments());
-
-            // Stage 1: analyze postponed arguments with fixed input types.
             PostponedAtom withFixedInputTypes = postponedArguments.stream()
                     .filter(a -> a.inputTypes().stream().allMatch(c::containsOnlyFixedVariables))
                     .findFirst().orElse(null);
+            if (mode == CompletionMode.UNTIL_FIRST_LAMBDA && withFixedInputTypes != null) return;
+
+            // Stage 1: analyze postponed arguments with fixed input types.
             if (withFixedInputTypes != null) {
                 context.analyze(withFixedInputTypes);
                 continue;

@@ -42,10 +42,11 @@ final class CallResolver {
     private final OverloadResolver overloads;
     private final Checker checker;
     private final CallCompleter completer;
+    private final OverloadByLambdaReturnType byLambdaReturnType;
 
     private static final Set<String> HIDES_MEMBERS_NAMES = Set.of("forEach", "addSuppressed");
 
-    CallResolver(Checker checker, CallCompleter completer) {
+    CallResolver(Checker checker, CallCompleter completer, OverloadByLambdaReturnType byLambdaReturnType) {
         this.ts = checker.ts();
         this.types = checker.resolver().types();
         this.scopes = checker.memberScopes();
@@ -53,6 +54,7 @@ final class CallResolver {
         this.overloads = checker.overloads();
         this.checker = checker;
         this.completer = completer;
+        this.byLambdaReturnType = byLambdaReturnType;
     }
 
     /**
@@ -254,8 +256,8 @@ final class CallResolver {
 
         Result reduce() {
             if (!main.isSuccess()) return new Result(List.copyOf(main.candidates), false);
-            return new Result(List.copyOf(overloads.chooseMaximallySpecific(new LinkedHashSet<>(main.candidates))),
-                    true);
+            Set<Candidate> best = overloads.chooseMaximallySpecific(new LinkedHashSet<>(main.candidates));
+            return new Result(List.copyOf(byLambdaReturnType.reduceCandidates(best)), true);
         }
 
         // ==== Tasks ====

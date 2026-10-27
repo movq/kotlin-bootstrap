@@ -94,8 +94,8 @@ final class CommonSuperTypes {
      * supertypes; they stand for any type.
      */
     private static boolean isTypeVariable(KType t) {
-        if (t instanceof KType.TypeVariableType) return true;
         if (t instanceof KType.DefinitelyNotNull d) t = d.inner();
+        if (t instanceof KType.TypeVariableType) return true;
         return t instanceof KType.Captured c && !c.constructor().projection().isStar()
                 && c.constructor().projection().type() instanceof KType.TypeVariableType;
     }

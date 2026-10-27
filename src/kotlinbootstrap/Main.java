@@ -115,8 +115,17 @@ public final class Main {
             return;
         }
         Map<String, Integer> histogram = new HashMap<>();
-        for (RuntimeException e : report.failures()) {
-            if (printErrors) System.out.println(e instanceof CheckException || e instanceof ResolveException ? e : e.toString());
+        for (Checker.Failure f : report.failures()) {
+            RuntimeException e = f.error();
+            if (printErrors) {
+                System.out.println(e);
+                // An internal error: where it happened.
+                if (!(e instanceof CheckException || e instanceof ResolveException)) {
+                    System.out.println("\tin " + f.declaration());
+                    StackTraceElement[] trace = e.getStackTrace();
+                    for (int i = 0; i < Math.min(trace.length, 8); i++) System.out.println("\tat " + trace[i]);
+                }
+            }
             histogram.merge(errorKind(e), 1, Integer::sum);
         }
         histogram.entrySet().stream()

@@ -8,7 +8,9 @@ package kotlinbootstrap.infer;
  */
 public enum CompletionMode {
     FULL(true, true, true, false),
-    PARTIAL(false, false, false, true);
+    PARTIAL(false, false, false, true),
+    /** For overload resolution by lambda return type: until a lambda can be analyzed. */
+    UNTIL_FIRST_LAMBDA(false, true, false, false);
 
     final boolean allPostponedAtomsShouldBeAnalyzed;
     final boolean shouldForkPointConstraintsBeResolved;

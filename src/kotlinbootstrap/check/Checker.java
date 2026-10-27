@@ -94,7 +94,10 @@ public final class Checker {
     // ==== All declarations ====
 
     /** @param failures the first error of each declaration that could not be checked */
-    public record Report(int declarations, List<RuntimeException> failures) {
+    public record Report(int declarations, List<Failure> failures) {
+    }
+
+    public record Failure(CallableSymbol declaration, RuntimeException error) {
     }
 
     public Report checkAll() {
@@ -106,14 +109,14 @@ public final class Checker {
             if (c instanceof KotlinClassSymbol cls && !isExpect(cls)) collect(cls.members(), callables);
         }
         int count = 0;
-        List<RuntimeException> errors = new ArrayList<>();
+        List<Failure> errors = new ArrayList<>();
         for (CallableSymbol c : callables) {
             if (resolver.context(c) == null) continue;
             count++;
             try {
                 check(c);
             } catch (RuntimeException e) {
-                errors.add(e);
+                errors.add(new Failure(c, e));
             }
         }
         return new Report(count, errors);

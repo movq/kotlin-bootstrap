@@ -15,15 +15,15 @@ import kotlinbootstrap.types.TypeVariable;
 final class LambdaAtom extends PostponedArgument {
     final LambdaExpression expression;
     /** The type expected of the lambda; nullable. */
-    final KType expectedType;
+    KType expectedType;
     final FunctionTypes.Kind kind;
     /** Nullable. */
     final KType receiverType;
     final List<KType> contextParameterTypes;
     final List<KType> parameterTypes;
-    final KType returnType;
+    KType returnType;
     /** The variable for the return type, if one was made for it. */
-    final TypeVariable returnTypeVariable;
+    TypeVariable returnTypeVariable;
     /** {@code (T, P) -> R} passed for {@code T.(P) -> R}: the first parameter is the receiver. */
     final boolean coerceFirstParameterToExtensionReceiver;
     /** The call the lambda is an argument of; for a lambda returned from another, that lambda's call. */
@@ -47,6 +47,13 @@ final class LambdaAtom extends PostponedArgument {
         this.returnTypeVariable = returnTypeVariable;
         this.coerceFirstParameterToExtensionReceiver = coerceFirstParameterToExtensionReceiver;
         this.containingCandidate = containingCandidate;
+    }
+
+    /** Expects a function type with a new variable as return type, as FIR's prepareLambdaAtomForFactoryPattern. */
+    void replaceExpectedType(KType expectedType, TypeVariable returnTypeVariable) {
+        this.expectedType = expectedType;
+        this.returnType = returnTypeVariable.type();
+        this.returnTypeVariable = returnTypeVariable;
     }
 
     @Override

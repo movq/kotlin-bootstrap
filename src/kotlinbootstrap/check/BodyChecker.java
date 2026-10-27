@@ -48,7 +48,8 @@ final class BodyChecker {
         this.ts = owner.ts();
         this.source = source;
         this.completer = new CallCompleter(ts, this);
-        this.calls = new CallResolver(owner, completer);
+        this.calls = new CallResolver(owner, completer,
+                new OverloadByLambdaReturnType(owner.overloads(), completer, this));
     }
 
     CheckException error(int pos, String message) {
@@ -1287,6 +1288,20 @@ final class BodyChecker {
      * they are checked as arguments of the call, to be completed with it.
      */
     private void analyzeLambda(ConstraintSystem system, LambdaAtom atom, Candidate candidate) {
+        applyLambdaResults(system, atom, candidate, analyzeLambdaBody(system, atom));
+    }
+
+    /**
+     * What checking a lambda's body gives.
+     *
+     * @param returnValues the values it returns, explicitly or as its last expression
+     * @param last         the last expression, if returned
+     */
+    record LambdaResults(TExpr.Lambda lambda, List<TExpr> returnValues, TExpr last, boolean explicitEmptyReturn) {
+    }
+
+    /** Checks the body of a lambda, with the types the system gives it now. */
+    LambdaResults analyzeLambdaBody(ConstraintSystem system, LambdaAtom atom) {
         LambdaExpression lambda = atom.expression;
         Substitution current = system.buildCurrentSubstitutor();
         KType receiver = atom.receiverType == null ? null : current.apply(atom.receiverType);
@@ -1378,19 +1393,31 @@ final class BodyChecker {
         }
         function.setBody(body);
 
-        // The returned values constrain the return type.
-        KType returnType = expectedReturnType != null ? expectedReturnType : current.apply(atom.returnType);
         boolean explicitEmptyReturn = frame.returns.contains(null);
-        boolean lastCoercedToUnit = isUnitOrFlexibleUnit(returnType) || willEventuallyBecomeUnit(system, returnType)
-                || lambda.isLambda && explicitEmptyReturn;
-        ConstraintPosition position = ConstraintPosition.of(ConstraintPosition.Kind.LAMBDA_ARGUMENT);
         List<TExpr> returned = new ArrayList<>();
+        for (TExpr value : frame.returns) returned.add(value != null ? value : unitValue(lambda.pos()));
+        FunctionTypes.Kind kind = atom.kind != null ? atom.kind.nonReflect() : FunctionTypes.Kind.FUNCTION;
+        KType type = FunctionTypes.create(ts.table(), kind, List.of(), receiver,
+                params.stream().map(LocalVariable::type).toList(), current.apply(atom.returnType));
+        return new LambdaResults(new TExpr.Lambda(lambda.pos(), type, function, !lambda.isLambda), returned, last,
+                explicitEmptyReturn);
+    }
+
+    /**
+     * Adds the constraints the values a lambda returns give its return
+     * type, as FIR's applyResultsOfAnalyzedLambdaToCandidateSystem.
+     */
+    void applyLambdaResults(ConstraintSystem system, LambdaAtom atom, Candidate candidate, LambdaResults results) {
+        Substitution current = system.buildCurrentSubstitutor();
+        CheckedFunction function = results.lambda().function();
+        KType returnType = function.returnType() != null ? function.returnType() : current.apply(atom.returnType);
+        boolean lastCoercedToUnit = isUnitOrFlexibleUnit(returnType) || willEventuallyBecomeUnit(system, returnType)
+                || atom.expression.isLambda && results.explicitEmptyReturn();
+        ConstraintPosition position = ConstraintPosition.of(ConstraintPosition.Kind.LAMBDA_ARGUMENT);
         boolean hasExpression = false;
-        for (TExpr value : frame.returns) {
-            TExpr r = value != null ? value : unitValue(lambda.pos());
-            returned.add(r);
+        for (TExpr r : results.returnValues()) {
             boolean haveSubsystem = ArgumentChecker.addSubsystemFromArgument(system, r);
-            if (r == last && lastCoercedToUnit) {
+            if (r == results.last() && lastCoercedToUnit) {
                 // A call's type is not forced to Unit, as put in buildMap { put(k, v) }.
                 if (haveSubsystem) ArgumentChecker.addSubtypeConstraintIfCompatible(system, r.type(), returnType, position);
                 continue;
@@ -1403,13 +1430,9 @@ final class BodyChecker {
             }
         }
         if (!hasExpression) addLambdaReturnTypeUnitConstraint(system, atom, candidate, current);
-
-        atom.returnValues = returned;
-        atom.explicitEmptyReturn = explicitEmptyReturn;
-        FunctionTypes.Kind kind = atom.kind != null ? atom.kind.nonReflect() : FunctionTypes.Kind.FUNCTION;
-        KType type = FunctionTypes.create(ts.table(), kind, List.of(), receiver,
-                params.stream().map(LocalVariable::type).toList(), current.apply(atom.returnType));
-        atom.setResult(new TExpr.Lambda(lambda.pos(), type, function, !lambda.isLambda));
+        atom.returnValues = results.returnValues();
+        atom.explicitEmptyReturn = results.explicitEmptyReturn();
+        atom.setResult(results.lambda());
     }
 
     private void addLambdaReturnTypeUnitConstraint(ConstraintSystem system, LambdaAtom atom, Candidate candidate,
