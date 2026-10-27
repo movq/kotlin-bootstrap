@@ -5,21 +5,32 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.StringJoiner;
 import java.util.stream.Stream;
 
 import kotlinbootstrap.Frontend;
 import kotlinbootstrap.Stdlib;
 import kotlinbootstrap.ast.Decl;
+import kotlinbootstrap.infer.CompletionMode;
+import kotlinbootstrap.infer.ConstraintPosition;
+import kotlinbootstrap.infer.ConstraintSystem;
+import kotlinbootstrap.infer.ConstraintSystemCompleter;
+import kotlinbootstrap.infer.PostponedAtom;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.Resolver;
 import kotlinbootstrap.symbols.FunctionSymbol;
+import kotlinbootstrap.symbols.TypeParamSymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.types.KType;
+import kotlinbootstrap.types.Substitution;
 import kotlinbootstrap.types.TypeApproximator;
+import kotlinbootstrap.types.TypeArg;
 import kotlinbootstrap.types.TypeRenderer;
 import kotlinbootstrap.types.TypeSystem;
+import kotlinbootstrap.types.TypeVariable;
 
 /**
  * Golden tests for the type system. Each top-level function in a test
@@ -28,8 +39,12 @@ import kotlinbootstrap.types.TypeSystem;
  * {@code cst(a: A, b: B, ...)}, {@code intersect(a: A, b: B, ...)},
  * {@code localCst(...)} and {@code publicCst(...)} (approximated as the type
  * of a local or public declaration), {@code capture(a: A)},
- * {@code captureApproximate(a: A)}, {@code asSupertype(a: A, b: C<*>)}. The answers
- * for {@code foo.kt} are compared with {@code foo.txt}.
+ * {@code captureApproximate(a: A)}, {@code asSupertype(a: A, b: C<*>)}.
+ * {@code infer} is a call of itself: its parameters are pairs of a
+ * parameter type and an argument type (captured), and one named {@code expected} is
+ * the expected type of the call; the answer is the inferred type arguments
+ * and return type. The answers for {@code foo.kt} are compared with
+ * {@code foo.txt}.
  *
  * <p>Arguments: [--update] kotlin-source-root test-directory.
  */
@@ -77,7 +92,7 @@ public final class TypeSystemGoldenTests {
                 List<KType> types = f.signature().params().stream().map(ValueParamSymbol::type).toList();
                 out.append(f.name()).append(render(types)).append(" = ");
                 try {
-                    out.append(answer(ts, f.name(), types));
+                    out.append(f.name().equals("infer") ? infer(ts, f) : answer(ts, f.name(), types));
                 } catch (RuntimeException e) {
                     out.append("error: ").append(e);
                     if (System.getenv("KBC_TRACE") != null) e.printStackTrace();
@@ -117,6 +132,62 @@ public final class TypeSystemGoldenTests {
             }
             default -> throw new IllegalArgumentException("Unknown question " + question);
         };
+    }
+
+    private static String infer(TypeSystem ts, FunctionSymbol f) {
+        ConstraintSystem system = new ConstraintSystem(ts);
+        List<TypeVariable> variables = new ArrayList<>();
+        Map<TypeParamSymbol, TypeArg> map = new HashMap<>();
+        for (TypeParamSymbol tp : f.typeParams()) {
+            TypeVariable v = new TypeVariable(tp.name(), tp);
+            variables.add(v);
+            map.put(tp, TypeArg.of(v.type()));
+            system.registerVariable(v);
+        }
+        Substitution toVariables = new Substitution(map);
+        for (TypeVariable v : variables) {
+            for (KType bound : v.typeParam().bounds()) {
+                system.addSubtypeConstraint(v.type(), toVariables.apply(bound),
+                        ConstraintPosition.of(ConstraintPosition.Kind.DECLARED_UPPER_BOUND));
+            }
+        }
+        KType returnType = toVariables.apply(f.returnType());
+        List<ValueParamSymbol> params = f.signature().params();
+        for (int i = 0; i < params.size(); i++) {
+            if (params.get(i).name().equals("expected")) {
+                system.addSubtypeConstraint(returnType, params.get(i).type(),
+                        ConstraintPosition.of(ConstraintPosition.Kind.EXPECTED_TYPE));
+            } else {
+                // As kotlinc, argument types are captured.
+                KType argument = params.get(i + 1).type();
+                KType captured = ts.captureFromExpression(argument);
+                system.addSubtypeConstraint(captured != null ? captured : argument, toVariables.apply(params.get(i).type()),
+                        ConstraintPosition.of(ConstraintPosition.Kind.ARGUMENT));
+                i++;
+            }
+        }
+        system.startCompletion();
+        ConstraintSystemCompleter.complete(system, CompletionMode.FULL, returnType, new ConstraintSystemCompleter.Context() {
+            @Override
+            public List<TypeVariable> orderedTypeVariables() {
+                return variables;
+            }
+
+            @Override
+            public List<PostponedAtom> postponedArguments() {
+                return List.of();
+            }
+
+            @Override
+            public void analyze(PostponedAtom argument) {
+                throw new UnsupportedOperationException();
+            }
+        });
+        StringJoiner j = new StringJoiner(", ");
+        for (TypeVariable v : variables) j.add(v + " := " + TypeRenderer.render(system.fixedTypeVariables().get(v)));
+        String result = j + "; " + TypeRenderer.render(system.buildCurrentSubstitutor().apply(returnType));
+        if (!system.errors().isEmpty()) result += "; errors: " + system.errors();
+        return result;
     }
 
     private static String render(List<KType> types) {

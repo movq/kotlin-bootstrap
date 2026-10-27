@@ -163,7 +163,7 @@ public class SubtypeChecker {
     }
 
     /** Whether a bound of the parameter mentions it, e.g. {@code E : Enum<E>}, and has the given constructor if any. */
-    static boolean hasRecursiveBounds(TypeParamSymbol tp, Object selfConstructor) {
+    public static boolean hasRecursiveBounds(TypeParamSymbol tp, Object selfConstructor) {
         for (KType bound : tp.bounds()) {
             if (Types.contains(bound, t -> t instanceof KType.TypeParamType p && p.symbol() == tp)
                     && (selfConstructor == null || constructor(bound).equals(selfConstructor))) {

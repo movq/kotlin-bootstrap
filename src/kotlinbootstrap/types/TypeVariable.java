@@ -11,6 +11,7 @@ import kotlinbootstrap.symbols.TypeParamSymbol;
 public final class TypeVariable {
     private final String name;
     private final TypeParamSymbol typeParam;
+    private boolean containedInInvariantOrContravariantPositions;
 
     /** @param typeParam the type parameter the variable stands for an argument of, or null */
     public TypeVariable(String name, TypeParamSymbol typeParam) {
@@ -24,6 +25,19 @@ public final class TypeVariable {
 
     public TypeParamSymbol typeParam() {
         return typeParam;
+    }
+
+    /**
+     * Whether the variable occurs in an invariant or contravariant position
+     * of the call's return type, which decides how {@code Foo <: T?} is
+     * simplified. Set when the call's variables are created.
+     */
+    public boolean containedInInvariantOrContravariantPositions() {
+        return containedInInvariantOrContravariantPositions;
+    }
+
+    public void setContainedInInvariantOrContravariantPositions(boolean value) {
+        this.containedInInvariantOrContravariantPositions = value;
     }
 
     public KType.TypeVariableType type() {

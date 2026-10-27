@@ -98,10 +98,38 @@ public final class Substitution {
                 yield lower == f.lower() && upper == f.upper() ? arg
                         : new TypeArg(arg.variance(), Types.flexible(lower, upper));
             }
-            case KType.Intersection i -> new TypeArg(arg.variance(), Types.intersect(applyAll(i.components())));
-            case KType.Captured c -> arg;
+            case KType.Intersection i -> {
+                List<KType> components = applyAll(i.components());
+                boolean changed = false;
+                for (int k = 0; k < components.size(); k++) changed |= components.get(k) != i.components().get(k);
+                yield changed ? new TypeArg(arg.variance(), Types.intersect(components)) : arg;
+            }
+            case KType.Captured c -> {
+                KType.Captured s = substituteCaptured(c);
+                yield s == null ? arg : new TypeArg(arg.variance(), s);
+            }
             case KType.IntegerLiteral l -> arg;
         };
+    }
+
+    /**
+     * A captured type of the substituted projection, as kotlinc's
+     * ConeCapturedType.substitute: a new constructor, so the result is not
+     * equal to other substitutions of the same captured type. Null if the
+     * projected type does not change (supertypes are then not looked at).
+     */
+    private KType.Captured substituteCaptured(KType.Captured c) {
+        TypeArg projection = c.constructor().projection();
+        KType inner = c.lowerType() != null ? c.lowerType() : projection.type();
+        if (inner == null) return null;
+        KType substituted = apply(inner);
+        if (substituted == inner) return null;
+        if (substituted instanceof KType.Captured sc) return sc;
+        CapturedTypeConstructor constructor = new CapturedTypeConstructor(
+                new TypeArg(projection.variance(), substituted), c.constructor().typeParam(), c.constructor().status());
+        List<KType> supertypes = c.constructor().supertypes();
+        if (supertypes != null) constructor.setSupertypes(applyAll(supertypes));
+        return new KType.Captured(constructor, c.lowerType() != null ? substituted : null, c.nullable());
     }
 
     private static TypeArg replace(TypeArg arg, TypeArg replacement, boolean nullable) {

@@ -1,0 +1,25 @@
+infer(T, kotlin.Int) = T := kotlin.Int; kotlin.Int
+infer(T, kotlin.Int, T, kotlin.String) = T := kotlin.Comparable<*> & java.io.Serializable; kotlin.Comparable<*> & java.io.Serializable
+infer(T, types.inference.B, T, types.inference.C) = T := types.inference.A; types.inference.A
+infer(kotlin.collections.List<T>, kotlin.collections.List<kotlin.String>) = T := kotlin.String; kotlin.String
+infer(T?, kotlin.String?) = T := kotlin.String; kotlin.String
+infer(T, kotlin.String?) = T := kotlin.String?; kotlin.String?
+infer(T, kotlin.Int) = T := kotlin.Int; kotlin.Int
+infer(kotlin.String) = T := kotlin.String; kotlin.String
+infer(T, kotlin.Int, kotlin.Any?) = T := kotlin.Int; kotlin.Int
+infer(T, types.inference.B, types.inference.A) = T := types.inference.B; types.inference.B
+infer() = T := kotlin.Any?; kotlin.Any?; errors: [Not enough information to infer T]
+infer() = E := Captured(*); Captured(*)
+infer(kotlin.collections.MutableList<T>, kotlin.collections.MutableList<out kotlin.Number>) = T := Captured(out kotlin.Number); Captured(out kotlin.Number)
+infer(types.inference.Inv<T>, types.inference.Inv<kotlin.String>, T, kotlin.Int) = T := kotlin.String; kotlin.String; errors: [kotlin.Int is not a subtype of kotlin.String (kotlin.Int <: T from ARGUMENT), kotlin.Int is not a subtype of kotlin.String (T == kotlin.String from FIX_VARIABLE T)]
+infer(T, kotlin.Int, (T) -> R, (kotlin.Any) -> kotlin.String) = T := kotlin.Int, R := kotlin.String; kotlin.String
+infer(kotlin.collections.List<T>, kotlin.collections.List<kotlin.Nothing>) = T := kotlin.Nothing; kotlin.Nothing
+infer(T, kotlin.Nothing?) = T := kotlin.Nothing?; kotlin.Nothing?
+infer(kotlin.collections.Map<K, V>, kotlin.collections.Map<kotlin.String, kotlin.Int>) = K := kotlin.String, V := kotlin.Int; kotlin.Pair<kotlin.String, kotlin.Int>
+infer(S, kotlin.String) = T := kotlin.String, S := kotlin.String; kotlin.String
+infer(S, kotlin.String, kotlin.CharSequence) = T := kotlin.String, S := kotlin.String; kotlin.String
+infer(kotlin.collections.List<T>, kotlin.collections.List<kotlin.String>) = T := kotlin.String; kotlin.String
+infer(kotlin.String?) = T := kotlin.String?; kotlin.String?
+infer(T, kotlin.String, kotlin.Comparable<T>, kotlin.Comparable<kotlin.CharSequence>) = T := kotlin.String; kotlin.String
+infer(types.inference.In<T>, types.inference.In<types.inference.B>, types.inference.In<T>, types.inference.In<types.inference.C>) = T := types.inference.B & types.inference.C; types.inference.B & types.inference.C
+infer(kotlin.Array<T>, kotlin.Array<out types.inference.A>) = T := Captured(out types.inference.A); Captured(out types.inference.A)
