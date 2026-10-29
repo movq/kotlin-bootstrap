@@ -62,7 +62,7 @@ final class CallCompleter {
         } else {
             ConstraintSystem system = candidate.system;
             system.prepareForReading();
-            if (system.hasContradiction() || !candidate.applicability().isSuccess()) {
+            if (system.hasContradiction() || !candidate.applicability().isUsable()) {
                 throw checker.error(candidate.pos, "Inapplicable " + candidate.symbol.name() + ": "
                         + (candidate.diagnostics.isEmpty() ? system.errors() : candidate.diagnostics));
             }

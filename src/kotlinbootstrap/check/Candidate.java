@@ -67,6 +67,8 @@ final class Candidate {
     int numDefaults;
     /** Lambdas and callable references among the arguments, analyzed during completion. */
     final List<PostponedArgument> postponedArguments = new ArrayList<>();
+    /** How many of the resolution stages have been run. */
+    int passedStages;
     /** What is wrong with the candidate, if anything. */
     final List<Diagnostic> diagnostics = new ArrayList<>();
     private Applicability applicability = Applicability.RESOLVED;

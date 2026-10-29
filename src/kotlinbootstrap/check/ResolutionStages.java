@@ -66,14 +66,26 @@ final class ResolutionStages {
     }
 
     Applicability process(Candidate candidate, Context ctx) {
+        return process(candidate, ctx, true);
+    }
+
+    /**
+     * Runs the stages not run yet, past errors, as FIR's fullyProcessCandidate:
+     * for the candidates of a call without a successful one.
+     */
+    void fullyProcess(Candidate candidate, Context ctx) {
+        process(candidate, ctx, false);
+    }
+
+    private Applicability process(Candidate candidate, Context ctx, boolean stopOnFirstError) {
         List<Stage> stages = switch (candidate.call.kind()) {
             case FUNCTION -> function;
             case VARIABLE -> variableAccess;
             case CALLABLE_REFERENCE -> callableReference;
         };
-        for (Stage stage : stages) {
-            stage.check(candidate, ctx);
-            if (!candidate.isSuccessful()) break;
+        while (candidate.passedStages < stages.size()) {
+            stages.get(candidate.passedStages++).check(candidate, ctx);
+            if (stopOnFirstError && !candidate.isSuccessful()) break;
         }
         return candidate.applicability();
     }

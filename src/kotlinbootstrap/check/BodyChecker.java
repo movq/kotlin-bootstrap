@@ -287,7 +287,7 @@ final class BodyChecker {
 
     Candidate resolved(CallInfo info, CallResolver.Result result) {
         List<Candidate> candidates = result.candidates();
-        if (result.success() && candidates.size() == 1) return candidates.getFirst();
+        if (candidates.size() == 1 && candidates.getFirst().applicability().isUsable()) return candidates.getFirst();
         if (candidates.isEmpty()) throw error(info.pos(), "Unresolved reference " + info.name());
         if (result.success()) throw error(info.pos(), "Ambiguous call of " + info.name() + ": " + candidates);
         throw error(info.pos(), "No applicable " + info.name() + ": " + candidates);

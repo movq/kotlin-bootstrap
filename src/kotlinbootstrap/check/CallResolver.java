@@ -319,8 +319,20 @@ final class CallResolver {
             }
         }
 
+        /** As FIR's reduceCandidates: without success, the least bad of the candidates processed fully. */
         Result reduce() {
-            if (!main.isSuccess()) return new Result(List.copyOf(main.candidates), false);
+            if (!main.isSuccess()) {
+                if (main.candidates.isEmpty()) return new Result(List.of(), false);
+                for (Candidate c : main.candidates) stages.fullyProcess(c, ctx);
+                Applicability best = main.candidates.stream().map(Candidate::applicability)
+                        .max(Comparator.naturalOrder()).orElseThrow();
+                Set<Candidate> group = new LinkedHashSet<>();
+                for (Candidate c : main.candidates) {
+                    if (c.applicability() == best) group.add(c);
+                }
+                if (group.size() > 1) group = overloads.chooseMaximallySpecific(group);
+                return new Result(List.copyOf(group), false);
+            }
             Set<Candidate> best = overloads.chooseMaximallySpecific(new LinkedHashSet<>(main.candidates));
             return new Result(List.copyOf(byLambdaReturnType.reduceCandidates(best)), true);
         }

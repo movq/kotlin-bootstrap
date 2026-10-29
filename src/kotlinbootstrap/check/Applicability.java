@@ -36,6 +36,15 @@ enum Applicability {
         return compareTo(RESOLVED_LOW_PRIORITY) >= 0 && this != RESOLVED_WITH_ERROR;
     }
 
+    /**
+     * Whether a call is compiled with a candidate this applicable: if not
+     * successful, then only not visible, an error kotlinc lets code
+     * suppress with {@code @Suppress("INVISIBLE_REFERENCE")}.
+     */
+    boolean isUsable() {
+        return isSuccess() || this == K2_VISIBILITY_ERROR;
+    }
+
     /** Whether no candidate in a later group could be better. */
     boolean shouldStopResolve() {
         return compareTo(K2_SYNTHETIC_RESOLVED) >= 0;

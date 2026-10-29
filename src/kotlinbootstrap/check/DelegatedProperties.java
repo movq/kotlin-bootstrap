@@ -84,7 +84,7 @@ final class DelegatedProperties {
         checker.completer().runCompletion(parent, calls, CompletionMode.FULL, checker.unit());
         parent.prepareForReading();
         for (Candidate c : calls) {
-            if (parent.hasContradiction() || !c.applicability().isSuccess()) {
+            if (parent.hasContradiction() || !c.applicability().isUsable()) {
                 throw checker.error(c.pos, "Inapplicable " + c.symbol.name() + ": "
                         + (c.diagnostics.isEmpty() ? parent.errors() : c.diagnostics));
             }
