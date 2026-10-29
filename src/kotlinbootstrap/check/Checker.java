@@ -47,6 +47,7 @@ public final class Checker {
     private final Map<Object, Object> results = new HashMap<>();
     private final Map<Object, RuntimeException> failures = new HashMap<>();
     private final MemberScopes memberScopes;
+    private final SamResolver sam;
     private final ResolutionStages stages;
     private final OverloadResolver overloads;
     private final Map<FileContext, List<Context.TowerElement>> importingScopes = new HashMap<>();
@@ -71,7 +72,8 @@ public final class Checker {
         this.arguments = new ArgumentChecker(ts);
         this.synthetic = new SyntheticCalls(ts, arguments);
         this.memberScopes = new MemberScopes(ts, resolver.types());
-        this.stages = new ResolutionStages(ts, resolver.types(), arguments, new VisibilityChecker(resolver));
+        this.sam = new SamResolver(ts, resolver.types(), memberScopes);
+        this.stages = new ResolutionStages(ts, resolver.types(), arguments, sam, new VisibilityChecker(resolver));
         this.overloads = new OverloadResolver(ts, memberScopes, stages);
         resolver.setBodyTyper(this::inferredType);
     }
@@ -94,6 +96,10 @@ public final class Checker {
 
     MemberScopes memberScopes() {
         return memberScopes;
+    }
+
+    SamResolver sam() {
+        return sam;
     }
 
     ResolutionStages stages() {

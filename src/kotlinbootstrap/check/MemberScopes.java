@@ -299,7 +299,7 @@ final class MemberScopes {
     // ==== Members of classes ====
 
     /** The declared and inherited instance members named so, substituted in terms of the class's type parameters. */
-    private List<Member> classMembers(ClassSymbol cls, String name, boolean functions) {
+    List<Member> classMembers(ClassSymbol cls, String name, boolean functions) {
         Map<String, List<Member>> byName = (functions ? this.functions : this.properties)
                 .computeIfAbsent(cls, k -> new HashMap<>());
         List<Member> cached = byName.get(name);

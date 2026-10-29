@@ -76,6 +76,8 @@ final class Candidate {
     KType referenceType;
     /** For the callable of a reference, how it is adapted to the type expected; null if it is not. */
     TExpr.ReferenceAdaptation adaptation;
+    /** The arguments converted to SAM types, by identity; null if none. */
+    Map<TExpr, SamResolver.SamConversion> samConversions;
     /** Builds the call's checked form once completed. */
     Function<CompletionWriter, TExpr> builder;
 

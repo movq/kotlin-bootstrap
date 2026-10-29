@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
@@ -52,26 +53,56 @@ final class OverloadResolver {
         Candidate first = candidates.iterator().next();
         Set<Candidate> fixed = first.isSuccessful() && first.invokeReceiver != null
                 ? withMostSpecificInvokeReceiver(candidates) : candidates;
-        return chooseMaximallySpecificCandidates(filterOverrides(fixed), true, discriminateGenerics);
+        return chooseMaximallySpecificCandidates(filterOverrides(fixed),
+                new Flags(true, true, discriminateGenerics, true));
+    }
+
+    /** As FIR's DiscriminationFlags, of those that apply. */
+    private record Flags(boolean lowPrioritySams, boolean adaptationsInPostponedAtoms, boolean generics,
+                         boolean sams) {
     }
 
     /** As FIR's chooseMaximallySpecificCandidates with discrimination flags. */
-    private Set<Candidate> chooseMaximallySpecificCandidates(Set<Candidate> candidates,
-                                                             boolean adaptationsInPostponedAtoms,
-                                                             boolean discriminateGenerics) {
-        if (adaptationsInPostponedAtoms) {
-            Set<Candidate> filtered = new LinkedHashSet<>();
-            for (Candidate c : candidates) {
-                if (!hasPostponedAtomWithAdaptation(c)) filtered.add(c);
-            }
-            if (filtered.size() == 1) return filtered;
-            if (!filtered.isEmpty() && filtered.size() != candidates.size()) {
-                return chooseMaximallySpecificCandidates(filtered, false, discriminateGenerics);
-            }
+    private Set<Candidate> chooseMaximallySpecificCandidates(Set<Candidate> candidates, Flags flags) {
+        if (flags.lowPrioritySams()) {
+            Set<Candidate> r = filterByDiscriminationFlag(candidates, c -> !stages.shouldHaveLowPriorityDueToSam(c),
+                    new Flags(false, flags.adaptationsInPostponedAtoms(), flags.generics(), flags.sams()));
+            if (r != null) return r;
         }
-        Candidate best = findMaximallySpecificCall(candidates, false);
-        if (best == null && discriminateGenerics) best = findMaximallySpecificCall(candidates, true);
-        return best != null ? Set.of(best) : candidates;
+        if (flags.adaptationsInPostponedAtoms()) {
+            Set<Candidate> r = filterByDiscriminationFlag(candidates, c -> !hasPostponedAtomWithAdaptation(c),
+                    new Flags(flags.lowPrioritySams(), false, flags.generics(), flags.sams()));
+            if (r != null) return r;
+        }
+        Candidate best = findMaximallySpecificCall(candidates, false, false);
+        if (best == null && flags.generics()) best = findMaximallySpecificCall(candidates, true, false);
+        if (best != null) return Set.of(best);
+        if (flags.sams()) {
+            Set<Candidate> r = filterByDiscriminationFlag(candidates, c -> !usesSamConversionOrSamConstructor(c),
+                    new Flags(flags.lowPrioritySams(), flags.adaptationsInPostponedAtoms(), flags.generics(), false));
+            if (r != null) return r;
+        }
+        if (candidates.stream().anyMatch(OverloadResolver::usesSamConversionOrSamConstructor)) {
+            best = findMaximallySpecificCall(candidates, false, true);
+            if (best != null) return Set.of(best);
+        }
+        return candidates;
+    }
+
+    /** The candidates that pass, if they are some but not all of them, narrowed down further. */
+    private Set<Candidate> filterByDiscriminationFlag(Set<Candidate> candidates, Predicate<Candidate> filter,
+                                                      Flags newFlags) {
+        Set<Candidate> filtered = new LinkedHashSet<>();
+        for (Candidate c : candidates) {
+            if (filter.test(c)) filtered.add(c);
+        }
+        if (filtered.size() == 1) return filtered;
+        if (filtered.isEmpty() || filtered.size() == candidates.size()) return null;
+        return chooseMaximallySpecificCandidates(filtered, newFlags);
+    }
+
+    private static boolean usesSamConversionOrSamConstructor(Candidate c) {
+        return c.samConversions != null || c.symbol instanceof FunctionSymbol f && SamResolver.isSamConstructor(f);
     }
 
     private static boolean hasPostponedAtomWithAdaptation(Candidate c) {
@@ -133,10 +164,12 @@ final class OverloadResolver {
                                  boolean hasExtensionReceiver, boolean hasVarargs, int numDefaults) {
     }
 
-    private Candidate findMaximallySpecificCall(Set<Candidate> candidates, boolean discriminateGenerics) {
+    /** @param useOriginalSamTypes whether the parameters of SAM-converted arguments are compared as SAM types */
+    private Candidate findMaximallySpecificCall(Set<Candidate> candidates, boolean discriminateGenerics,
+                                               boolean useOriginalSamTypes) {
         if (candidates.size() <= 1) return candidates.isEmpty() ? null : candidates.iterator().next();
         List<FlatSignature> signatures = new ArrayList<>();
-        for (Candidate c : candidates) signatures.add(signature(c));
+        for (Candidate c : candidates) signatures.add(signature(c, useOriginalSamTypes));
         List<FlatSignature> best = new ArrayList<>();
         for (FlatSignature s : signatures) {
             boolean all = true;
@@ -170,7 +203,7 @@ final class OverloadResolver {
         return a.numDefaults() <= b.numDefaults();
     }
 
-    private FlatSignature signature(Candidate c) {
+    private FlatSignature signature(Candidate c, boolean useOriginalSamTypes) {
         if (c.referenceType != null) return referenceSignature(c);
         switch (c.symbol) {
             case FunctionSymbol f -> {
@@ -181,7 +214,10 @@ final class OverloadResolver {
                 for (int i = 0; i < args.size(); i++) {
                     int p = c.argumentMapping == null ? -1 : c.argumentMapping[i];
                     if (p < 0) continue;
-                    types.add(c.memberSubstitution.apply(stages.parameterType(params.get(p), args.get(i))));
+                    SamResolver.SamConversion sam = c.samConversions == null || useOriginalSamTypes ? null
+                            : c.samConversions.get(args.get(i).value());
+                    KType type = sam != null ? sam.functionType() : stages.parameterType(params.get(p), args.get(i));
+                    types.add(c.memberSubstitution.apply(type));
                 }
                 boolean hasVarargs = params.stream().anyMatch(ValueParamSymbol::isVararg);
                 return new FlatSignature(c, c.typeParams(), types, f.signature().receiver() != null, hasVarargs,

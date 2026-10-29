@@ -687,6 +687,10 @@ final class CallResolver {
                 case null, default -> {
                 }
             }
+            FunctionSymbol samConstructor = found == null ? null : checker.sam().samConstructor(found);
+            if (samConstructor != null) {
+                consume(task, group, candidate(task, level, samConstructor, null, null, Substitution.EMPTY));
+            }
         }
 
         /** As FIR's ScopeBasedTowerLevel.consumeCallableCandidate. */
@@ -783,7 +787,10 @@ final class CallResolver {
             int p = c.argumentMapping[i];
             ValueParamSymbol param = params.get(p);
             CallInfo.Argument arg = args.get(i);
-            TExpr value = w.writeArgument(arg.value(), c.substitute(stages.parameterType(param, arg)));
+            SamResolver.SamConversion sam = c.samConversions == null ? null : c.samConversions.get(arg.value());
+            TExpr value = w.writeArgument(arg.value(),
+                    c.substitute(sam != null ? sam.functionType() : stages.parameterType(param, arg)));
+            if (sam != null) value = new TExpr.SamConversion(value.pos(), w.callType(c, sam.samType()), value);
             if (param.isVararg()) {
                 if (varargIndex < 0) {
                     varargIndex = result.size();

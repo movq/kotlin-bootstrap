@@ -1,6 +1,7 @@
 package kotlinbootstrap.check;
 
 import java.util.Arrays;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 
@@ -16,6 +17,7 @@ import kotlinbootstrap.symbols.Origin;
 import kotlinbootstrap.symbols.Overrides;
 import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
+import kotlinbootstrap.types.FunctionTypes;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeArg;
 import kotlinbootstrap.types.TypeSystem;
@@ -29,7 +31,9 @@ import kotlinbootstrap.types.Types;
  */
 final class ResolutionStages {
     private final TypeResolver types;
+    private final TypeSystem ts;
     private final ArgumentChecker arguments;
+    private final SamResolver sam;
     private final VisibilityChecker visibility;
     private final CallableReferenceTypes references;
 
@@ -49,9 +53,12 @@ final class ResolutionStages {
             this::createFreshVariables, this::checkDispatchReceiver, this::checkExtensionReceiver,
             this::checkCallableReferenceExpectedType, this::checkLowPriority);
 
-    ResolutionStages(TypeSystem ts, TypeResolver types, ArgumentChecker arguments, VisibilityChecker visibility) {
+    ResolutionStages(TypeSystem ts, TypeResolver types, ArgumentChecker arguments, SamResolver sam,
+                     VisibilityChecker visibility) {
+        this.ts = ts;
         this.types = types;
         this.arguments = arguments;
+        this.sam = sam;
         this.visibility = visibility;
         this.references = new CallableReferenceTypes(ts, types, this, visibility);
     }
@@ -252,12 +259,87 @@ final class ResolutionStages {
         for (int i = 0; i < args.size(); i++) {
             int p = c.argumentMapping[i];
             if (p < 0) continue;
-            KType expected = c.substitute(parameterType(params.get(p), args.get(i)));
-            arguments.resolveArgument(c, args.get(i).value(), expected, i == 0 && receiverAsArgument, false);
+            TExpr value = args.get(i).value();
+            KType declared = parameterType(params.get(p), args.get(i));
+            KType withSamConversion = expectedTypeWithSamConversion(c, value, declared);
+            KType expected = c.substitute(withSamConversion != null ? withSamConversion : declared);
+            arguments.resolveArgument(c, value, expected, i == 0 && receiverAsArgument, false);
         }
         if (c.system.hasContradiction() && !args.isEmpty()) {
             c.addDiagnostic(Applicability.INAPPLICABLE, "Inapplicable: " + c.system.errors());
         }
+    }
+
+    /** The function type of the SAM type of a parameter, if the argument is to be converted to it. */
+    private KType expectedTypeWithSamConversion(Candidate c, TExpr argument, KType declared) {
+        if (FunctionTypes.isFunctionType(declared)) return null;
+        SamResolver.SamConversion conversion = sam.conversion(declared);
+        if (conversion == null || !shouldUseSamConversion(c, argument, declared)) return null;
+        if (c.samConversions == null) c.samConversions = new IdentityHashMap<>();
+        c.samConversions.put(argument, conversion);
+        return conversion.functionType();
+    }
+
+    private boolean shouldUseSamConversion(Candidate c, TExpr argument, KType declared) {
+        if (argument instanceof TExpr.Unresolved u
+                && (u.state() instanceof LambdaExpression || u.state() instanceof CallableReferenceExpression)) {
+            return true;
+        }
+        if (isCallWithGenericReturnTypeAndMatchingLambda(argument)) return true;
+        if (c.system.isSubtypeConstraintCompatible(argument.type(), c.substitute(declared))) return false;
+        return FunctionTypes.isFunctionTypeOrSubtype(ts, argument.type());
+    }
+
+    /**
+     * Whether the argument is a call whose type is a variable that a lambda
+     * among its arguments is expected to be of, as {@code run { {} }}: that
+     * is likely a function type, as for a lambda.
+     */
+    private static boolean isCallWithGenericReturnTypeAndMatchingLambda(TExpr argument) {
+        Candidate sub = switch (argument) {
+            case TExpr.Unresolved u when u.state() instanceof Candidate s -> s;
+            case TExpr.SafeCall s when s.selector() instanceof TExpr.Unresolved u
+                    && u.state() instanceof Candidate sc -> sc;
+            default -> null;
+        };
+        if (sub == null || !(Types.lowerBound(argument.type()) instanceof KType.TypeVariableType t)) return false;
+        for (PostponedArgument p : sub.postponedArguments) {
+            if (p instanceof LambdaWithTypeVariableAtom l
+                    && Types.lowerBound(l.expectedType()) instanceof KType.TypeVariableType e
+                    && e.variable() == t.variable()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a Kotlin candidate converts an argument to a Java SAM type, so
+     * that it loses to one that does not, as FIR's shouldHaveLowPriorityDueToSAM.
+     */
+    boolean shouldHaveLowPriorityDueToSam(Candidate c) {
+        if (c.samConversions == null || isJavaApplicable(c) || c.argumentMapping == null) return false;
+        List<ValueParamSymbol> params = c.callable().signature().params();
+        for (int p : c.argumentMapping) {
+            if (p < 0) continue;
+            KType type = params.get(p).type();
+            if (sam.isSamType(type) && Types.lowerBound(type) instanceof KType.ClassType t && (t.symbol().origin() == Origin.JAVA_SOURCE || t.symbol().origin() == Origin.JAVA_BINARY)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isJavaApplicable(Candidate c) {
+        if (!(c.symbol instanceof FunctionSymbol f)) return false;
+        return isJava(f) || !f.isConstructor() && overridesJava(f);
+    }
+
+    private static boolean overridesJava(CallableSymbol s) {
+        for (CallableSymbol o : Overrides.overridden(s)) {
+            if (isJava(o) || overridesJava(o)) return true;
+        }
+        return false;
     }
 
     /** As FIR's EagerResolveOfCallableReferences. */
