@@ -22,6 +22,7 @@ import kotlinbootstrap.symbols.ClassifierSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.Modality;
 import kotlinbootstrap.symbols.PropertySymbol;
+import kotlinbootstrap.symbols.TypeParamSymbol;
 import kotlinbootstrap.syntax.SourceFile;
 import kotlinbootstrap.types.FunctionTypes;
 import kotlinbootstrap.types.KType;
@@ -30,6 +31,7 @@ import kotlinbootstrap.types.TypeApproximator;
 import kotlinbootstrap.types.TypeArg;
 import kotlinbootstrap.types.TypeSystem;
 import kotlinbootstrap.types.Types;
+import kotlinbootstrap.types.Variance;
 
 /**
  * Checks the expressions of one file, as FIR's body resolve transformers:
@@ -132,6 +134,7 @@ final class BodyChecker {
             case Expr.Lambda l -> lambda(l, null, ctx, mode);
             case Expr.AnonymousFunction f -> lambda(f, null, ctx, mode);
             case Expr.ObjectLiteral o -> objectLiteral(o, ctx);
+            case Expr.ClassLiteral c -> classLiteral(c, ctx);
             default -> throw error(e.pos(), "Unsupported expression: " + e.getClass().getSimpleName());
         };
     }
@@ -476,6 +479,61 @@ final class BodyChecker {
                     owner.localClass(c, this, ctx, ctx.locals().getLast()));
             default -> throw error(d.pos(), "Unsupported local declaration: " + d.getClass().getSimpleName());
         };
+    }
+
+    /**
+     * {@code A::class}, of type {@code KClass<A>}, with star projections for
+     * arguments not given; or {@code a::class}, of type {@code KClass<out A>}
+     * for the type of {@code a}. As FIR, a value of the name comes first.
+     */
+    private TExpr classLiteral(Expr.ClassLiteral c, Context ctx) {
+        if (c.receiver() == null) throw error(c.pos(), "'::class' needs a class or value on the left");
+        Expr lhs = c.receiver();
+        boolean isType = lhs instanceof Expr.TypeApplication
+                || lhs instanceof Expr.Name n && ctx.findLocal(n.name()) == null
+                        && ctx.findClassifier(n.name()) instanceof TypeParamSymbol;
+        TExpr value = null;
+        if (!isType) {
+            CallInfo.Receiver r = receiver(lhs, ctx);
+            switch (r) {
+                case CallInfo.Qualifier q when q.classifier() != null -> isType = true;
+                case CallInfo.ValueReceiver v -> value = v.value();
+                default -> throw error(c.pos(), "'::class' needs a class or value on the left");
+            }
+        }
+        TypeArg arg;
+        if (isType) {
+            TypeRef ref = asType(lhs);
+            if (ref == null) throw error(c.pos(), "Unsupported left side of '::class'");
+            KType type = owner.resolver().types().resolveAllowingBare(ref, ctx.typeScope(), ctx.file());
+            if (BareTypes.isBare(type) && Types.lowerBound(type) instanceof KType.ClassType bare) {
+                type = new KType.ClassType(bare.symbol(),
+                        Collections.nCopies(bare.symbol().typeParams().size(), TypeArg.STAR), bare.nullable());
+            }
+            arg = TypeArg.of(type);
+        } else {
+            arg = new TypeArg(Variance.OUT, value.type());
+        }
+        KType.ClassType kclass = owner.resolver().types().classType("kotlin.reflect.KClass", arg);
+        return new TExpr.ClassReference(c.pos(), kclass, arg.type(), value);
+    }
+
+    /** A possibly qualified name with type arguments, as a type; null if not one. */
+    private static TypeRef asType(Expr e) {
+        List<TypeRef.TypeArg> args = List.of();
+        if (e instanceof Expr.TypeApplication t) {
+            args = t.typeArgs();
+            e = t.expr();
+        }
+        int pos = e.pos();
+        List<TypeRef.Segment> segments = new ArrayList<>();
+        while (e instanceof Expr.Member m && !m.safe()) {
+            segments.addFirst(new TypeRef.Segment(m.name(), segments.isEmpty() ? args : List.of()));
+            e = m.receiver();
+        }
+        if (!(e instanceof Expr.Name n)) return null;
+        segments.addFirst(new TypeRef.Segment(n.name(), segments.isEmpty() ? args : List.of()));
+        return new TypeRef.Simple(pos, segments);
     }
 
     /** {@code object : A { ... }}: of the type of its anonymous class. */
