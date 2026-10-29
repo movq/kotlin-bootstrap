@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 
 import kotlinbootstrap.ast.Decl;
+import kotlinbootstrap.ast.Expr;
 import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.dfa.DataFlowVariable;
 import kotlinbootstrap.dfa.Flow;
@@ -35,11 +36,12 @@ import kotlinbootstrap.types.Types;
  * known of the variables at each point, which gives smart casts. Instead
  * of building a control flow graph, the {@link BodyChecker} reports events
  * in evaluation order, saves the state where control flow splits, and
- * joins the states where it merges.
+ * joins the states where it merges. Whether a local var is stable, not
+ * assigned where it may be read concurrently, is up to
+ * {@link LocalVariableAssignments}.
  *
- * <p>Not yet: the instability of local variables that lambdas not called
- * in place assign, and statements about the values of enum entries and
- * objects, which only exhaustiveness uses.
+ * <p>Not yet: statements about the values of enum entries and objects,
+ * which only exhaustiveness uses.
  */
 final class DataFlowAnalyzer {
     /** What is known at a point, and whether the point is reachable. */
@@ -80,6 +82,7 @@ final class DataFlowAnalyzer {
     private final Checker checker;
     private final VariableStorage storage = new VariableStorage();
     private final LogicSystem logic;
+    private final LocalVariableAssignments assignments;
     private int assignmentCounter;
     private Flow flow = new Flow();
     private boolean dead;
@@ -95,6 +98,7 @@ final class DataFlowAnalyzer {
         this.ts = checker.ts();
         this.checker = checker;
         this.logic = new LogicSystem(ts, storage);
+        this.assignments = new LocalVariableAssignments(ts);
     }
 
     // ==== States ====
@@ -143,9 +147,9 @@ final class DataFlowAnalyzer {
      */
     TExpr smartCast(TExpr e) {
         // An unstable alias can stand for a stable variable, so aliases are kept.
-        if (!(variable(e, false, false) instanceof RealVariable v) || !isStable(v)) return e;
+        if (!(variable(e, false, false) instanceof RealVariable v)) return e;
         TypeStatement s = flow.getTypeStatement(v);
-        if (s == null || s.upperTypes().isEmpty()) return e;
+        if (s == null || s.upperTypes().isEmpty() || !isEffectivelyStable(v, s.upperTypes())) return e;
         List<KType> types = new ArrayList<>(s.upperTypes());
         types.add(e.type());
         KType type = ts.intersect(types);
@@ -158,7 +162,21 @@ final class DataFlowAnalyzer {
         return Types.lowerBound(t) instanceof KType.ClassType c && c.symbol() == ts.nothingClass();
     }
 
-    /** As FIR's RealVariable.getStability, with all sources in one module. */
+    /**
+     * As FIR's computeEffectiveStability: stable, and a local var is not
+     * assigned where it may run concurrently, other than with a value of
+     * all the types (any assignment, with types null).
+     */
+    private boolean isEffectivelyStable(RealVariable v, Set<KType> types) {
+        return isStable(v) && !isUnstableLocalVariable(v, types);
+    }
+
+    private boolean isUnstableLocalVariable(RealVariable v, Set<KType> types) {
+        return v.symbol() instanceof LocalVariable l && assignments.isUnstableInCurrentScope(l, types)
+                || v.dispatchReceiver() != null && isUnstableLocalVariable(v.dispatchReceiver(), null);
+    }
+
+    /** As FIR's RealVariable.getStability, with all sources in one module; local vars are stable here. */
     private boolean isStable(RealVariable v) {
         if (v.implicit()) return true;
         switch (v.symbol()) {
@@ -278,7 +296,13 @@ final class DataFlowAnalyzer {
         RealVariable prototype = new RealVariable(symbol, implicit, dispatchVariable, extensionVariable, u.type());
         RealVariable real = createReal ? storage.rememberWithKnownReceivers(prototype) : storage.getKnown(prototype);
         if (real == null) return null;
-        return unwrapAlias ? flow.unwrapVariable(real) : real;
+        return unwrapAlias ? unwrapVariableIfStable(real) : real;
+    }
+
+    /** The variable an alias stands for; null if the alias is unstable. */
+    private RealVariable unwrapVariableIfStable(RealVariable v) {
+        RealVariable unwrapped = flow.unwrapVariable(v);
+        return unwrapped != v && isUnstableLocalVariable(v, null) ? null : unwrapped;
     }
 
     /** Without what does not change the value: smart casts, {@code !!}, and a safe call's subject. */
@@ -635,8 +659,14 @@ final class DataFlowAnalyzer {
         initialize(variable, initializer, hasExplicitType, isWhenSubject, false, v.isVar());
     }
 
+    /** A local variable declared by the syntax: a property or destructuring entry in a body. */
+    void declare(LocalVariable v, Object declaration) {
+        assignments.declare(v, declaration);
+    }
+
     /** An assignment of the variable the target reads. */
     void assigned(TExpr target, TExpr value) {
+        if (target instanceof TExpr.LocalGet g) assignments.visitAssignment(g.variable(), value.type());
         boolean isLocal = target instanceof TExpr.LocalGet;
         boolean isVal = target instanceof TExpr.PropertyGet p && !p.property().isVar()
                 || target instanceof TExpr.FieldGet f && !f.property().isVar();
@@ -656,7 +686,8 @@ final class DataFlowAnalyzer {
         boolean addInitializerType = isAssignment;
         if (isStable(variable)) {
             DataFlowVariable initializerVariable = variableIfUsedOrReal(initializer);
-            if (!hasExplicitType && initializerVariable instanceof RealVariable r && (isWhenSubject || isStable(r))) {
+            if (!hasExplicitType && initializerVariable instanceof RealVariable r
+                    && (isWhenSubject || isEffectivelyStable(r, null))) {
                 // val b = a; if (b != null) { /* a != null */ }
                 logic.addLocalVariableAlias(flow, variable, r);
             } else if (initializerVariable != null && !isLocalVar) {
@@ -738,7 +769,9 @@ final class DataFlowAnalyzer {
 
     // ==== Loops and jumps ====
 
-    LoopState enterWhileLoop(TExpr.Loop loop, Set<LocalVariable> assigned) {
+    /** @param node the loop's syntax */
+    LoopState enterWhileLoop(TExpr.Loop loop, Expr node) {
+        Set<LocalVariable> assigned = assignments.enterLoop(node);
         LoopState l = new LoopState(assigned);
         loops.put(loop, l);
         l.enter = save();
@@ -753,13 +786,15 @@ final class DataFlowAnalyzer {
     }
 
     void exitWhileLoop(LoopState l, TExpr condition) {
+        assignments.exitLoop();
         List<State> backEdges = new ArrayList<>(List.of(l.enter, save()));
         backEdges.addAll(l.continues);
         exitLoop(l, condition);
         processWhileLoopExit(l, backEdges);
     }
 
-    LoopState enterDoWhileLoop(TExpr.Loop loop, Set<LocalVariable> assigned) {
+    LoopState enterDoWhileLoop(TExpr.Loop loop, Expr node) {
+        Set<LocalVariable> assigned = assignments.enterLoop(node);
         LoopState l = new LoopState(assigned);
         loops.put(loop, l);
         l.enter = save();
@@ -774,6 +809,7 @@ final class DataFlowAnalyzer {
     }
 
     void exitDoWhileLoop(LoopState l, TExpr condition) {
+        assignments.exitLoop();
         l.conditionExit = save();
         exitLoop(l, condition);
     }
@@ -875,19 +911,22 @@ final class DataFlowAnalyzer {
     /**
      * Enters the body of a lambda, from the state where it was made.
      *
-     * @param kind     how its call calls it; null if not in place
-     * @param assigned the variables it assigns, unknown if it can run again
+     * @param node its syntax
+     * @param kind how its call calls it; null if not in place
      */
-    LambdaFrame enterLambda(State creation, Contract.InvocationKind kind, Set<LocalVariable> assigned) {
+    LambdaFrame enterLambda(Expr node, State creation, Contract.InvocationKind kind) {
+        Set<LocalVariable> assigned = assignments.enterFunction(node, kind != null);
         LambdaFrame frame = new LambdaFrame(new State(flow, dead), lambdaExits);
         lambdaExits = new ArrayList<>();
         flow = creation.flow().fork();
         dead = creation.dead();
+        // The values of the variables it assigns are not known if it can run again.
         if (kind == null || kind.canBeRevisited()) enterRepeatable(assigned);
         return frame;
     }
 
     void exitLambda(LambdaFrame frame, CheckedFunction function, State creation, Contract.InvocationKind kind) {
+        assignments.exitFunction();
         List<State> exits = new ArrayList<>();
         List<State> returns = lambdaReturns.remove(function);
         if (returns != null) exits.addAll(returns);
@@ -902,14 +941,14 @@ final class DataFlowAnalyzer {
     /**
      * Enters a body of a local function or class, from the state where it
      * was declared: as a lambda that may be called any time, without
-     * joining the state after it.
+     * joining the state after it. What it assigns is unstable, rather
+     * than unknown at its start, as in FIR.
      */
-    LambdaFrame enterLocalDeclaration(State declaration, Set<LocalVariable> assigned) {
+    LambdaFrame enterLocalDeclaration(State declaration) {
         LambdaFrame frame = new LambdaFrame(new State(flow, dead), lambdaExits);
         lambdaExits = new ArrayList<>();
         flow = declaration.flow().fork();
         dead = declaration.dead();
-        enterRepeatable(assigned);
         return frame;
     }
 
@@ -917,6 +956,37 @@ final class DataFlowAnalyzer {
         flow = frame.outer().flow();
         dead = frame.outer().dead();
         lambdaExits = frame.outerExits();
+    }
+
+    /** Enters a named function or accessor, the root of a body or local, which is not called in place. */
+    void enterFunction(Object node) {
+        assignments.enterFunction(node, false);
+    }
+
+    void exitFunction() {
+        assignments.exitFunction();
+    }
+
+    /** Enters the body of a local class or object literal. */
+    void enterClass(Decl.Class node, boolean isAnonymousObject) {
+        assignments.enterClass(node, isAnonymousObject);
+    }
+
+    void exitClass() {
+        assignments.exitClass();
+    }
+
+    /**
+     * Enters the arguments of a call, as FIR's enterCallArguments, with the
+     * lambdas among them; {@link #exitFunctionCall} after its completion.
+     */
+    void enterCallArguments(List<Expr> lambdas) {
+        assignments.enterFunctionCall(lambdas);
+    }
+
+    /** @param completed whether the call was completed fully, rather than with the call it is an argument of */
+    void exitFunctionCall(boolean completed) {
+        assignments.exitFunctionCall(completed);
     }
 
     /** The exit of a call or property read, as FIR's exitFunctionCall and exitQualifiedAccessExpression. */

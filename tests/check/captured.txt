@@ -1,0 +1,75 @@
+fun g
+fun g
+fun both
+  call kotlin.contracts.contract: kotlin.Unit
+    lambda: kotlin.contracts.ContractBuilder.() -> kotlin.Unit
+      call kotlin.contracts.ContractBuilder.callsInPlace<kotlin.Unit>: kotlin.contracts.CallsInPlace
+      call kotlin.contracts.ContractBuilder.callsInPlace<kotlin.Unit>: kotlin.contracts.CallsInPlace
+  call kotlin.Function0.invoke: kotlin.Unit
+  call kotlin.Function0.invoke: kotlin.Unit
+fun pair
+fun lambdaAssigns
+  val x: kotlin.Any?
+  val r: kotlin.Int
+    call check.captured.g: kotlin.Int
+  val f: () -> kotlin.Unit
+    lambda: () -> kotlin.Unit
+  val r: kotlin.Long
+    call check.captured.g: kotlin.Long
+fun assignedAfterLambda
+  val x: kotlin.Any?
+  val f: () -> kotlin.Unit
+    lambda: () -> kotlin.Unit
+      val r: kotlin.Long
+        call check.captured.g: kotlin.Long
+fun inPlace
+  val x: kotlin.Any?
+  call kotlin.run<kotlin.Unit>: kotlin.Unit
+    lambda: () -> kotlin.Unit
+      val r: kotlin.Int
+        call check.captured.g: kotlin.Int
+fun inOtherBranch
+  val x: kotlin.Any?
+  val f: () -> kotlin.Unit
+    lambda: () -> kotlin.Unit
+      val r: kotlin.Int
+        call check.captured.g: kotlin.Int
+fun preservesType
+  val x: kotlin.Any?
+  val f: () -> kotlin.Unit
+    lambda: () -> kotlin.Unit
+  val r: kotlin.Int
+    call check.captured.g: kotlin.Int
+fun localFunction
+  val x: kotlin.Any?
+  val r: kotlin.Long
+    call check.captured.g: kotlin.Long
+fun concurrentLambdas
+  val x: kotlin.Any?
+  call check.captured.both: kotlin.Unit
+    lambda: () -> kotlin.Unit
+      val r: kotlin.Long
+        call check.captured.g: kotlin.Long
+    lambda: () -> kotlin.Unit
+fun dataFlowPostponed
+  val x: kotlin.Any?
+  call check.captured.pair<kotlin.Int>: kotlin.Unit
+    call kotlin.run<kotlin.Int>: kotlin.Int
+      lambda: () -> kotlin.Int
+    call check.captured.g: kotlin.Long
+fun localFunctionReads
+  val x: kotlin.Any?
+  val r: kotlin.Long
+    call check.captured.g: kotlin.Long
+fun alias
+  val x: kotlin.Any?
+  val y: kotlin.Any?
+  val f: () -> kotlin.Unit
+    lambda: () -> kotlin.Unit
+  val r: kotlin.Int
+    call check.captured.g: kotlin.Int
+fun loopIncrement
+  val i: kotlin.Int?
+  call kotlin.Int.compareTo: kotlin.Int
+  val <unary>: kotlin.Int
+  call kotlin.Int.inc: kotlin.Int

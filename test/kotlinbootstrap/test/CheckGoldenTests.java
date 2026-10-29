@@ -145,9 +145,9 @@ public final class CheckGoldenTests {
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException(e);
             }
-            // A return's function is where it returns to, not inside it.
+            // Only functions declared here; a return or this refers to one it is inside.
             if (value instanceof TExpr || value instanceof Record || value instanceof List<?>
-                    || value instanceof CheckedFunction && !(r instanceof TExpr.Return)) {
+                    || value instanceof CheckedFunction && (r instanceof TExpr.Lambda || r instanceof TExpr.LocalFunctionDecl)) {
                 outline(value, depth, out);
             }
         }

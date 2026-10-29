@@ -301,7 +301,11 @@ final class BodyChecker {
 
     private TExpr call(Expr.Call c, Context ctx, Mode mode) {
         List<TypeArg> typeArgs = typeArguments(c.typeArgs(), ctx);
-        return switch (c.callee()) {
+        List<Expr> argExprs = new ArrayList<>();
+        for (ValueArg a : c.args()) argExprs.add(a.value());
+        argExprs.addAll(c.lambdas());
+        dfa.enterCallArguments(lambdaArguments(argExprs));
+        TExpr result = switch (c.callee()) {
             case Expr.Name n -> completer.completeCall(resolved(function(c.pos(), n.name(), null,
                     arguments(n.name(), c.args(), c.lambdas(), ctx), typeArgs, TExpr.CallOrigin.PLAIN), ctx), mode);
             case Expr.Member m -> {
@@ -318,6 +322,18 @@ final class BodyChecker {
                 yield completer.completeCall(resolved(info, ctx), mode);
             }
         };
+        dfa.exitFunctionCall(mode.forceFullCompletion());
+        return result;
+    }
+
+    /** The lambdas and anonymous functions among the arguments of a call. */
+    private static List<Expr> lambdaArguments(List<Expr> args) {
+        List<Expr> result = new ArrayList<>();
+        for (Expr a : args) {
+            Expr lambda = LocalVariableAssignments.lambdaArgument(a);
+            if (lambda != null) result.add(lambda);
+        }
+        return result;
     }
 
     /**
@@ -635,6 +651,7 @@ final class BodyChecker {
         }
         LocalVariable v = new LocalVariable(p.name(), type, LocalVariable.Kind.LOCAL, p.isVar(), null);
         ctx.locals().getLast().add(v);
+        dfa.declare(v, p);
         if (initializer != null) dfa.localVariableInitialized(v, initializer, declared != null, false);
         return new TExpr.LocalVarDecl(p.pos(), unit(), v, initializer);
     }
@@ -652,6 +669,7 @@ final class BodyChecker {
                 ctx, ctx, this::approximateLocalType);
         variable[0] = LocalVariable.delegated(symbol, delegate.getter().returnType());
         ctx.locals().getLast().add(variable[0]);
+        dfa.declare(variable[0], p);
         return new TExpr.LocalDelegatedVarDecl(p.pos(), unit(), variable[0], delegate);
     }
 
@@ -687,6 +705,7 @@ final class BodyChecker {
             LocalVariable v = new LocalVariable(e.name(), declared != null ? declared : approximateLocalType(value.type()),
                     LocalVariable.Kind.LOCAL, isVar, null);
             if (!e.name().equals("_")) ctx.locals().getLast().add(v);
+            dfa.declare(v, e);
             out.add(new TExpr.LocalVarDecl(e.pos(), unit(), v, value));
             dfa.localVariableInitialized(v, value, declared != null, false);
         }
@@ -723,9 +742,12 @@ final class BodyChecker {
                 case DIV_ASSIGN -> "div";
                 default -> "rem";
             };
-            if (target instanceof Expr.Index i) return indexedAugmentedAssign(a.pos(), i, operator, a.value(), ctx);
-            return onVariable(target, ctx, Mode.RECEIVER, left -> augmentedAssign(a.pos(), left, operator,
-                    expr(a.value(), ctx, Mode.DEPENDENT), ctx));
+            dfa.enterCallArguments(lambdaArguments(List.of(a.value())));
+            TExpr result = target instanceof Expr.Index i ? indexedAugmentedAssign(a.pos(), i, operator, a.value(), ctx)
+                    : onVariable(target, ctx, Mode.RECEIVER, left -> augmentedAssign(a.pos(), left, operator,
+                            expr(a.value(), ctx, Mode.DEPENDENT), ctx));
+            dfa.exitFunctionCall(true);
+            return result;
         }
         if (target instanceof Expr.Index i) {
             List<Expr> args = new ArrayList<>(i.indices());
@@ -1268,12 +1290,16 @@ final class BodyChecker {
         String outerCallee = calleeNameForLambda;
         // Only infix calls label their lambdas.
         calleeNameForLambda = origin == TExpr.CallOrigin.INFIX ? name : null;
+        dfa.enterCallArguments(lambdaArguments(args));
         try {
             for (Expr a : args) arguments.add(new CallInfo.Argument(expr(a, ctx, Mode.DEPENDENT), null, false, false));
         } finally {
             calleeNameForLambda = outerCallee;
         }
-        return completer.completeCall(resolved(function(pos, name, receiver, arguments, List.of(), origin), ctx), mode);
+        TExpr result = completer.completeCall(resolved(function(pos, name, receiver, arguments, List.of(), origin), ctx),
+                mode);
+        dfa.exitFunctionCall(mode.forceFullCompletion());
+        return result;
     }
 
     private TExpr prefix(Expr.Prefix p, Context ctx, Mode mode) {
@@ -1441,7 +1467,7 @@ final class BodyChecker {
 
     private TExpr whileLoop(Expr.While w, String label, Context ctx) {
         TExpr.Loop loop = new TExpr.Loop(label);
-        DataFlowAnalyzer.LoopState l = dfa.enterWhileLoop(loop, AssignedVariables.in(ctx, w.condition(), w.body()));
+        DataFlowAnalyzer.LoopState l = dfa.enterWhileLoop(loop, w);
         TExpr condition = expr(w.condition(), ctx, Mode.expecting(bool()));
         dfa.exitWhileLoopCondition(l, condition);
         TExpr body = branch(w.pos(), w.body(), ctx.withLoop(loop), Mode.INDEPENDENT);
@@ -1459,7 +1485,7 @@ final class BodyChecker {
         TExpr iterator = desugaredCall(f.pos(), "iterator", receiver(f.iterable(), ctx), ctx, Mode.INDEPENDENT);
         LocalVariable it = temporary("<iterator>", approximateLocalType(iterator.type()));
         dfa.localVariableInitialized(it, iterator, false, false);
-        DataFlowAnalyzer.LoopState l = dfa.enterWhileLoop(loop, AssignedVariables.in(ctx, f.body()));
+        DataFlowAnalyzer.LoopState l = dfa.enterWhileLoop(loop, f);
         TExpr hasNext = desugaredCall(f.pos(), "hasNext", localValue(f.pos(), it), ctx, Mode.expecting(bool()));
         dfa.exitWhileLoopCondition(l, hasNext);
 
@@ -1495,7 +1521,7 @@ final class BodyChecker {
         Context inner = ctx.withLocalScope(new LocalScope()).withLoop(loop);
         List<Stmt> statements = w.body() == null ? List.of()
                 : w.body() instanceof Expr.Block b ? b.statements() : List.of(w.body());
-        DataFlowAnalyzer.LoopState l = dfa.enterDoWhileLoop(loop, AssignedVariables.in(ctx, w.body(), w.condition()));
+        DataFlowAnalyzer.LoopState l = dfa.enterDoWhileLoop(loop, w);
         TExpr body = blockInScope(w.pos(), statements, inner, Mode.INDEPENDENT);
         dfa.enterDoWhileLoopCondition(l);
         TExpr condition = expr(w.condition(), inner, Mode.expecting(bool()));
@@ -1521,7 +1547,10 @@ final class BodyChecker {
         KType parameterType = expected != null && !isUnitOrFlexibleUnit(expected) ? expected : ts.any();
         Candidate candidate = synthetic().acceptCall(e.pos(), parameterType, argument,
                 w -> w.writeArgument(argument, parameterType));
-        return completer.completeCall(candidate, Mode.INDEPENDENT);
+        dfa.enterCallArguments(List.of(e));
+        TExpr result = completer.completeCall(candidate, Mode.INDEPENDENT);
+        dfa.exitFunctionCall(true);
+        return result;
     }
 
     /** {@code val f: A.(B) -> C = { a, b -> ... }}: the receiver is a parameter, so expected as {@code (A, B) -> C}. */
@@ -1638,8 +1667,7 @@ final class BodyChecker {
         TExpr body;
         TExpr last = null;
         Contract.InvocationKind invocationKind = invocationKind(atom);
-        DataFlowAnalyzer.LambdaFrame dataFlow = dfa.enterLambda(lambda.creation, invocationKind,
-                AssignedVariables.in(outer, lambda.expr));
+        DataFlowAnalyzer.LambdaFrame dataFlow = dfa.enterLambda(lambda.expr, lambda.creation, invocationKind);
         try {
             if (lambda.expr instanceof Expr.Lambda l) {
                 List<TExpr> prologue = new ArrayList<>();

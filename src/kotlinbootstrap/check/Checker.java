@@ -258,7 +258,7 @@ public final class Checker {
     // ==== Bodies ====
 
     private CheckedFunction function(FunctionSymbol f, Decl.Function d) {
-        return memo(d, () -> inLocalFlow(f, d, () -> {
+        return memo(d, () -> inLocalFlow(f, () -> {
             Resolver.DeclarationContext dc = resolver.context(f);
             BodyChecker checker = checker(f, dc);
             KType returnType = Resolver.hasDeclaredType(f) ? f.returnType() : null;
@@ -277,13 +277,15 @@ public final class Checker {
             Context ctx = context(f, dc);
             if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, f, f.name()));
             ctx = ctx.withLocalScope(scope).withFunction(new Context.FunctionFrame(function, f.name(), false, null));
+            checker.dfa().enterFunction(d);
             function.setBody(body(checker, function, d.body(), ctx));
+            checker.dfa().exitFunction();
             return function;
         }));
     }
 
     private TExpr initializer(PropertySymbol p, Decl.Property d) {
-        return memo(d.initializer(), () -> inLocalFlow(p, d.initializer(), () -> {
+        return memo(d.initializer(), () -> inLocalFlow(p, () -> {
             Resolver.DeclarationContext dc = resolver.context(p);
             Mode mode = Resolver.hasDeclaredType(p) ? Mode.expecting(p.returnType()) : Mode.INDEPENDENT;
             LocalScope scope = dc.cls() != null && p.owner() == dc.cls() ? primaryConstructorScope(dc.cls())
@@ -293,7 +295,7 @@ public final class Checker {
     }
 
     private CheckedDelegate delegate(PropertySymbol p, Decl.Property d) {
-        return memo(d.delegate(), () -> inLocalFlow(p, d.delegate(), () -> {
+        return memo(d.delegate(), () -> inLocalFlow(p, () -> {
             Resolver.DeclarationContext dc = resolver.context(p);
             KType declared = Resolver.hasDeclaredType(p) ? p.returnType() : null;
             LocalScope scope = dc.cls() != null && p.owner() == dc.cls() ? primaryConstructorScope(dc.cls())
@@ -324,7 +326,7 @@ public final class Checker {
     }
 
     private CheckedFunction accessor(PropertySymbol p, Decl.Property d, Decl.Accessor accessor) {
-        return memo(accessor, () -> inLocalFlow(p, accessor, () -> {
+        return memo(accessor, () -> inLocalFlow(p, () -> {
             Resolver.DeclarationContext dc = resolver.context(p);
             BodyChecker checker = checker(p, dc);
             // The getter infers the property's type if nothing else gives it.
@@ -347,7 +349,9 @@ public final class Checker {
             Context ctx = context(p, dc);
             if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, p, p.name()));
             ctx = ctx.withLocalScope(scope).withFunction(new Context.FunctionFrame(function, null, false, null));
+            checker.dfa().enterFunction(accessor);
             function.setBody(body(checker, function, accessor.body(), ctx));
+            checker.dfa().exitFunction();
             return function;
         }));
     }
@@ -412,12 +416,11 @@ public final class Checker {
      * Checks a body of a local declaration in the data flow of the body it
      * is in, from where it was declared, as a lambda not called in place.
      */
-    private <T> T inLocalFlow(CallableSymbol symbol, Object node, Supplier<T> check) {
+    private <T> T inLocalFlow(CallableSymbol symbol, Supplier<T> check) {
         LocalOrigin origin = localOrigin(symbol, resolver.context(symbol));
         if (origin == null) return check.get();
         DataFlowAnalyzer dfa = origin.checker().dfa();
-        DataFlowAnalyzer.LambdaFrame frame = dfa.enterLocalDeclaration(origin.flow(),
-                AssignedVariables.in(origin.context(), node));
+        DataFlowAnalyzer.LambdaFrame frame = dfa.enterLocalDeclaration(origin.flow());
         try {
             return check.get();
         } finally {
@@ -433,7 +436,9 @@ public final class Checker {
         // Visible in its own body.
         if (scope != null) scope.add(cls);
         localOrigins.put(cls, new LocalOrigin(checker, ctx, checker.dfa().save()));
+        checker.dfa().enterClass(d, d.name() == null);
         checkMembers(cls);
+        checker.dfa().exitClass();
         return cls;
     }
 
