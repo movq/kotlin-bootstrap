@@ -175,6 +175,8 @@ final class CallCompleter {
                     traversePostponed(p, candidates, postponed, visited);
             case TExpr.Unresolved u when u.state() instanceof LambdaExpression l && l.atom != null ->
                     traversePostponed(l.atom, candidates, postponed, visited);
+            case TExpr.Unresolved u when u.state() instanceof CallableReferenceExpression r && r.atom != null ->
+                    traversePostponed(r.atom, candidates, postponed, visited);
             case TExpr.Block b when TExprs.lastExpression(b) != null ->
                     traverseArgument(TExprs.lastExpression(b), candidates, postponed, visited);
             case TExpr.SafeCall s -> traverseArgument(s.selector(), candidates, postponed, visited);

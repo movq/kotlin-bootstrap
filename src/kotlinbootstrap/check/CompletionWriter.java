@@ -65,6 +65,7 @@ final class CompletionWriter {
             case TExpr.Unresolved u when u.state() instanceof Candidate c -> c.builder.apply(this);
             case TExpr.Unresolved u when u.state() instanceof PostponedArgument p -> write(p.result());
             case TExpr.Unresolved u when u.state() instanceof LambdaExpression l -> writeLambda(l, null);
+            case TExpr.Unresolved u when u.state() instanceof CallableReferenceExpression r -> write(r.atom.result());
             case TExpr.Return r when lambdaReturns.containsKey(r.target()) -> {
                 LambdaReturns returns = lambdaReturns.get(r.target());
                 TExpr value = r.value() == null ? null : writeArgument(r.value(), returns.expectedType());

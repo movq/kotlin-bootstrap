@@ -2,6 +2,7 @@ package kotlinbootstrap.check;
 
 import java.util.List;
 
+import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.symbols.ClassifierSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeArg;
@@ -18,7 +19,8 @@ import kotlinbootstrap.types.TypeArg;
 record CallInfo(Kind kind, String name, Receiver explicitReceiver, List<Argument> arguments, List<TypeArg> typeArgs,
                 TExpr.CallOrigin origin, boolean isImplicitInvoke, int pos) {
 
-    enum Kind { FUNCTION, VARIABLE }
+    /** A call of a function, a variable read, or the callable a reference {@code ::f} is to: either. */
+    enum Kind { FUNCTION, VARIABLE, CALLABLE_REFERENCE }
 
     /**
      * @param name   for a named argument; null otherwise
@@ -47,6 +49,17 @@ record CallInfo(Kind kind, String name, Receiver explicitReceiver, List<Argument
      */
     record Qualifier(int pos, String packageName, ClassifierSymbol classifier, List<KType> typeArgs, TExpr value)
             implements Receiver {
+    }
+
+    /**
+     * What resolving a callable reference needs besides the call, as FIR's CallableReferenceInfo.
+     *
+     * @param expectedType          the type expected of the reference, with the containing call's variables; nullable
+     * @param baseSystem            the containing call's system, which each candidate starts with a copy of
+     * @param hasSyntheticOuterCall not an argument, but checked as one of a synthetic call
+     */
+    record ReferenceInfo(CallableReferenceExpression expression, KType expectedType, ConstraintSystem baseSystem,
+                         boolean hasSyntheticOuterCall) {
     }
 
     List<TExpr> argumentValues() {

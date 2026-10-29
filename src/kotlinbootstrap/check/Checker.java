@@ -71,7 +71,7 @@ public final class Checker {
         this.arguments = new ArgumentChecker(ts);
         this.synthetic = new SyntheticCalls(ts, arguments);
         this.memberScopes = new MemberScopes(ts, resolver.types());
-        this.stages = new ResolutionStages(resolver.types(), arguments, new VisibilityChecker(resolver));
+        this.stages = new ResolutionStages(ts, resolver.types(), arguments, new VisibilityChecker(resolver));
         this.overloads = new OverloadResolver(ts, memberScopes, stages);
         resolver.setBodyTyper(this::inferredType);
     }

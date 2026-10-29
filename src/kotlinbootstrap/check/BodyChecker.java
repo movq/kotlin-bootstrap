@@ -135,6 +135,7 @@ final class BodyChecker {
             case Expr.AnonymousFunction f -> lambda(f, null, ctx, mode);
             case Expr.ObjectLiteral o -> objectLiteral(o, ctx);
             case Expr.ClassLiteral c -> classLiteral(c, ctx);
+            case Expr.CallableRef r -> callableReference(r, ctx, mode);
             default -> throw error(e.pos(), "Unsupported expression: " + e.getClass().getSimpleName());
         };
     }
@@ -503,19 +504,24 @@ final class BodyChecker {
         }
         TypeArg arg;
         if (isType) {
-            TypeRef ref = asType(lhs);
-            if (ref == null) throw error(c.pos(), "Unsupported left side of '::class'");
-            KType type = owner.resolver().types().resolveAllowingBare(ref, ctx.typeScope(), ctx.file());
-            if (BareTypes.isBare(type) && Types.lowerBound(type) instanceof KType.ClassType bare) {
-                type = new KType.ClassType(bare.symbol(),
-                        Collections.nCopies(bare.symbol().typeParams().size(), TypeArg.STAR), bare.nullable());
-            }
-            arg = TypeArg.of(type);
+            arg = TypeArg.of(doubleColonLhsType(lhs, ctx));
         } else {
             arg = new TypeArg(Variance.OUT, value.type());
         }
         KType.ClassType kclass = owner.resolver().types().classType("kotlin.reflect.KClass", arg);
         return new TExpr.ClassReference(c.pos(), kclass, arg.type(), value);
+    }
+
+    /** The class on the left of {@code ::}, with star projections for the type arguments not given. */
+    private KType doubleColonLhsType(Expr lhs, Context ctx) {
+        TypeRef ref = asType(lhs);
+        if (ref == null) throw error(lhs.pos(), "Unsupported left side of '::'");
+        KType type = owner.resolver().types().resolveAllowingBare(ref, ctx.typeScope(), ctx.file());
+        if (BareTypes.isBare(type) && Types.lowerBound(type) instanceof KType.ClassType bare) {
+            type = new KType.ClassType(bare.symbol(),
+                    Collections.nCopies(bare.symbol().typeParams().size(), TypeArg.STAR), bare.nullable());
+        }
+        return type;
     }
 
     /** A possibly qualified name with type arguments, as a type; null if not one. */
@@ -534,6 +540,67 @@ final class BodyChecker {
         if (!(e instanceof Expr.Name n)) return null;
         segments.addFirst(new TypeRef.Segment(n.name(), segments.isEmpty() ? args : List.of()));
         return new TypeRef.Simple(pos, segments);
+    }
+
+    // ==== Callable references ====
+
+    /**
+     * {@code a::f}, {@code A::f} or {@code ::f}. As an argument, it is
+     * resolved with its call; otherwise, as FIR's
+     * resolveCallableReferenceWithSyntheticOuterCall, as the argument of a
+     * call of {@code fun accept(p: expected)}.
+     */
+    private TExpr callableReference(Expr.CallableRef r, Context ctx, Mode mode) {
+        CallableReferenceExpression reference = callableReferenceExpression(r, ctx);
+        TExpr.Unresolved argument = new TExpr.Unresolved(r.pos(), null, reference);
+        if (mode instanceof Mode.ContextDependent) return argument;
+        KType expected = mode instanceof Mode.WithExpectedType w ? w.type() : null;
+        KType parameterType = expected != null && !isUnitOrFlexibleUnit(expected) ? expected : ts.any();
+        Candidate candidate = synthetic().acceptCall(r.pos(), parameterType, argument,
+                w -> w.writeArgument(argument, parameterType));
+        if (reference.atom.error() != null) throw error(r.pos(), reference.atom.error());
+        return completer.completeCall(candidate, Mode.INDEPENDENT);
+    }
+
+    /**
+     * The reference with its left side checked: a value, which it is bound
+     * to, or a class or package. A class that is not an object is also a
+     * type, whose members and extensions are referenced unbound, as FIR's
+     * FirCallableReferenceLhsResolver.
+     */
+    private CallableReferenceExpression callableReferenceExpression(Expr.CallableRef r, Context ctx) {
+        Expr lhs = r.receiver();
+        CallInfo.Receiver receiver = null;
+        KType lhsAsType = null;
+        if (lhs instanceof Expr.TypeApplication) {
+            lhsAsType = doubleColonLhsType(lhs, ctx);
+            KType.ClassType type = (KType.ClassType) Types.lowerBound(lhsAsType);
+            receiver = new CallInfo.Qualifier(lhs.pos(), null, type.symbol(),
+                    type.args().stream().map(a -> a.isStar() ? ts.nullableAny() : a.type()).toList(), null);
+        } else if (lhs != null) {
+            receiver = receiver(lhs, ctx);
+            if (receiver instanceof CallInfo.Qualifier q && q.classifier() != null) {
+                KType type = doubleColonLhsType(lhs, ctx);
+                // An object is only a value.
+                if (!(Types.lowerBound(type) instanceof KType.ClassType c && c.symbol().isObject())) lhsAsType = type;
+            }
+        }
+        return new CallableReferenceExpression(r.pos(), r.name(), receiver, lhsAsType, ctx, calls);
+    }
+
+    /**
+     * Resolves a reference not resolved with its call, or ambiguous then,
+     * as FIR's processCallableReference; ambiguous again, it waits for its
+     * expected type to be known better.
+     */
+    private void processCallableReference(CallableReferenceAtom atom, Candidate candidate) {
+        if (atom.needsResolution()) {
+            calls.resolveCallableReference(candidate, atom, false);
+            if (atom.state == CallableReferenceAtom.State.POSTPONED_BECAUSE_OF_AMBIGUITY) return;
+        }
+        Candidate resolved = atom.resolved();
+        if (resolved == null) throw error(atom.expression.pos, atom.error());
+        atom.setResult(new TExpr.Unresolved(atom.expression.pos, resolved.referenceType, resolved));
     }
 
     /** {@code object : A { ... }}: of the type of its anonymous class. */
@@ -1454,6 +1521,7 @@ final class BodyChecker {
             case LambdaAtom l -> analyzeLambda(system, l, candidate);
             case LambdaWithTypeVariableAtom l ->
                     analyzeLambda(system, arguments().transformToResolvedLambda(system, l, null), candidate);
+            case CallableReferenceAtom r -> processCallableReference(r, candidate);
             default -> throw new IllegalStateException("Unexpected postponed argument " + argument);
         }
     }

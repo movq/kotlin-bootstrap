@@ -133,6 +133,7 @@ final class SyntheticCalls {
             ValueParamSymbol p = params.get(Math.min(i, params.size() - 1));
             arguments.resolveArgument(candidate, args.get(i), candidate.substitutor.apply(p.type()), false, false);
         }
+        ResolutionStages.resolveCallableReferences(candidate);
         return candidate;
     }
 

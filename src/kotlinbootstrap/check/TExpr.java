@@ -276,12 +276,31 @@ public sealed interface TExpr {
     }
 
     /**
-     * {@code a::f}, {@code A::f} or {@code ::f}.
+     * {@code a::f}, {@code A::f} or {@code ::f}: a {@code KFunctionN} (a
+     * {@code FunctionN} if adapted) or {@code KPropertyN}. A reference with
+     * neither receiver bound to a member or extension takes the receiver as
+     * its first parameter.
      *
-     * @param boundReceiver the receiver bound into the reference, nullable
+     * @param dispatchReceiver  for a member, the instance bound into the reference; nullable
+     * @param extensionReceiver for an extension, the receiver bound into the reference; nullable
+     * @param adaptation        how a function is adapted to the type expected of it; nullable
      */
     record CallableReference(int pos, KType type, CallableSymbol target, List<KType> typeArgs,
-                             TExpr boundReceiver) implements TExpr {
+                             TExpr dispatchReceiver, TExpr extensionReceiver, ReferenceAdaptation adaptation)
+            implements TExpr {
+    }
+
+    /**
+     * A function referenced as a function type it does not have exactly,
+     * as FIR's CallableReferenceAdaptation: with defaults or a vararg, its
+     * result dropped for Unit, or as a suspend function.
+     *
+     * @param argumentParams for each parameter of the function type (after an unbound receiver), the
+     *                       function's parameter it is passed to; several may go to a vararg
+     * @param varargAsArray  the vararg parameter is passed an array rather than elements
+     */
+    record ReferenceAdaptation(List<Integer> argumentParams, boolean varargAsArray, boolean coercionToUnit,
+                               boolean suspendConversion) {
     }
 
     /**

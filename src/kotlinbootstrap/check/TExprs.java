@@ -74,7 +74,7 @@ final class TExprs {
             case TExpr.LocalClassDecl d -> new TExpr.LocalClassDecl(d.pos(), t.apply(d.type()), d.cls());
             case TExpr.Lambda l -> new TExpr.Lambda(l.pos(), t.apply(l.type()), l.function(), l.anonymousFunction());
             case TExpr.CallableReference r -> new TExpr.CallableReference(r.pos(), t.apply(r.type()), r.target(),
-                    types(r.typeArgs(), t), opt(r.boundReceiver(), f));
+                    types(r.typeArgs(), t), opt(r.dispatchReceiver(), f), opt(r.extensionReceiver(), f), r.adaptation());
             case TExpr.ClassReference r -> new TExpr.ClassReference(r.pos(), t.apply(r.type()), t.apply(r.classType()),
                     opt(r.receiver(), f));
             case TExpr.ObjectLiteral o -> new TExpr.ObjectLiteral(o.pos(), t.apply(o.type()), o.cls());

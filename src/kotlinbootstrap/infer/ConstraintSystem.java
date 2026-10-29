@@ -172,6 +172,23 @@ public final class ConstraintSystem {
         hasContradictionInForkPointsCache = null;
     }
 
+    /**
+     * Makes this system a copy of another, as kotlinc's replaceContentWith:
+     * of one that started as a copy of this and has had more added.
+     */
+    public void replaceContentWith(ConstraintSystem other) {
+        allTypeVariables.clear();
+        notFixed.clear();
+        fixed.clear();
+        typeVariableDependencies.clear();
+        initialConstraints.clear();
+        errors.clear();
+        forkPoints.clear();
+        builtFunctionTypesByExpectedType.clear();
+        builtFunctionTypesByTopLevelVariable.clear();
+        addOtherSystem(other);
+    }
+
     KType builtFunctionType(TypeVariable expectedType) {
         return builtFunctionTypesByExpectedType.get(expectedType);
     }

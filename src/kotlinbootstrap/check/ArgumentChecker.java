@@ -75,6 +75,8 @@ final class ArgumentChecker {
         switch (argument) {
             case TExpr.Unresolved u when u.state() instanceof LambdaExpression l ->
                     preprocessLambda(candidate, containing, l, expected);
+            case TExpr.Unresolved u when u.state() instanceof CallableReferenceExpression r ->
+                    preprocessCallableReference(containing, r, expected);
             case TExpr.SafeCall s -> {
                 if (TExprs.isStatement(s.selector())) {
                     checkApplicability(candidate, s, unit(), expected, isReceiver, isDispatch);
@@ -220,6 +222,14 @@ final class ArgumentChecker {
     private void preprocessLambda(Candidate candidate, Candidate containing, LambdaExpression lambda, KType expected) {
         PostponedArgument atom = createLambdaWithTypeVariableAtomIfNeeded(candidate.system, containing, lambda, expected);
         if (atom == null) atom = createResolvedLambdaAtom(candidate, candidate.system, containing, lambda, expected, false);
+        containing.postponedArguments.add(atom);
+        atom.activate();
+    }
+
+    /** As FIR's preprocessCallableReference: the reference is resolved once the candidate's arguments are checked. */
+    private void preprocessCallableReference(Candidate containing, CallableReferenceExpression reference,
+                                             KType expected) {
+        CallableReferenceAtom atom = new CallableReferenceAtom(ts, reference, expected, containing);
         containing.postponedArguments.add(atom);
         atom.activate();
     }

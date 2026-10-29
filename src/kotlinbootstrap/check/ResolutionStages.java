@@ -18,6 +18,7 @@ import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeArg;
+import kotlinbootstrap.types.TypeSystem;
 import kotlinbootstrap.types.Types;
 
 /**
@@ -30,6 +31,7 @@ final class ResolutionStages {
     private final TypeResolver types;
     private final ArgumentChecker arguments;
     private final VisibilityChecker visibility;
+    private final CallableReferenceTypes references;
 
     private interface Stage {
         void check(Candidate candidate, Context ctx);
@@ -40,16 +42,27 @@ final class ResolutionStages {
             this::checkExtensionReceiver, this::checkLowPriority);
     private final List<Stage> function = List.of(this::checkHidden, this::checkVisibility, this::mapArguments,
             this::mapTypeArguments, this::createFreshVariables, this::checkDispatchReceiver,
-            this::checkExtensionReceiver, this::checkArguments, this::checkCallModifiers, this::checkLowPriority);
+            this::checkExtensionReceiver, this::checkArguments, this::checkCallModifiers,
+            this::eagerResolveCallableReferences, this::checkLowPriority);
+    private final List<Stage> callableReference = List.of(this::checkHidden, this::checkVisibility,
+            this::discriminateSyntheticAndForbiddenProperties, this::initializeEmptyArgumentMap,
+            this::createFreshVariables, this::checkDispatchReceiver, this::checkExtensionReceiver,
+            this::checkCallableReferenceExpectedType, this::checkLowPriority);
 
-    ResolutionStages(TypeResolver types, ArgumentChecker arguments, VisibilityChecker visibility) {
+    ResolutionStages(TypeSystem ts, TypeResolver types, ArgumentChecker arguments, VisibilityChecker visibility) {
         this.types = types;
         this.arguments = arguments;
         this.visibility = visibility;
+        this.references = new CallableReferenceTypes(ts, types, this, visibility);
     }
 
     Applicability process(Candidate candidate, Context ctx) {
-        for (Stage stage : candidate.call.kind() == CallInfo.Kind.FUNCTION ? function : variableAccess) {
+        List<Stage> stages = switch (candidate.call.kind()) {
+            case FUNCTION -> function;
+            case VARIABLE -> variableAccess;
+            case CALLABLE_REFERENCE -> callableReference;
+        };
+        for (Stage stage : stages) {
             stage.check(candidate, ctx);
             if (!candidate.isSuccessful()) break;
         }
@@ -103,7 +116,7 @@ final class ResolutionStages {
     }
 
     /** As FIR's FirCallArgumentsProcessor. */
-    private void mapArguments(Candidate c, Context ctx) {
+    void mapArguments(Candidate c, Context ctx) {
         if (!(c.symbol instanceof FunctionSymbol f)) {
             c.addDiagnostic(Applicability.HIDDEN, c.symbol + " is not a function");
             return;
@@ -245,6 +258,29 @@ final class ResolutionStages {
         if (c.system.hasContradiction() && !args.isEmpty()) {
             c.addDiagnostic(Applicability.INAPPLICABLE, "Inapplicable: " + c.system.errors());
         }
+    }
+
+    /** As FIR's EagerResolveOfCallableReferences. */
+    private void eagerResolveCallableReferences(Candidate c, Context ctx) {
+        resolveCallableReferences(c);
+    }
+
+    /**
+     * Resolves the callable references among a candidate's arguments
+     * against the types expected of them, as far as known.
+     */
+    static void resolveCallableReferences(Candidate c) {
+        boolean hasSyntheticOuterCall = c.symbol.name().equals(SyntheticCalls.ACCEPT) && c.call == null;
+        for (PostponedArgument p : List.copyOf(c.postponedArguments)) {
+            if (!(p instanceof CallableReferenceAtom r) || !r.needsResolution()) continue;
+            if (!r.expression.resolver.resolveCallableReference(c, r, hasSyntheticOuterCall)) {
+                c.addDiagnostic(Applicability.INAPPLICABLE, r.error());
+            }
+        }
+    }
+
+    private void checkCallableReferenceExpectedType(Candidate c, Context ctx) {
+        references.checkExpectedType(c, ctx);
     }
 
     /** An implicit invoke of a value of an extension function type, whose first argument is the receiver. */

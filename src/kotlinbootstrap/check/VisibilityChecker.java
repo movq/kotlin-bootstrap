@@ -42,6 +42,11 @@ final class VisibilityChecker {
             case TypeAliasSymbol a -> a.visibility();
             default -> Visibility.PUBLIC;
         };
+        return isVisible(symbol, visibility, ctx, dispatchReceiver);
+    }
+
+    /** Whether a declaration with the given visibility instead of its own would be visible, as its setter. */
+    boolean isVisible(Symbol symbol, Visibility visibility, Context ctx, TExpr dispatchReceiver) {
         ClassSymbol owner = owner(symbol);
         return switch (visibility) {
             case PUBLIC, INTERNAL -> true;

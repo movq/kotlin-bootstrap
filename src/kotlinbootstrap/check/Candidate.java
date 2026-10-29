@@ -70,6 +70,12 @@ final class Candidate {
     /** What is wrong with the candidate, if anything. */
     final List<Diagnostic> diagnostics = new ArrayList<>();
     private Applicability applicability = Applicability.RESOLVED;
+    /** For the callable of a reference, what resolving the reference needs; null otherwise. */
+    CallInfo.ReferenceInfo reference;
+    /** For the callable of a reference, the reference's type, with the fresh variables. */
+    KType referenceType;
+    /** For the callable of a reference, how it is adapted to the type expected; null if it is not. */
+    TExpr.ReferenceAdaptation adaptation;
     /** Builds the call's checked form once completed. */
     Function<CompletionWriter, TExpr> builder;
 

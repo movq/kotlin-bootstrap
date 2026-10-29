@@ -22,6 +22,7 @@ import kotlinbootstrap.symbols.TypeParamSymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.Substitution;
+import kotlinbootstrap.types.TypeApproximator;
 import kotlinbootstrap.types.TypeSystem;
 import kotlinbootstrap.types.Types;
 
@@ -68,10 +69,56 @@ final class CallResolver {
     }
 
     Result resolve(CallInfo info, Context ctx) {
-        Resolution resolution = new Resolution(ctx);
+        Resolution resolution = new Resolution(ctx, null);
         resolution.enqueueTasks(info);
         resolution.run();
         return resolution.reduce();
+    }
+
+    // ==== Callable references ====
+
+    /**
+     * Resolves a callable reference against the type now expected of it,
+     * as FIR's resolveCallableReference: each candidate starts with a copy
+     * of the containing call's system, and the one chosen gives it back,
+     * with its constraints added. Ambiguous, it is postponed once, to be
+     * resolved again during completion.
+     *
+     * @param containing the call being resolved or completed, whose system has the reference's variables
+     * @return whether the reference is resolved, or may still be
+     */
+    boolean resolveCallableReference(Candidate containing, CallableReferenceAtom atom, boolean hasSyntheticOuterCall) {
+        CallableReferenceExpression e = atom.expression;
+        ConstraintSystem system = containing.system;
+        KType expected = atom.expectedType() == null ? null : system.buildCurrentSubstitutor().apply(atom.expectedType());
+        CallInfo info = new CallInfo(CallInfo.Kind.CALLABLE_REFERENCE, e.name, e.lhs, List.of(), List.of(),
+                TExpr.CallOrigin.PLAIN, false, e.pos);
+        Resolution resolution = new Resolution(e.context,
+                new CallInfo.ReferenceInfo(e, expected, system, hasSyntheticOuterCall));
+        resolution.enqueueTasks(info);
+        resolution.run();
+        Result result = resolution.reduce();
+        List<Candidate> candidates = result.candidates();
+        if (candidates.isEmpty()) {
+            atom.fail("Unresolved reference " + e.name);
+            return false;
+        }
+        if (!result.success()) {
+            atom.fail("No applicable " + e.name + ": " + candidates);
+            return false;
+        }
+        if (candidates.size() > 1) {
+            if (atom.state == CallableReferenceAtom.State.POSTPONED_BECAUSE_OF_AMBIGUITY) {
+                atom.fail("Ambiguous reference " + e.name + ": " + candidates);
+                return false;
+            }
+            atom.state = CallableReferenceAtom.State.POSTPONED_BECAUSE_OF_AMBIGUITY;
+            return true;
+        }
+        Candidate chosen = candidates.getFirst();
+        system.replaceContentWith(chosen.system);
+        atom.resolve(chosen);
+        return true;
     }
 
     // ==== Levels ====
@@ -229,13 +276,16 @@ final class CallResolver {
     /** The resolution of one call, as FIR's TowerResolveManager with the tasks it runs. */
     private final class Resolution {
         final Context ctx;
+        /** For a callable reference, what resolving it needs; null otherwise. */
+        final CallInfo.ReferenceInfo reference;
         final Collector main = new Collector();
         final PriorityQueue<Entry> queue = new PriorityQueue<>(
                 Comparator.comparing(Entry::group).thenComparingLong(Entry::seq));
         long seq;
 
-        Resolution(Context ctx) {
+        Resolution(Context ctx, CallInfo.ReferenceInfo reference) {
             this.ctx = ctx;
+            this.reference = reference;
         }
 
         void run() {
@@ -364,11 +414,17 @@ final class CallResolver {
             if (cls != null) {
                 t.levels.add(new Level(group, new ScopeLevel(new OnlyCallables(new TowerScope.ClassStatics(cls, scopes)),
                         null), info, Candidate.ExplicitReceiverKind.NONE));
-                // Not through a type alias.
-                if (cls == q.classifier()) {
+                // Not through a type alias, but for a reference.
+                if (cls == q.classifier() || info.kind() == CallInfo.Kind.CALLABLE_REFERENCE) {
                     t.levels.add(new Level(group, new ScopeLevel(new NestedClassifiers(cls), null), info,
                             Candidate.ExplicitReceiverKind.NONE));
                 }
+            }
+            if (reference != null && reference.expression().lhsAsType != null) {
+                // An unbound reference: the members and extensions of the type.
+                TExpr stub = reference.expression().unboundReceiver();
+                expressionReceiver(t, info.withReceiver(new CallInfo.ValueReceiver(stub), false), stub,
+                        TowerGroup.QUALIFIER_VALUE_GROUP);
             }
             if (q.value() != null && q.typeArgs().isEmpty()) {
                 expressionReceiver(t, info, q.value(), TowerGroup.QUALIFIER_VALUE_GROUP);
@@ -538,12 +594,17 @@ final class CallResolver {
             switch (level.level()) {
                 case MemberLevel m -> processMembers(task, level, group, m);
                 case ScopeLevel s -> {
-                    if (info.kind() == CallInfo.Kind.FUNCTION) {
+                    if (info.kind() != CallInfo.Kind.VARIABLE) {
                         processConstructors(task, level, group, s);
                         for (TowerScope.ScopeMember m : s.scope().functions(info.name())) {
                             consumeScopeMember(task, level, group, s, m);
                         }
-                    } else {
+                    }
+                    if (info.kind() == CallInfo.Kind.CALLABLE_REFERENCE) {
+                        for (TowerScope.ScopeMember m : s.scope().properties(info.name())) {
+                            consumeScopeMember(task, level, group, s, m);
+                        }
+                    } else if (info.kind() == CallInfo.Kind.VARIABLE) {
                         for (TowerScope.ScopeMember m : s.scope().properties(info.name())) {
                             consumeScopeMember(task, level, group, s, m);
                         }
@@ -565,7 +626,7 @@ final class CallResolver {
         void processMembers(Task task, Level level, TowerGroup group, MemberLevel m) {
             CallInfo info = level.info();
             KType type = m.dispatch().type();
-            if (info.kind() == CallInfo.Kind.FUNCTION) {
+            if (info.kind() != CallInfo.Kind.VARIABLE) {
                 // Constructors of inner classes, as members.
                 List<MemberScopes.Inner> inner = scopes.innerClasses(type, info.name());
                 if (!inner.isEmpty() && m.extension() == null) {
@@ -575,14 +636,15 @@ final class CallResolver {
                     }
                 }
             }
-            List<MemberScopes.Member> members = info.kind() == CallInfo.Kind.FUNCTION
-                    ? scopes.functions(type, info.name()) : scopes.properties(type, info.name());
+            List<MemberScopes.Member> members = new ArrayList<>();
+            if (info.kind() != CallInfo.Kind.VARIABLE) members.addAll(scopes.functions(type, info.name()));
+            if (info.kind() != CallInfo.Kind.FUNCTION) members.addAll(scopes.properties(type, info.name()));
             for (MemberScopes.Member member : members) {
                 if ((member.symbol().signature().receiver() != null) != (m.extension() != null)) continue;
                 consume(task, group, candidate(task, level, member.symbol(), m.dispatch(), m.extension(),
                         member.substitution()));
             }
-            if (info.kind() == CallInfo.Kind.VARIABLE && m.extension() == null) {
+            if (info.kind() != CallInfo.Kind.FUNCTION && m.extension() == null) {
                 for (MemberScopes.Member member : scopes.syntheticProperties(type, info.name())) {
                     consume(task, group, candidate(task, level, member.symbol(), m.dispatch(), null,
                             member.substitution()));
@@ -662,14 +724,17 @@ final class CallResolver {
                             Substitution memberSubstitution) {
             CallInfo info = level.info();
             ConstraintSystem system = new ConstraintSystem(ts);
+            // A reference's candidates each have a copy of the containing call's system, as FIR's createForCallableReferences.
+            if (reference != null) system.addOtherSystem(reference.baseSystem());
             for (CallInfo.Argument a : info.arguments()) ArgumentChecker.addSubsystemFromArgument(system, a.value());
             Candidate c = new Candidate(symbol, info.pos(), system, info, info.argumentValues());
+            c.reference = reference;
             c.dispatchReceiver = dispatch;
             c.extensionReceiver = extension;
             c.explicitReceiverKind = level.kind();
             c.memberSubstitution = memberSubstitution;
             c.invokeReceiver = task.invokeReceiver;
-            c.builder = w -> build(w, c);
+            c.builder = reference != null ? w -> buildReference(w, c) : w -> build(w, c);
             if (info.origin().isOperator() && (!(symbol instanceof FunctionSymbol)
                     || task.invokeReceiver != null && !(task.invokeReceiver.symbol instanceof FunctionSymbol))) {
                 c.addDiagnostic(Applicability.K2_NOT_FUNCTION_AS_OPERATOR, symbol + " is not a function");
@@ -693,6 +758,18 @@ final class CallResolver {
                     w.typeArguments(c), dispatch, extension, superCall);
             default -> new TExpr.ObjectValue(c.pos, c.valueType, ((KType.ClassType) c.valueType).symbol());
         };
+    }
+
+    /** The checked form of a reference whose callable is completed with the call it is an argument of. */
+    private TExpr buildReference(CompletionWriter w, Candidate c) {
+        TExpr dispatch = c.dispatchReceiver == null || CallableReferenceExpression.isUnboundReceiver(c.dispatchReceiver)
+                ? null : w.write(c.dispatchReceiver);
+        TExpr extension = c.extensionReceiver == null || CallableReferenceExpression.isUnboundReceiver(c.extensionReceiver)
+                ? null : w.write(c.extensionReceiver);
+        KType type = TypeApproximator.approximateToSuperTypeOrSelf(ts, w.substitute(c.referenceType),
+                TypeApproximator.Config.INTERMEDIATE_APPROXIMATION_AFTER_COMPLETION);
+        return new TExpr.CallableReference(c.pos, type, c.callable(), w.typeArguments(c), dispatch, extension,
+                c.adaptation);
     }
 
     /** The arguments in source order, those of a vararg parameter together where the first of them is. */

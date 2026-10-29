@@ -30,7 +30,12 @@ import kotlinbootstrap.types.Variance;
  *     operator fun invoke(p1: P1, ..., pN: PN): R
  * }
  * </pre>
- * and likewise {@code kotlin.coroutines.SuspendFunctionN}, with a suspend {@code invoke}.
+ * and likewise {@code kotlin.coroutines.SuspendFunctionN}, with a suspend {@code invoke}; and their
+ * reflective forms, which inherit {@code invoke}:
+ * <pre>
+ * interface KFunctionN&lt;in P1, ..., in PN, out R&gt; : KFunction&lt;R&gt;, FunctionN&lt;P1, ..., PN, R&gt;
+ * </pre>
+ * and {@code kotlin.reflect.KSuspendFunctionN}, a {@code SuspendFunctionN}.
  * And {@code kotlin.Cloneable}, which {@code java.lang.Cloneable} maps to:
  * <pre>
  * interface Cloneable {
@@ -48,15 +53,17 @@ final class SyntheticClasses implements ClassFinder {
     @Override
     public ClassSymbol findClass(ClassId id) {
         if (id.packageName().equals("kotlin") && id.relativeName().equals("Cloneable")) return new CloneableClass(id);
+        String name = id.relativeName();
         String prefix = switch (id.packageName()) {
             case "kotlin" -> "Function";
             case "kotlin.coroutines" -> "SuspendFunction";
+            case "kotlin.reflect" -> name.startsWith("KSuspendFunction") ? "KSuspendFunction" : "KFunction";
             default -> null;
         };
-        if (prefix == null || !id.relativeName().startsWith(prefix)) return null;
-        String digits = id.relativeName().substring(prefix.length());
+        if (prefix == null || !name.startsWith(prefix)) return null;
+        String digits = name.substring(prefix.length());
         if (digits.isEmpty() || digits.length() > 3 || !digits.chars().allMatch(Character::isDigit)) return null;
-        return new FunctionClass(id, Integer.parseInt(digits), prefix.equals("SuspendFunction"));
+        return new FunctionClass(id, Integer.parseInt(digits), prefix.contains("Suspend"), prefix.startsWith("K"));
     }
 
     @Override
@@ -68,7 +75,11 @@ final class SyntheticClasses implements ClassFinder {
         private final List<TypeParamSymbol> typeParams = new ArrayList<>();
         private final Lazy<MemberScope> members;
 
-        FunctionClass(ClassId id, int arity, boolean suspend) {
+        private final int arity;
+        private final boolean suspend;
+        private final boolean reflect;
+
+        FunctionClass(ClassId id, int arity, boolean suspend, boolean reflect) {
             super(id, null, ClassKind.INTERFACE, Origin.SYNTHETIC, Visibility.PUBLIC, Modality.ABSTRACT,
                     Set.of(Modifier.FUN));
             for (int i = 1; i <= arity; i++) {
@@ -77,8 +88,12 @@ final class SyntheticClasses implements ClassFinder {
             }
             typeParams.add(new TypeParamSymbol("R", Origin.SYNTHETIC, Variance.OUT, false,
                     () -> List.of(resolver.types().nullableAny())));
+            this.arity = arity;
+            this.suspend = suspend;
+            this.reflect = reflect;
             this.members = new Lazy<>(() -> {
                 MemberScope scope = new MemberScope();
+                if (reflect) return scope;
                 Set<Modifier> modifiers = EnumSet.of(Modifier.OPERATOR);
                 if (suspend) modifiers.add(Modifier.SUSPEND);
                 scope.add(new FunctionSymbol("invoke", Origin.SYNTHETIC, this, Visibility.PUBLIC, Modality.ABSTRACT,
@@ -104,7 +119,12 @@ final class SyntheticClasses implements ClassFinder {
 
         @Override
         public List<KType> supertypes() {
-            return List.of(resolver.types().classType("kotlin.Function", TypeArg.of(type(typeParams.getLast()))));
+            TypeArg r = TypeArg.of(type(typeParams.getLast()));
+            if (!reflect) return List.of(resolver.types().classType("kotlin.Function", r));
+            List<TypeArg> args = typeParams.stream().map(tp -> TypeArg.of(type(tp))).toList();
+            String function = (suspend ? "kotlin.coroutines.SuspendFunction" : "kotlin.Function") + arity;
+            return List.of(resolver.types().classType("kotlin.reflect.KFunction", r),
+                    resolver.types().classType(function, args.toArray(TypeArg[]::new)));
         }
 
         @Override

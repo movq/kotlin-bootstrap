@@ -42,7 +42,9 @@ final class OverloadResolver {
 
     /** The most specific candidates; more than one if the call is ambiguous. */
     Set<Candidate> chooseMaximallySpecific(Set<Candidate> candidates) {
-        return chooseMaximallySpecific(candidates, true);
+        // No type arguments can be given for a reference.
+        Candidate first = candidates.iterator().next();
+        return chooseMaximallySpecific(candidates, first.call.kind() != CallInfo.Kind.CALLABLE_REFERENCE);
     }
 
     private Set<Candidate> chooseMaximallySpecific(Set<Candidate> candidates, boolean discriminateGenerics) {
@@ -50,10 +52,35 @@ final class OverloadResolver {
         Candidate first = candidates.iterator().next();
         Set<Candidate> fixed = first.isSuccessful() && first.invokeReceiver != null
                 ? withMostSpecificInvokeReceiver(candidates) : candidates;
-        Set<Candidate> filtered = filterOverrides(fixed);
-        Candidate best = findMaximallySpecificCall(filtered, false);
-        if (best == null && discriminateGenerics) best = findMaximallySpecificCall(filtered, true);
-        return best != null ? Set.of(best) : filtered;
+        return chooseMaximallySpecificCandidates(filterOverrides(fixed), true, discriminateGenerics);
+    }
+
+    /** As FIR's chooseMaximallySpecificCandidates with discrimination flags. */
+    private Set<Candidate> chooseMaximallySpecificCandidates(Set<Candidate> candidates,
+                                                             boolean adaptationsInPostponedAtoms,
+                                                             boolean discriminateGenerics) {
+        if (adaptationsInPostponedAtoms) {
+            Set<Candidate> filtered = new LinkedHashSet<>();
+            for (Candidate c : candidates) {
+                if (!hasPostponedAtomWithAdaptation(c)) filtered.add(c);
+            }
+            if (filtered.size() == 1) return filtered;
+            if (!filtered.isEmpty() && filtered.size() != candidates.size()) {
+                return chooseMaximallySpecificCandidates(filtered, false, discriminateGenerics);
+            }
+        }
+        Candidate best = findMaximallySpecificCall(candidates, false);
+        if (best == null && discriminateGenerics) best = findMaximallySpecificCall(candidates, true);
+        return best != null ? Set.of(best) : candidates;
+    }
+
+    private static boolean hasPostponedAtomWithAdaptation(Candidate c) {
+        for (PostponedArgument p : c.postponedArguments) {
+            if (p instanceof CallableReferenceAtom r && r.resolved() != null && r.resolved().adaptation != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Set<Candidate> withMostSpecificInvokeReceiver(Set<Candidate> candidates) {
@@ -144,6 +171,7 @@ final class OverloadResolver {
     }
 
     private FlatSignature signature(Candidate c) {
+        if (c.referenceType != null) return referenceSignature(c);
         switch (c.symbol) {
             case FunctionSymbol f -> {
                 List<KType> types = new ArrayList<>();
@@ -175,6 +203,25 @@ final class OverloadResolver {
                 return new FlatSignature(c, List.of(), List.of(), false, false, 0);
             }
         }
+    }
+
+    /**
+     * For the callable of a reference: the types of its extension receiver
+     * and of the parameters of the reference's type, with its type
+     * parameters, as FIR's computeSignatureTypes.
+     */
+    private FlatSignature referenceSignature(Candidate c) {
+        CallableSymbol callable = c.callable();
+        List<KType> types = new ArrayList<>();
+        KType receiver = callable.signature().receiver();
+        if (receiver != null) types.add(receiver);
+        Map<Object, TypeArg> toTypeParams = new HashMap<>();
+        for (TypeVariable v : c.freshVariables) toTypeParams.put(v, TypeArg.of(new KType.TypeParamType(v.typeParam(), false)));
+        Substitution substitution = new Substitution(toTypeParams);
+        List<TypeArg> args = ((KType.ClassType) Types.lowerBound(c.referenceType)).args();
+        for (TypeArg a : args.subList(0, args.size() - 1)) types.add(substitution.apply(a.type()));
+        boolean hasVarargs = callable.signature().params().stream().anyMatch(ValueParamSymbol::isVararg);
+        return new FlatSignature(c, c.typeParams(), types, receiver != null, hasVarargs, c.numDefaults);
     }
 
     /** Whether {@code specific} is not less specific than {@code general}, as FIR's compareCallsByUsedArguments. */
