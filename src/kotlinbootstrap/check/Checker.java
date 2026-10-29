@@ -11,6 +11,7 @@ import java.util.function.Supplier;
 import kotlinbootstrap.ast.Decl;
 import kotlinbootstrap.ast.Expr;
 import kotlinbootstrap.ast.Modifier;
+import kotlinbootstrap.ast.NamedType;
 import kotlinbootstrap.ast.Node;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.KotlinClassSymbol;
@@ -269,9 +270,10 @@ public final class Checker {
                 params.add(v);
                 scope.add(v);
             }
-            // TODO: default values, context parameters
+            List<LocalVariable> contextParams = contextParams(f, d.modifiers().contextParams(), scope);
+            // TODO: default values
             KType receiver = f.signature().receiver();
-            CheckedFunction function = new CheckedFunction(f, f.name(), receiver, List.of(), params, returnType);
+            CheckedFunction function = new CheckedFunction(f, f.name(), receiver, contextParams, params, returnType);
             Context ctx = context(f, dc);
             if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, f, f.name()));
             ctx = ctx.withLocalScope(scope).withFunction(new Context.FunctionFrame(function, f.name(), false, null));
@@ -338,15 +340,34 @@ public final class Checker {
                 params.add(v);
                 scope.add(v);
             }
+            List<LocalVariable> contextParams = contextParams(p, d.modifiers().contextParams(), scope);
             KType receiver = p.signature().receiver();
             KType returnType = accessor.isGetter() ? propertyType : checker.unit();
-            CheckedFunction function = new CheckedFunction(p, null, receiver, List.of(), params, returnType);
+            CheckedFunction function = new CheckedFunction(p, null, receiver, contextParams, params, returnType);
             Context ctx = context(p, dc);
             if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, p, p.name()));
             ctx = ctx.withLocalScope(scope).withFunction(new Context.FunctionFrame(function, null, false, null));
             function.setBody(body(checker, function, accessor.body(), ctx));
             return function;
         }));
+    }
+
+    /**
+     * The context parameters of a declaration, as variables in its bodies;
+     * {@code _} and those of the older {@code context(Foo)} form have no name.
+     * TODO: context parameters as contextual values for the calls in the body
+     */
+    private static List<LocalVariable> contextParams(CallableSymbol symbol, List<NamedType> decls, LocalScope scope) {
+        List<LocalVariable> result = new ArrayList<>();
+        List<KType> types = symbol.signature().contextParams();
+        for (int i = 0; i < decls.size(); i++) {
+            String name = decls.get(i).name();
+            LocalVariable v = new LocalVariable(name != null ? name : "_", types.get(i), LocalVariable.Kind.PARAMETER,
+                    false, null);
+            result.add(v);
+            if (name != null && !name.equals("_")) scope.add(v);
+        }
+        return result;
     }
 
     /**
