@@ -6,6 +6,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import kotlinbootstrap.ast.Decl;
 import kotlinbootstrap.ast.Expr;
@@ -18,6 +19,7 @@ import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.symbols.ClassKind;
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassifierSymbol;
+import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.Modality;
 import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.syntax.SourceFile;
@@ -40,6 +42,7 @@ final class BodyChecker {
     private final SourceFile source;
     private final CallCompleter completer;
     private final CallResolver calls;
+    private final DataFlowAnalyzer dfa;
     /** The name of the call whose arguments are being checked, as FIR's calleeNamesForLambda; nullable. */
     private String calleeNameForLambda;
 
@@ -47,9 +50,10 @@ final class BodyChecker {
         this.owner = owner;
         this.ts = owner.ts();
         this.source = source;
+        this.dfa = new DataFlowAnalyzer(owner);
         this.completer = new CallCompleter(ts, this);
         this.calls = new CallResolver(owner, completer,
-                new OverloadByLambdaReturnType(owner.overloads(), completer, this));
+                new OverloadByLambdaReturnType(owner.overloads(), completer, this), dfa);
     }
 
     CheckException error(int pos, String message) {
@@ -62,6 +66,10 @@ final class BodyChecker {
 
     ArgumentChecker arguments() {
         return owner.arguments();
+    }
+
+    DataFlowAnalyzer dfa() {
+        return dfa;
     }
 
     // ==== Expressions ====
@@ -97,16 +105,26 @@ final class BodyChecker {
             case Expr.Postfix p -> incrementOrDecrement(p.pos(), p.expr(), p.op() == Expr.PostfixOp.INC, false, ctx);
             case Expr.Is i -> {
                 TExpr operand = expr(i.expr(), ctx, Mode.INDEPENDENT);
-                yield new TExpr.TypeCheck(i.pos(), bool(), operand, typeOperand(i.type(), operand.type(), ctx),
-                        i.negated());
+                yield typeCheck(i.pos(), operand, typeOperand(i.type(), operand.type(), ctx), i.negated());
             }
             case Expr.As a -> cast(a, ctx);
             case Expr.Assign a -> assign(a, ctx);
             case Expr.Return r -> returnExpr(r, ctx);
-            case Expr.Throw t -> new TExpr.Throw(t.pos(), ts.nothing(),
-                    expr(t.expr(), ctx, Mode.expecting(type("kotlin.Throwable"))));
-            case Expr.Break b -> new TExpr.Break(b.pos(), ts.nothing(), loop(b.pos(), b.label(), ctx));
-            case Expr.Continue c -> new TExpr.Continue(c.pos(), ts.nothing(), loop(c.pos(), c.label(), ctx));
+            case Expr.Throw t -> {
+                TExpr thrown = expr(t.expr(), ctx, Mode.expecting(type("kotlin.Throwable")));
+                dfa.markDead();
+                yield new TExpr.Throw(t.pos(), ts.nothing(), thrown);
+            }
+            case Expr.Break b -> {
+                TExpr.Loop loop = loop(b.pos(), b.label(), ctx);
+                dfa.breakLoop(loop);
+                yield new TExpr.Break(b.pos(), ts.nothing(), loop);
+            }
+            case Expr.Continue c -> {
+                TExpr.Loop loop = loop(c.pos(), c.label(), ctx);
+                dfa.continueLoop(loop);
+                yield new TExpr.Continue(c.pos(), ts.nothing(), loop);
+            }
             case Expr.While w -> whileLoop(w, null, ctx);
             case Expr.DoWhile w -> doWhileLoop(w, null, ctx);
             case Expr.For f -> forLoop(f, null, ctx);
@@ -217,15 +235,17 @@ final class BodyChecker {
                     break;
                 }
             }
-            return new TExpr.FieldGet(n.pos(), v.type(), v.property(), receiver);
+            return dfa.smartCast(new TExpr.FieldGet(n.pos(), v.type(), v.property(), receiver));
         }
-        if (v != null) return new TExpr.LocalGet(n.pos(), v.type(), v);
+        if (v != null) return dfa.smartCast(new TExpr.LocalGet(n.pos(), v.type(), v));
         return completer.completeCall(resolved(variable(n.pos(), n.name(), null), ctx), mode);
     }
 
     private TExpr thisExpr(Expr.This t, Context ctx) {
         for (Context.ImplicitReceiver r : ctx.receivers()) {
-            if (t.label() == null || t.label().equals(r.label())) return new TExpr.This(t.pos(), r.type(), r.owner(), false);
+            if (t.label() == null || t.label().equals(r.label())) {
+                return dfa.smartCast(new TExpr.This(t.pos(), r.type(), r.owner(), false));
+            }
         }
         throw error(t.pos(), t.label() == null ? "'this' is not defined in this context"
                 : "Unresolved label " + t.label());
@@ -324,9 +344,12 @@ final class BodyChecker {
         if (!safe) return selector.apply(receiver);
         if (!(receiver instanceof CallInfo.ValueReceiver v)) throw error(pos, "A safe call needs a value as receiver");
         LocalVariable subject = temporary("<safe>", Types.makeDefinitelyNotNull(v.value().type()));
+        DataFlowAnalyzer.State before = dfa.enterSafeCall(subject, v.value());
         TExpr result = selector.apply(new CallInfo.ValueReceiver(new TExpr.LocalGet(pos, subject.type(), subject)));
         KType type = TExprs.isStatement(result) ? result.type() : Types.makeNullable(result.type());
-        return new TExpr.SafeCall(pos, type, v.value(), subject, result);
+        TExpr.SafeCall safeCall = new TExpr.SafeCall(pos, type, v.value(), subject, result);
+        dfa.exitSafeCall(safeCall, before);
+        return safeCall;
     }
 
     /** The receiver of a member access or call: a value, {@code super}, or a class or package as a qualifier. */
@@ -462,6 +485,7 @@ final class BodyChecker {
         }
         LocalVariable v = new LocalVariable(p.name(), type, LocalVariable.Kind.LOCAL, p.isVar(), null);
         ctx.locals().getLast().add(v);
+        if (initializer != null) dfa.localVariableInitialized(v, initializer, declared != null, false);
         return new TExpr.LocalVarDecl(p.pos(), unit(), v, initializer);
     }
 
@@ -471,6 +495,7 @@ final class BodyChecker {
         TExpr initializer = expr(d.initializer(), ctx, Mode.INDEPENDENT);
         LocalVariable source = temporary("<destruct>", approximateLocalType(initializer.type()));
         out.add(new TExpr.LocalVarDecl(d.pos(), unit(), source, initializer));
+        dfa.localVariableInitialized(source, initializer, false, false);
         destructure(d, source, ctx, out);
     }
 
@@ -497,6 +522,7 @@ final class BodyChecker {
                     LocalVariable.Kind.LOCAL, isVar, null);
             if (!e.name().equals("_")) ctx.locals().getLast().add(v);
             out.add(new TExpr.LocalVarDecl(e.pos(), unit(), v, value));
+            dfa.localVariableInitialized(v, value, declared != null, false);
         }
     }
 
@@ -542,7 +568,11 @@ final class BodyChecker {
                     Mode.INDEPENDENT);
         }
         return onVariable(target, ctx, Mode.INDEPENDENT,
-                v -> assignment(a.pos(), v, expr(a.value(), ctx, Mode.expecting(v.type()))));
+                v -> assignment(a.pos(), v, expr(a.value(), ctx, Mode.expecting(withoutSmartCast(v).type()))));
+    }
+
+    private static TExpr withoutSmartCast(TExpr e) {
+        return e instanceof TExpr.SmartCast s ? s.expr() : e;
     }
 
     /** The target of an assignment or increment, without parentheses, labels and annotations. */
@@ -574,13 +604,16 @@ final class BodyChecker {
 
     /** The write of the variable the expression reads. */
     private TExpr assignment(int pos, TExpr variable, TExpr value) {
-        return switch (variable) {
+        TExpr target = withoutSmartCast(variable);
+        TExpr result = switch (target) {
             case TExpr.LocalGet g -> new TExpr.LocalSet(pos, unit(), g.variable(), value);
             case TExpr.PropertyGet g -> new TExpr.PropertySet(pos, unit(), g.property(), g.typeArgs(),
                     g.dispatchReceiver(), g.extensionReceiver(), g.superCall(), value);
             case TExpr.FieldGet g -> new TExpr.FieldSet(pos, unit(), g.property(), g.receiver(), value);
             default -> throw error(pos, "Not assignable");
         };
+        dfa.assigned(target, value);
+        return result;
     }
 
     /**
@@ -595,7 +628,7 @@ final class BodyChecker {
         TExpr variable = withReceiverTemporaries(left, statements);
         CallInfo operatorInfo = operator(pos, operator, new CallInfo.ValueReceiver(variable), List.of(right));
         CallResolver.Result op = calls.resolve(operatorInfo, ctx);
-        boolean isVar = switch (left) {
+        boolean isVar = switch (withoutSmartCast(left)) {
             case TExpr.LocalGet g -> g.variable().isVar();
             case TExpr.PropertyGet g -> g.property().isVar();
             case TExpr.FieldGet g -> true;
@@ -615,7 +648,8 @@ final class BodyChecker {
             chooseAssign = true;
         }
         if (chooseAssign) return completer.completeCall(resolved(assignInfo, assign), Mode.INDEPENDENT);
-        TExpr value = completer.completeCall(resolved(operatorInfo, op), Mode.expecting(variable.type()));
+        TExpr value = completer.completeCall(resolved(operatorInfo, op),
+                Mode.expecting(withoutSmartCast(variable).type()));
         statements.add(assignment(pos, variable, value));
         return statements.size() == 1 ? statements.getFirst() : new TExpr.Block(pos, unit(), statements);
     }
@@ -723,12 +757,14 @@ final class BodyChecker {
      * read and the write. Qualifiers and {@code this} need none.
      */
     private TExpr withReceiverTemporaries(TExpr variable, List<TExpr> statements) {
-        if (!(variable instanceof TExpr.PropertyGet g)) return variable;
+        if (!(withoutSmartCast(variable) instanceof TExpr.PropertyGet g)) return variable;
         TExpr dispatch = g.dispatchReceiver();
         TExpr extension = g.extensionReceiver();
         if (needsTemporary(dispatch)) dispatch = temporaryFor("<receiver>", dispatch, statements);
         if (needsTemporary(extension)) extension = temporaryFor("<receiver>", extension, statements);
-        return new TExpr.PropertyGet(g.pos(), g.type(), g.property(), g.typeArgs(), dispatch, extension, g.superCall());
+        TExpr read = new TExpr.PropertyGet(g.pos(), g.type(), g.property(), g.typeArgs(), dispatch, extension,
+                g.superCall());
+        return variable instanceof TExpr.SmartCast s ? new TExpr.SmartCast(s.pos(), s.type(), read) : read;
     }
 
     private static boolean needsTemporary(TExpr receiver) {
@@ -748,8 +784,14 @@ final class BodyChecker {
         boolean exhaustive = i.otherwise() != null;
         Mode branchMode = branchMode(exhaustive ? 2 : 1, mode);
         TExpr condition = expr(i.condition(), ctx, Mode.expecting(bool()));
+        DataFlowAnalyzer.State conditionExit = dfa.save();
+        dfa.assume(condition, true);
         TExpr then = branch(i.pos(), i.then(), ctx, branchMode);
+        DataFlowAnalyzer.State thenExit = dfa.save();
+        dfa.restore(conditionExit);
+        dfa.assume(condition, false);
         TExpr otherwise = exhaustive ? branch(i.pos(), i.otherwise(), ctx, branchMode) : null;
+        dfa.join(List.of(thenExit, dfa.save()));
         if (branchMode == Mode.INDEPENDENT) {
             return new TExpr.If(i.pos(), exhaustive ? then.type() : unit(), condition, then, otherwise);
         }
@@ -787,17 +829,29 @@ final class BodyChecker {
             TExpr value = expr(w.subject(), inner, Mode.INDEPENDENT);
             subjectVariable = new LocalVariable("<subject>", value.type(), LocalVariable.Kind.TEMPORARY, false, null);
             subject = new TExpr.LocalVarDecl(w.subject().pos(), unit(), subjectVariable, value);
+            dfa.localVariableInitialized(subjectVariable, value, false, true);
         }
         if (w.entries().isEmpty()) return new TExpr.When(w.pos(), unit(), subject, List.of(), false);
 
         Mode branchMode = branchMode(w.entries().size(), mode);
         List<TExpr> conditions = new ArrayList<>();
         List<TExpr> bodies = new ArrayList<>();
+        List<DataFlowAnalyzer.State> exits = new ArrayList<>();
+        // Each condition is checked where the ones before it were false.
         for (Expr.WhenEntry entry : w.entries()) {
-            conditions.add(whenCondition(entry, subjectVariable, inner));
+            TExpr condition = whenCondition(entry, subjectVariable, inner);
+            conditions.add(condition);
+            DataFlowAnalyzer.State conditionExit = dfa.save();
+            if (condition != null) dfa.assume(condition, true);
             bodies.add(branch(entry.pos(), entry.body(), inner, branchMode));
+            exits.add(dfa.save());
+            dfa.restore(conditionExit);
+            if (condition != null) dfa.assume(condition, false);
         }
         boolean exhaustive = isExhaustive(w, subjectVariable, conditions);
+        // Past the last condition only if no branch is always taken.
+        if (!exhaustive) exits.add(dfa.save());
+        dfa.join(exits);
         TExpr finalSubject = subject;
         if (branchMode == Mode.INDEPENDENT) {
             return new TExpr.When(w.pos(), exhaustive ? bodies.getFirst().type() : unit(), subject,
@@ -820,24 +874,28 @@ final class BodyChecker {
     private TExpr whenCondition(Expr.WhenEntry entry, LocalVariable subject, Context ctx) {
         TExpr condition = null;
         for (Expr.WhenCondition c : entry.conditions()) {
-            TExpr test = switch (c) {
-                case Expr.ExprCondition e when subject == null -> expr(e.expr(), ctx, Mode.expecting(bool()));
-                case Expr.ExprCondition e -> equality(e.pos(), Expr.BinaryOp.EQ,
-                        new TExpr.LocalGet(e.pos(), subject.type(), subject), e.expr(), ctx, Mode.INDEPENDENT);
-                case Expr.IsCondition i when subject != null -> new TExpr.TypeCheck(i.pos(), bool(),
-                        new TExpr.LocalGet(i.pos(), subject.type(), subject), typeOperand(i.type(), subject.type(), ctx),
-                        i.negated());
-                case Expr.InCondition i when subject != null ->
-                        throw error(i.pos(), "'in' conditions are not supported yet");
-                default -> throw error(c.pos(), "A when without a subject needs Boolean conditions");
-            };
-            condition = condition == null ? test : new TExpr.Logical(c.pos(), bool(), false, condition, test);
+            condition = condition == null ? whenTest(c, subject, ctx)
+                    : logical(c.pos(), false, condition, () -> whenTest(c, subject, ctx));
         }
         if (entry.guard() != null) {
-            TExpr guard = expr(entry.guard(), ctx, Mode.expecting(bool()));
-            condition = condition == null ? guard : new TExpr.Logical(entry.guard().pos(), bool(), true, condition, guard);
+            condition = condition == null ? expr(entry.guard(), ctx, Mode.expecting(bool()))
+                    : logical(entry.guard().pos(), true, condition, () -> expr(entry.guard(), ctx, Mode.expecting(bool())));
         }
         return condition;
+    }
+
+    private TExpr whenTest(Expr.WhenCondition c, LocalVariable subject, Context ctx) {
+        return switch (c) {
+            case Expr.ExprCondition e when subject == null -> expr(e.expr(), ctx, Mode.expecting(bool()));
+            case Expr.ExprCondition e -> equality(e.pos(), Expr.BinaryOp.EQ,
+                    dfa.smartCast(new TExpr.LocalGet(e.pos(), subject.type(), subject)), e.expr(), ctx, Mode.INDEPENDENT);
+            case Expr.IsCondition i when subject != null -> {
+                TExpr operand = dfa.smartCast(new TExpr.LocalGet(i.pos(), subject.type(), subject));
+                yield typeCheck(i.pos(), operand, typeOperand(i.type(), operand.type(), ctx), i.negated());
+            }
+            case Expr.InCondition i when subject != null -> throw error(i.pos(), "'in' conditions are not supported yet");
+            default -> throw error(c.pos(), "A when without a subject needs Boolean conditions");
+        };
     }
 
     // ==== Exhaustiveness ====
@@ -876,7 +934,7 @@ final class BodyChecker {
                 collect(l.right(), subject, coverage);
             }
             case TExpr.Equality e when (e.op() == TExpr.EqualityOp.EQ || e.op() == TExpr.EqualityOp.IDENTITY_EQ)
-                    && e.left() instanceof TExpr.LocalGet g && g.variable() == subject -> {
+                    && withoutSmartCast(e.left()) instanceof TExpr.LocalGet g && g.variable() == subject -> {
                 switch (e.right()) {
                     case TExpr.Const c when c.value() == null -> coverage.isNull = true;
                     case TExpr.Const c when c.value() instanceof Boolean b -> coverage.booleans.add(b);
@@ -886,7 +944,7 @@ final class BodyChecker {
                     }
                 }
             }
-            case TExpr.TypeCheck t when !t.negated() && t.expr() instanceof TExpr.LocalGet g
+            case TExpr.TypeCheck t when !t.negated() && withoutSmartCast(t.expr()) instanceof TExpr.LocalGet g
                     && g.variable() == subject -> {
                 if (Types.isMarkedNullable(t.target())) coverage.isNull = true;
                 if (Types.lowerBound(t.target()) instanceof KType.ClassType c) coverage.classes.add(c.symbol());
@@ -933,7 +991,10 @@ final class BodyChecker {
 
     private TExpr tryExpr(Expr.Try t, Context ctx, Mode mode) {
         List<TExpr> bodies = new ArrayList<>();
+        DataFlowAnalyzer.State tryEnter = dfa.save();
         bodies.add(block(t.body().pos(), t.body().statements(), ctx, Mode.DEPENDENT));
+        DataFlowAnalyzer.State tryExit = dfa.save();
+        List<DataFlowAnalyzer.State> exits = new ArrayList<>(List.of(tryExit));
         List<LocalVariable> params = new ArrayList<>();
         for (Expr.Catch c : t.catches()) {
             KType type = resolveType(c.param().type(), ctx);
@@ -941,8 +1002,12 @@ final class BodyChecker {
             LocalScope scope = new LocalScope();
             scope.add(param);
             params.add(param);
+            // The exception may be thrown anywhere in the try block.
+            dfa.join(List.of(tryEnter, tryExit));
             bodies.add(block(c.body().pos(), c.body().statements(), ctx.withLocalScope(scope), Mode.DEPENDENT));
+            exits.add(dfa.save());
         }
+        dfa.join(exits);
         TExpr[] finallyBlock = new TExpr[1];
         Candidate candidate = synthetic().tryCall(t.pos(), bodies, null);
         candidate.builder = w -> {
@@ -971,8 +1036,8 @@ final class BodyChecker {
     private TExpr binary(Expr.Binary b, Context ctx, Mode mode) {
         return switch (b.op()) {
             case ELVIS -> elvis(b, ctx, mode);
-            case AND, OR -> new TExpr.Logical(b.pos(), bool(), b.op() == Expr.BinaryOp.AND,
-                    expr(b.left(), ctx, Mode.expecting(bool())), expr(b.right(), ctx, Mode.expecting(bool())));
+            case AND, OR -> logical(b.pos(), b.op() == Expr.BinaryOp.AND, expr(b.left(), ctx, Mode.expecting(bool())),
+                    () -> expr(b.right(), ctx, Mode.expecting(bool())));
             case EQ, NE, IDENTITY_EQ, IDENTITY_NE ->
                     equality(b.pos(), b.op(), expr(b.left(), ctx, Mode.INDEPENDENT), b.right(), ctx, mode);
             case MUL, DIV, REM, PLUS, MINUS, RANGE, RANGE_UNTIL -> operatorCall(b.pos(), operatorName(b.op()),
@@ -988,6 +1053,14 @@ final class BodyChecker {
                             TExpr.CallOrigin.OPERATOR, ctx, Mode.INDEPENDENT));
             default -> throw error(b.pos(), "Operator " + b.op() + " is not supported yet");
         };
+    }
+
+    /** {@code a && b} or {@code a || b}: the right side is checked where the left did not decide. */
+    private TExpr logical(int pos, boolean and, TExpr left, Supplier<TExpr> right) {
+        DataFlowAnalyzer.State leftExit = dfa.exitLeftOfLogical(left, and);
+        TExpr.Logical result = new TExpr.Logical(pos, bool(), and, left, right.get());
+        dfa.exitLogical(result, leftExit);
+        return result;
     }
 
     private static String operatorName(Expr.BinaryOp op) {
@@ -1057,14 +1130,19 @@ final class BodyChecker {
             case IDENTITY_EQ -> TExpr.EqualityOp.IDENTITY_EQ;
             default -> TExpr.EqualityOp.IDENTITY_NE;
         };
+        DataFlowAnalyzer.State lhsExit = dfa.save();
         TExpr right = expr(rightExpr, ctx, Mode.DEPENDENT);
+        TExpr result;
         if (!Types.contains(right.type(), t -> t instanceof KType.TypeVariableType || t instanceof KType.IntegerLiteral)) {
-            return new TExpr.Equality(pos, bool(), equalityOp, left, right);
+            result = new TExpr.Equality(pos, bool(), equalityOp, left, right);
+        } else {
+            Candidate candidate = synthetic().equalityCall(pos, left, right, null);
+            candidate.builder = w -> new TExpr.Equality(pos, bool(), equalityOp,
+                    w.writeArgument(left, ts.nullableAny()), w.writeArgument(right, ts.nullableAny()));
+            result = completer.completeCall(candidate, mode);
         }
-        Candidate candidate = synthetic().equalityCall(pos, left, right, null);
-        candidate.builder = w -> new TExpr.Equality(pos, bool(), equalityOp, w.writeArgument(left, ts.nullableAny()),
-                w.writeArgument(right, ts.nullableAny()));
-        return completer.completeCall(candidate, mode);
+        dfa.equality(result, equalityOp, left, right, lhsExit);
+        return result;
     }
 
     private TExpr elvis(Expr.Binary b, Context ctx, Mode mode) {
@@ -1075,6 +1153,7 @@ final class BodyChecker {
         Mode lhsMode = last && isUnitOrFlexibleUnit(expected) || expected == null ? Mode.DEPENDENT
                 : Mode.expecting(expected.withNullable(true));
         TExpr lhs = expr(b.left(), ctx, lhsMode);
+        DataFlowAnalyzer.State lhsNotNull = dfa.exitElvisLhs(lhs);
         Mode rhsMode = expected == null ? Mode.DEPENDENT : new Mode.WithExpectedType(expected, last, false, true);
         TExpr rhs = expr(b.right(), ctx, rhsMode);
 
@@ -1096,11 +1175,13 @@ final class BodyChecker {
                 type = withNotNullableLowerBound(type);
             }
         }
-        return switch (result) {
+        TExpr elvis = switch (result) {
             case TExpr.Elvis e -> new TExpr.Elvis(e.pos(), type, e.left(), e.right());
             case TExpr.Unresolved u -> new TExpr.Unresolved(u.pos(), type, u.state());
             default -> result;
         };
+        dfa.exitElvis(elvis, lhs, rhs, lhsNotNull, ts.isNothing(rhs.type()));
+        return elvis;
     }
 
     private static KType withNotNullableLowerBound(KType type) {
@@ -1118,14 +1199,25 @@ final class BodyChecker {
         Candidate candidate = synthetic().checkNotNullCall(p.pos(), arg, null);
         candidate.builder = w -> new TExpr.NotNull(p.pos(), w.callType(candidate, candidate.returnType()),
                 w.writeArgument(arg, SyntheticCalls.parameterType(candidate, 0)));
-        return completer.completeCall(candidate, mode);
+        TExpr result = completer.completeCall(candidate, mode);
+        dfa.checkNotNull(arg);
+        return result;
     }
 
     private TExpr cast(Expr.As a, Context ctx) {
         // TODO: the expected type from the cast for calls, as kotlinc's fromCast mode
         TExpr operand = expr(a.expr(), ctx, Mode.INDEPENDENT);
         KType target = typeOperand(a.type(), operand.type(), ctx);
-        return new TExpr.Cast(a.pos(), a.safe() ? target.withNullable(true) : target, operand, target, a.safe());
+        TExpr.Cast cast = new TExpr.Cast(a.pos(), a.safe() ? target.withNullable(true) : target, operand, target,
+                a.safe());
+        dfa.cast(cast);
+        return cast;
+    }
+
+    private TExpr typeCheck(int pos, TExpr operand, KType target, boolean negated) {
+        TExpr.TypeCheck check = new TExpr.TypeCheck(pos, bool(), operand, target, negated);
+        dfa.typeCheck(check);
+        return check;
     }
 
     // ==== Jumps and loops ====
@@ -1147,6 +1239,7 @@ final class BodyChecker {
                     : isLambda ? Mode.DEPENDENT : Mode.INDEPENDENT);
         }
         if (isLambda) target.returns.add(value);
+        dfa.returnFrom(target.function, isLambda);
         return new TExpr.Return(r.pos(), ts.nothing(), target.function, value);
     }
 
@@ -1172,8 +1265,11 @@ final class BodyChecker {
 
     private TExpr whileLoop(Expr.While w, String label, Context ctx) {
         TExpr.Loop loop = new TExpr.Loop(label);
+        DataFlowAnalyzer.LoopState l = dfa.enterWhileLoop(loop, AssignedVariables.in(ctx, w.condition(), w.body()));
         TExpr condition = expr(w.condition(), ctx, Mode.expecting(bool()));
+        dfa.exitWhileLoopCondition(l, condition);
         TExpr body = branch(w.pos(), w.body(), ctx.withLoop(loop), Mode.INDEPENDENT);
+        dfa.exitWhileLoop(l, condition);
         return new TExpr.While(w.pos(), unit(), loop, condition, body, false);
     }
 
@@ -1186,7 +1282,10 @@ final class BodyChecker {
         TExpr.Loop loop = new TExpr.Loop(label);
         TExpr iterator = desugaredCall(f.pos(), "iterator", receiver(f.iterable(), ctx), ctx, Mode.INDEPENDENT);
         LocalVariable it = temporary("<iterator>", approximateLocalType(iterator.type()));
+        dfa.localVariableInitialized(it, iterator, false, false);
+        DataFlowAnalyzer.LoopState l = dfa.enterWhileLoop(loop, AssignedVariables.in(ctx, f.body()));
         TExpr hasNext = desugaredCall(f.pos(), "hasNext", localValue(f.pos(), it), ctx, Mode.expecting(bool()));
+        dfa.exitWhileLoopCondition(l, hasNext);
 
         Context inner = ctx.withLocalScope(new LocalScope()).withLoop(loop);
         Expr.Binding b = f.variable();
@@ -1198,13 +1297,16 @@ final class BodyChecker {
         if (b.destructuring() != null) {
             LocalVariable v = temporary("<destruct>", type);
             statements.add(new TExpr.LocalVarDecl(b.pos(), unit(), v, next));
+            dfa.localVariableInitialized(v, next, declared != null, false);
             destructure(b.destructuring(), v, inner, statements);
         } else {
             LocalVariable v = new LocalVariable(b.name(), type, LocalVariable.Kind.LOCAL, false, null);
             if (!b.name().equals("_")) inner.locals().getLast().add(v);
             statements.add(new TExpr.LocalVarDecl(b.pos(), unit(), v, next));
+            dfa.localVariableInitialized(v, next, declared != null, false);
         }
         statements.add(branch(f.pos(), f.body(), inner, Mode.INDEPENDENT));
+        dfa.exitWhileLoop(l, hasNext);
         TExpr body = new TExpr.Block(f.pos(), unit(), statements);
         return new TExpr.Block(f.pos(), unit(), List.of(
                 new TExpr.LocalVarDecl(f.pos(), unit(), it, iterator),
@@ -1217,8 +1319,11 @@ final class BodyChecker {
         Context inner = ctx.withLocalScope(new LocalScope()).withLoop(loop);
         List<Stmt> statements = w.body() == null ? List.of()
                 : w.body() instanceof Expr.Block b ? b.statements() : List.of(w.body());
+        DataFlowAnalyzer.LoopState l = dfa.enterDoWhileLoop(loop, AssignedVariables.in(ctx, w.body(), w.condition()));
         TExpr body = blockInScope(w.pos(), statements, inner, Mode.INDEPENDENT);
+        dfa.enterDoWhileLoopCondition(l);
         TExpr condition = expr(w.condition(), inner, Mode.expecting(bool()));
+        dfa.exitDoWhileLoop(l, condition);
         return new TExpr.While(w.pos(), unit(), loop, condition, body, true);
     }
 
@@ -1233,6 +1338,7 @@ final class BodyChecker {
      */
     private TExpr lambda(Expr e, String label, Context ctx, Mode mode) {
         LambdaExpression lambda = lambdaExpression(e, label != null ? label : calleeNameForLambda, ctx);
+        lambda.creation = dfa.save();
         TExpr.Unresolved argument = new TExpr.Unresolved(e.pos(), null, lambda);
         if (mode instanceof Mode.ContextDependent) return argument;
         KType expected = mode instanceof Mode.WithExpectedType w ? adaptExpectedTypeForLambda(w.type(), lambda) : null;
@@ -1354,6 +1460,9 @@ final class BodyChecker {
         calleeNameForLambda = null;
         TExpr body;
         TExpr last = null;
+        Contract.InvocationKind invocationKind = invocationKind(atom);
+        DataFlowAnalyzer.LambdaFrame dataFlow = dfa.enterLambda(lambda.creation, invocationKind,
+                AssignedVariables.in(outer, lambda.expr));
         try {
             if (lambda.expr instanceof Expr.Lambda l) {
                 List<TExpr> prologue = new ArrayList<>();
@@ -1390,6 +1499,7 @@ final class BodyChecker {
             }
         } finally {
             calleeNameForLambda = outerCallee;
+            dfa.exitLambda(dataFlow, function, lambda.creation, invocationKind);
         }
         function.setBody(body);
 
@@ -1401,6 +1511,19 @@ final class BodyChecker {
                 params.stream().map(LocalVariable::type).toList(), current.apply(atom.returnType));
         return new LambdaResults(new TExpr.Lambda(lambda.pos(), type, function, !lambda.isLambda), returned, last,
                 explicitEmptyReturn);
+    }
+
+    /** How the call a lambda is an argument of calls it, by its contract; null if not in place. */
+    private Contract.InvocationKind invocationKind(LambdaAtom atom) {
+        Candidate call = atom.containingCandidate;
+        if (call == null || call.argumentMapping == null || !(call.symbol instanceof FunctionSymbol f)) return null;
+        for (int i = 0; i < call.arguments.size(); i++) {
+            if (call.arguments.get(i) instanceof TExpr.Unresolved u && u.state() == atom.expression) {
+                int param = call.argumentMapping[i];
+                return param < 0 ? null : owner.contract(f).callsInPlace().get(param);
+            }
+        }
+        return null;
     }
 
     /**

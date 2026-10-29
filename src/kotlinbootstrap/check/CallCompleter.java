@@ -42,15 +42,21 @@ final class CallCompleter {
         CompletionMode completionMode = mode.forceFullCompletion() ? CompletionMode.FULL
                 : CompletionModeCalculator.compute(candidate.system, initialType, notAnalyzedPostponedArguments(candidate));
         runCompletion(candidate, completionMode, initialType);
-        if (completionMode == CompletionMode.PARTIAL) return new TExpr.Unresolved(candidate.pos, initialType, candidate);
-
-        ConstraintSystem system = candidate.system;
-        system.prepareForReading();
-        if (system.hasContradiction() || !candidate.applicability().isSuccess()) {
-            throw checker.error(candidate.pos, "Inapplicable " + candidate.symbol.name() + ": "
-                    + (candidate.diagnostics.isEmpty() ? system.errors() : candidate.diagnostics));
+        TExpr result;
+        if (completionMode == CompletionMode.PARTIAL) {
+            result = new TExpr.Unresolved(candidate.pos, initialType, candidate);
+        } else {
+            ConstraintSystem system = candidate.system;
+            system.prepareForReading();
+            if (system.hasContradiction() || !candidate.applicability().isSuccess()) {
+                throw checker.error(candidate.pos, "Inapplicable " + candidate.symbol.name() + ": "
+                        + (candidate.diagnostics.isEmpty() ? system.errors() : candidate.diagnostics));
+            }
+            result = candidate.builder.apply(new CompletionWriter(ts, system.buildCurrentSubstitutor()));
         }
-        return candidate.builder.apply(new CompletionWriter(ts, system.buildCurrentSubstitutor()));
+        checker.dfa().exitCall(candidate, result, completionMode != CompletionMode.PARTIAL);
+        // A property read has the type data flow knows; one with fresh variables cannot be stable.
+        return result instanceof TExpr.Unresolved ? result : checker.dfa().smartCast(result);
     }
 
     private void addConstraintFromExpectedType(Candidate candidate, KType initialType, Mode mode) {

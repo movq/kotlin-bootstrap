@@ -28,6 +28,7 @@ import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeApproximator;
 import kotlinbootstrap.types.TypeSystem;
+import kotlinbootstrap.types.Types;
 
 /**
  * Checks the bodies of the declarations of the Kotlin sources: function
@@ -51,6 +52,7 @@ public final class Checker {
     private final Map<ClassSymbol, ClassContexts> classContexts = new HashMap<>();
     /** The direct subclasses of the sealed classes of the sources; computed on first use. */
     private Map<ClassSymbol, List<ClassSymbol>> sealedInheritors;
+    private final Map<FunctionSymbol, Contract> contracts = new HashMap<>();
 
     public Checker(Resolver resolver) {
         this.resolver = resolver;
@@ -136,6 +138,21 @@ public final class Checker {
             }
         }
         return sealedInheritors.getOrDefault(sealed, List.of());
+    }
+
+    /** The contract a function declares; {@link Contract#NONE} if none. */
+    Contract contract(FunctionSymbol f) {
+        if (!(f.source() instanceof Decl.Function d)) return Contract.NONE;
+        return contracts.computeIfAbsent(f, k -> {
+            Resolver.DeclarationContext dc = resolver.context(f);
+            if (dc == null) return Contract.NONE;
+            // Types with the function's type parameters would need the call's type arguments.
+            return Contract.of(d, ref -> {
+                KType t = resolver.types().resolve(ref, dc.scope(), dc.file());
+                return Types.contains(t, c -> c instanceof KType.TypeParamType p && f.typeParams().contains(p.symbol()))
+                        ? null : t;
+            });
+        });
     }
 
     private static void collect(MemberScope scope, List<CallableSymbol> out) {

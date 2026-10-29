@@ -43,10 +43,12 @@ final class CallResolver {
     private final Checker checker;
     private final CallCompleter completer;
     private final OverloadByLambdaReturnType byLambdaReturnType;
+    private final DataFlowAnalyzer dfa;
 
     private static final Set<String> HIDES_MEMBERS_NAMES = Set.of("forEach", "addSuppressed");
 
-    CallResolver(Checker checker, CallCompleter completer, OverloadByLambdaReturnType byLambdaReturnType) {
+    CallResolver(Checker checker, CallCompleter completer, OverloadByLambdaReturnType byLambdaReturnType,
+                 DataFlowAnalyzer dfa) {
         this.ts = checker.ts();
         this.types = checker.resolver().types();
         this.scopes = checker.memberScopes();
@@ -55,6 +57,7 @@ final class CallResolver {
         this.checker = checker;
         this.completer = completer;
         this.byLambdaReturnType = byLambdaReturnType;
+        this.dfa = dfa;
     }
 
     /**
@@ -399,7 +402,8 @@ final class CallResolver {
             for (int depth = 0; depth < elements.size(); depth++) {
                 switch (elements.get(depth)) {
                     case Context.ScopeElement s -> onScope.accept(s.scope(), parent.nonLocal(depth));
-                    case Context.ImplicitReceiver r -> onImplicitReceiver.accept(r.expr(info.pos()), parent.implicit(depth));
+                    case Context.ImplicitReceiver r ->
+                            onImplicitReceiver.accept(dfa.smartCast(r.expr(info.pos())), parent.implicit(depth));
                 }
             }
         }
@@ -439,9 +443,9 @@ final class CallResolver {
                         collector.reset();
                     },
                     (v, group) -> {
-                        boolean isExtension = isExtensionFunctionType(v.type());
+                        TExpr receiver = dfa.smartCast(new TExpr.LocalGet(info.pos(), v.type(), v));
+                        boolean isExtension = isExtensionFunctionType(receiver.type());
                         if (builtinMode && !isExtension) return;
-                        TExpr receiver = new TExpr.LocalGet(info.pos(), v.type(), v);
                         enqueueInvokeTasks(invokeInfo(info, receiver, builtinMode), receiver, group, null,
                                 builtinMode, !builtinMode && isExtension);
                     });
@@ -522,7 +526,8 @@ final class CallResolver {
                 TowerGroup group = TowerGroup.EMPTY_ROOT.implicit(depth).invokeExtensionWithImplicitReceiver()
                         .invokeReceiver(receiverGroup, TowerGroup.InvokePriority.INVOKE_EXTENSION);
                 t.levels.add(new Level(group, new MemberLevel(receiver, null),
-                        withReceiverAsArgument(info, r.expr(info.pos())), Candidate.ExplicitReceiverKind.DISPATCH));
+                        withReceiverAsArgument(info, dfa.smartCast(r.expr(info.pos()))),
+                        Candidate.ExplicitReceiverKind.DISPATCH));
             }
         }
 

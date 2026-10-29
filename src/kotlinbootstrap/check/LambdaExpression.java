@@ -30,6 +30,8 @@ final class LambdaExpression {
     final boolean isSuspend;
     /** The atom of the candidate being completed. */
     PostponedArgument atom;
+    /** What data flow knew where the lambda was made, which its body starts from. */
+    DataFlowAnalyzer.State creation;
 
     LambdaExpression(Expr expr, String label, Context context, KType receiverType, List<KType> declaredParamTypes,
                      KType declaredReturnType, boolean isLambda, boolean hasExplicitParameterList, boolean isSuspend) {
