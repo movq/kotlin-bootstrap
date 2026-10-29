@@ -896,6 +896,26 @@ final class DataFlowAnalyzer {
         lambdaExits.add(new LambdaExit(creation, exit, kind));
     }
 
+    /**
+     * Enters a body of a local function or class, from the state where it
+     * was declared: as a lambda that may be called any time, without
+     * joining the state after it.
+     */
+    LambdaFrame enterLocalDeclaration(State declaration, Set<LocalVariable> assigned) {
+        LambdaFrame frame = new LambdaFrame(new State(flow, dead), lambdaExits);
+        lambdaExits = new ArrayList<>();
+        flow = declaration.flow().fork();
+        dead = declaration.dead();
+        enterRepeatable(assigned);
+        return frame;
+    }
+
+    void exitLocalDeclaration(LambdaFrame frame) {
+        flow = frame.outer().flow();
+        dead = frame.outer().dead();
+        lambdaExits = frame.outerExits();
+    }
+
     /** The exit of a call or property read, as FIR's exitFunctionCall and exitQualifiedAccessExpression. */
     void exitCall(Candidate candidate, TExpr result, boolean completed) {
         if (completed) mergeLambdaExits();

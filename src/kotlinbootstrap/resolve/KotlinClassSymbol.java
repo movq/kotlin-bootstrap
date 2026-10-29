@@ -38,16 +38,29 @@ public final class KotlinClassSymbol extends ClassSymbol {
     private final Resolver.TypeParams typeParams;
     private final Lazy<List<KType>> supertypes;
     private final Lazy<MemberScope> members;
+    /** For a local class not nested in another, the scope of the body it is declared in; else null. */
+    private final Scope enclosingBodyScope;
+    /** For a local class not nested in another, the class whose body it is declared in; nullable. */
+    private final ClassSymbol enclosingClass;
+    private final boolean local;
     private Scope bodyScope;
     private Scope staticBodyScope;
 
-    KotlinClassSymbol(Resolver resolver, Decl.Class decl, ClassId id, KotlinClassSymbol outer, FileContext file) {
+    /**
+     * @param enclosingBodyScope for a local class, the scope of type names where it is declared
+     * @param enclosingClass     for a local class, the class whose body it is declared in, if any
+     */
+    KotlinClassSymbol(Resolver resolver, Decl.Class decl, ClassId id, KotlinClassSymbol outer, FileContext file,
+                      Scope enclosingBodyScope, ClassSymbol enclosingClass) {
         super(id, outer, kind(decl), Origin.KOTLIN_SOURCE,
                 Resolver.visibility(decl.modifiers(), Visibility.PUBLIC), modality(decl),
                 Resolver.keywords(decl.modifiers()));
         this.resolver = resolver;
         this.decl = decl;
         this.file = file;
+        this.enclosingBodyScope = enclosingBodyScope;
+        this.enclosingClass = enclosingClass;
+        this.local = enclosingBodyScope != null || outer != null && outer.isLocal();
         this.typeParams = resolver.typeParams(decl.typeParams(), decl.constraints(), outerScope(), file);
         this.supertypes = new Lazy<>(this::resolveSupertypes);
         this.members = new Lazy<>(this::buildMembers);
@@ -87,6 +100,21 @@ public final class KotlinClassSymbol extends ClassSymbol {
     }
 
     @Override
+    public boolean isLocal() {
+        return local;
+    }
+
+    /** The class this one is declared in: the outer class, or for a local class, the class whose body it is in. */
+    public ClassSymbol containingClass() {
+        return outer() != null ? outer() : enclosingClass;
+    }
+
+    @Override
+    public boolean isAnonymous() {
+        return enclosingBodyScope != null && decl.name() == null;
+    }
+
+    @Override
     public List<TypeParamSymbol> typeParams() {
         return typeParams.symbols();
     }
@@ -109,10 +137,12 @@ public final class KotlinClassSymbol extends ClassSymbol {
     // ==== Scopes ====
 
     /**
-     * The scope around the class: the outer class's body, or the file. The
-     * outer class's type parameters are only visible in inner classes.
+     * The scope around the class: the outer class's body, the body a local
+     * class is in, or the file. The outer class's type parameters are only
+     * visible in inner classes.
      */
     private Scope outerScope() {
+        if (enclosingBodyScope != null) return enclosingBodyScope;
         return outer() == null ? file.scope() : outer().bodyScope(isInner());
     }
 

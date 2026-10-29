@@ -198,7 +198,11 @@ public final class Resolver {
     /** Creates and registers the symbols for a class and its nested classes. */
     private ClassSymbol enterClass(Decl.Class c, FileContext file, KotlinClassSymbol outer) {
         ClassId id = outer == null ? new ClassId(file.packageName(), c.name()) : outer.id().nested(className(c));
-        KotlinClassSymbol cls = new KotlinClassSymbol(this, c, id, outer, file);
+        KotlinClassSymbol cls = new KotlinClassSymbol(this, c, id, outer, file, null, null);
+        if (outer != null && outer.isLocal()) {
+            enterNested(cls, file);
+            return cls;
+        }
         boolean isExpect = c.modifiers().has(Modifier.EXPECT);
         for (ClassSymbol o = outer; o != null && !isExpect; o = o.outer()) isExpect = o.has(Modifier.EXPECT);
         if (isExpect) {
@@ -210,10 +214,33 @@ public final class Resolver {
             // Replaces the nested class of an expected class.
             table.replaceKotlinClassifier(id, cls);
         }
-        for (Decl member : c.members()) {
+        enterNested(cls, file);
+        return cls;
+    }
+
+    private void enterNested(KotlinClassSymbol cls, FileContext file) {
+        for (Decl member : cls.decl().members()) {
             if (member instanceof Decl.Class nested) cls.addNested(enterClass(nested, file, cls));
         }
+    }
+
+    /**
+     * The symbol of a class declared in a body, or of an object expression;
+     * not in the symbol table, but found through the scope it is declared in.
+     *
+     * @param scope          the scope of type names where it is declared
+     * @param enclosingClass the class whose body it is declared in, nullable
+     */
+    public KotlinClassSymbol localClass(Decl.Class c, FileContext file, Scope scope, ClassSymbol enclosingClass) {
+        ClassId id = new ClassId(file.packageName(), c.name() != null ? c.name() : "<anonymous>");
+        KotlinClassSymbol cls = new KotlinClassSymbol(this, c, id, null, file, scope, enclosingClass);
+        enterNested(cls, file);
         return cls;
+    }
+
+    /** The symbol of a function declared in a body. */
+    public FunctionSymbol localFunction(Decl.Function f, FileContext file, Scope scope) {
+        return function(f, null, scope, file, null, false);
     }
 
     /** Companion objects without a name are called Companion. */

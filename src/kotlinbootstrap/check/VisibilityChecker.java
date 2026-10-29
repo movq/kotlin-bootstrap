@@ -66,12 +66,17 @@ final class VisibilityChecker {
             FileContext file = file(symbol);
             return file == null || file == ctx.file();
         }
-        for (ClassSymbol c = ctx.containingClass(); c != null; c = c.outer()) {
+        for (ClassSymbol c = ctx.containingClass(); c != null; c = containingClass(c)) {
             if (c == owner) return true;
             // The outer class sees the private members of its companion.
             if (owner.has(Modifier.COMPANION) && owner.outer() == c) return true;
         }
         return false;
+    }
+
+    /** Through local classes to the class whose body they are in, as FIR's containing declarations. */
+    private static ClassSymbol containingClass(ClassSymbol c) {
+        return c instanceof KotlinClassSymbol k ? k.containingClass() : c.outer();
     }
 
     private FileContext file(Symbol symbol) {
@@ -91,7 +96,7 @@ final class VisibilityChecker {
         boolean isVariableOrNamedFunction = symbol instanceof CallableSymbol
                 && !(symbol instanceof FunctionSymbol f && f.isConstructor());
         ClassSymbol companionOwner = dispatchReceiver == null ? null : companionOwner(dispatchReceiver.type());
-        for (ClassSymbol c = ctx.containingClass(); c != null; c = c.outer()) {
+        for (ClassSymbol c = ctx.containingClass(); c != null; c = containingClass(c)) {
             if (companionOwner != null && isSubclassOf(c, companionOwner)) return true;
             if (!isSubclassOf(c, owner)) continue;
             if (!isVariableOrNamedFunction || dispatchReceiver == null || fits(dispatchReceiver.type(), c)) return true;

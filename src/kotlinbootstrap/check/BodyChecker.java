@@ -131,6 +131,7 @@ final class BodyChecker {
             case Expr.Labeled l -> labeled(l, ctx, mode);
             case Expr.Lambda l -> lambda(l, null, ctx, mode);
             case Expr.AnonymousFunction f -> lambda(f, null, ctx, mode);
+            case Expr.ObjectLiteral o -> objectLiteral(o, ctx);
             default -> throw error(e.pos(), "Unsupported expression: " + e.getClass().getSimpleName());
         };
     }
@@ -467,8 +468,20 @@ final class BodyChecker {
     private TExpr declaration(Decl d, Context ctx) {
         return switch (d) {
             case Decl.Property p -> localVariable(p, ctx);
+            case Decl.Function f -> {
+                CheckedFunction function = owner.localFunction(f, this, ctx, ctx.locals().getLast());
+                yield new TExpr.LocalFunctionDecl(f.pos(), unit(), (FunctionSymbol) function.symbol(), function);
+            }
+            case Decl.Class c -> new TExpr.LocalClassDecl(c.pos(), unit(),
+                    owner.localClass(c, this, ctx, ctx.locals().getLast()));
             default -> throw error(d.pos(), "Unsupported local declaration: " + d.getClass().getSimpleName());
         };
+    }
+
+    /** {@code object : A { ... }}: of the type of its anonymous class. */
+    private TExpr objectLiteral(Expr.ObjectLiteral o, Context ctx) {
+        ClassSymbol cls = owner.localClass(o.decl(), this, ctx, null);
+        return new TExpr.ObjectLiteral(o.pos(), owner.resolver().types().defaultType(cls), cls);
     }
 
     private TExpr localVariable(Decl.Property p, Context ctx) {

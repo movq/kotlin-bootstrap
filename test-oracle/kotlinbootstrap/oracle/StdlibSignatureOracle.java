@@ -239,8 +239,13 @@ public final class StdlibSignatureOracle {
     }
 
     private static boolean sameValue(String ours, String theirs) {
-        if (!ours.endsWith(": ?")) return ours.equals(theirs);
-        return theirs.startsWith(ours.substring(0, ours.length() - 1));
+        if (ours.endsWith(": ?")) return theirs.startsWith(ours.substring(0, ours.length() - 1));
+        // Anonymous classes have JVM names only once compiled, as `Outer$member$1`.
+        if (ours.contains("<anonymous>")) {
+            String pattern = Pattern.quote(ours).replace("<anonymous>", "\\E`[\\w$]+\\$\\d+`\\Q");
+            return theirs.matches(pattern);
+        }
+        return ours.equals(theirs);
     }
 
     private static KClass<?> referenceClass(ClassSymbol cls) {

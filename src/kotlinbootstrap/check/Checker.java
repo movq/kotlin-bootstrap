@@ -24,6 +24,7 @@ import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.MemberScope;
 import kotlinbootstrap.symbols.Modality;
 import kotlinbootstrap.symbols.PropertySymbol;
+import kotlinbootstrap.symbols.Symbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeApproximator;
@@ -53,6 +54,16 @@ public final class Checker {
     /** The direct subclasses of the sealed classes of the sources; computed on first use. */
     private Map<ClassSymbol, List<ClassSymbol>> sealedInheritors;
     private final Map<FunctionSymbol, Contract> contracts = new HashMap<>();
+    /** Where the local classes and functions were declared, by symbol. */
+    private final Map<Symbol, LocalOrigin> localOrigins = new HashMap<>();
+
+    /**
+     * Where a local class or function was declared: its bodies are checked
+     * by the checker of the body it is in, in the context there, from what
+     * data flow knew there.
+     */
+    private record LocalOrigin(BodyChecker checker, Context context, DataFlowAnalyzer.State flow) {
+    }
 
     public Checker(Resolver resolver) {
         this.resolver = resolver;
@@ -226,9 +237,9 @@ public final class Checker {
     // ==== Bodies ====
 
     private CheckedFunction function(FunctionSymbol f, Decl.Function d) {
-        return memo(d, () -> {
+        return memo(d, () -> inLocalFlow(f, d, () -> {
             Resolver.DeclarationContext dc = resolver.context(f);
-            BodyChecker checker = checker(dc);
+            BodyChecker checker = checker(f, dc);
             KType returnType = Resolver.hasDeclaredType(f) ? f.returnType() : null;
             List<LocalVariable> params = new ArrayList<>();
             LocalScope scope = new LocalScope();
@@ -241,22 +252,22 @@ public final class Checker {
             // TODO: default values, context parameters
             KType receiver = f.signature().receiver();
             CheckedFunction function = new CheckedFunction(f, f.name(), receiver, List.of(), params, returnType);
-            Context ctx = context(dc);
+            Context ctx = context(f, dc);
             if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, f, f.name()));
             ctx = ctx.withLocalScope(scope).withFunction(new Context.FunctionFrame(function, f.name(), false, null));
             function.setBody(body(checker, function, d.body(), ctx));
             return function;
-        });
+        }));
     }
 
     private TExpr initializer(PropertySymbol p, Decl.Property d) {
-        return memo(d.initializer(), () -> {
+        return memo(d.initializer(), () -> inLocalFlow(p, d.initializer(), () -> {
             Resolver.DeclarationContext dc = resolver.context(p);
             Mode mode = Resolver.hasDeclaredType(p) ? Mode.expecting(p.returnType()) : Mode.INDEPENDENT;
             LocalScope scope = dc.cls() != null && p.owner() == dc.cls() ? primaryConstructorScope(dc.cls())
                     : new LocalScope();
-            return checker(dc).expr(d.initializer(), context(dc).withLocalScope(scope), mode);
-        });
+            return checker(p, dc).expr(d.initializer(), context(p, dc).withLocalScope(scope), mode);
+        }));
     }
 
     /** The parameters of a class's primary constructor, which the initializers of its properties see. */
@@ -274,9 +285,9 @@ public final class Checker {
     }
 
     private CheckedFunction accessor(PropertySymbol p, Decl.Property d, Decl.Accessor accessor) {
-        return memo(accessor, () -> {
+        return memo(accessor, () -> inLocalFlow(p, accessor, () -> {
             Resolver.DeclarationContext dc = resolver.context(p);
-            BodyChecker checker = checker(dc);
+            BodyChecker checker = checker(p, dc);
             // The getter infers the property's type if nothing else gives it.
             boolean typeKnown = Resolver.hasDeclaredType(p) || d.initializer() != null || d.delegate() != null;
             KType propertyType = typeKnown || !accessor.isGetter() ? p.returnType() : null;
@@ -285,7 +296,7 @@ public final class Checker {
             if (propertyType != null) scope.add(LocalVariable.backingField(p, propertyType));
             if (!accessor.isGetter()) {
                 Decl.Param param = accessor.param();
-                KType type = param.type() != null ? checker.resolveType(param.type(), context(dc)) : propertyType;
+                KType type = param.type() != null ? checker.resolveType(param.type(), context(p, dc)) : propertyType;
                 LocalVariable v = new LocalVariable(param.name(), type, LocalVariable.Kind.PARAMETER, false, null);
                 params.add(v);
                 scope.add(v);
@@ -293,12 +304,12 @@ public final class Checker {
             KType receiver = p.signature().receiver();
             KType returnType = accessor.isGetter() ? propertyType : checker.unit();
             CheckedFunction function = new CheckedFunction(p, null, receiver, List.of(), params, returnType);
-            Context ctx = context(dc);
+            Context ctx = context(p, dc);
             if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, p, p.name()));
             ctx = ctx.withLocalScope(scope).withFunction(new Context.FunctionFrame(function, null, false, null));
             function.setBody(body(checker, function, accessor.body(), ctx));
             return function;
-        });
+        }));
     }
 
     /**
@@ -312,14 +323,84 @@ public final class Checker {
         return new TExpr.Return(body.pos(), ts.nothing(), function, value);
     }
 
-    private BodyChecker checker(Resolver.DeclarationContext dc) {
-        return new BodyChecker(this, dc.file().file().source());
+    private BodyChecker checker(CallableSymbol symbol, Resolver.DeclarationContext dc) {
+        LocalOrigin origin = localOrigin(symbol, dc);
+        return origin != null ? origin.checker() : new BodyChecker(this, dc.file().file().source());
     }
 
-    /** The context of a declaration's body: the tower of the file and the classes it is in. */
-    private Context context(Resolver.DeclarationContext dc) {
+    /**
+     * The context of a declaration's body: the tower of the file and the
+     * classes it is in; for a local declaration, also of the body it is in.
+     */
+    private Context context(CallableSymbol symbol, Resolver.DeclarationContext dc) {
+        LocalOrigin origin = localOrigin(symbol, dc);
+        if (origin != null && dc.cls() == null) {
+            Context c = origin.context();
+            return new Context(dc.file(), dc.scope(), c.locals(), c.elements(), null, null, c.containingClass());
+        }
         List<Context.TowerElement> elements = dc.cls() != null ? classContexts(dc.cls()).regular() : importing(dc.file());
-        return new Context(dc.file(), dc.scope(), List.of(), elements, null, null, dc.cls());
+        List<LocalScope> locals = origin != null ? origin.context().locals() : List.of();
+        return new Context(dc.file(), dc.scope(), locals, elements, null, null, dc.cls());
+    }
+
+    /** Where a local function, or the innermost local class a declaration is in, was declared; null if none. */
+    private LocalOrigin localOrigin(CallableSymbol symbol, Resolver.DeclarationContext dc) {
+        LocalOrigin origin = localOrigins.get(symbol);
+        for (ClassSymbol c = dc.cls(); origin == null && c != null; c = c.outer()) origin = localOrigins.get(c);
+        return origin;
+    }
+
+    /**
+     * Checks a body of a local declaration in the data flow of the body it
+     * is in, from where it was declared, as a lambda not called in place.
+     */
+    private <T> T inLocalFlow(CallableSymbol symbol, Object node, Supplier<T> check) {
+        LocalOrigin origin = localOrigin(symbol, resolver.context(symbol));
+        if (origin == null) return check.get();
+        DataFlowAnalyzer dfa = origin.checker().dfa();
+        DataFlowAnalyzer.LambdaFrame frame = dfa.enterLocalDeclaration(origin.flow(),
+                AssignedVariables.in(origin.context(), node));
+        try {
+            return check.get();
+        } finally {
+            dfa.exitLocalDeclaration(frame);
+        }
+    }
+
+    // ==== Local declarations ====
+
+    /** A class declared in a body, or the class of an object expression, with its members checked. */
+    KotlinClassSymbol localClass(Decl.Class d, BodyChecker checker, Context ctx, LocalScope scope) {
+        KotlinClassSymbol cls = resolver.localClass(d, ctx.file(), ctx.typeScope(), ctx.containingClass());
+        // Visible in its own body.
+        if (scope != null) scope.add(cls);
+        localOrigins.put(cls, new LocalOrigin(checker, ctx, checker.dfa().save()));
+        checkMembers(cls);
+        return cls;
+    }
+
+    private void checkMembers(KotlinClassSymbol cls) {
+        List<CallableSymbol> callables = new ArrayList<>();
+        collect(cls.members(), callables);
+        for (CallableSymbol c : callables) {
+            if (resolver.context(c) != null) check(c);
+        }
+        for (Decl member : cls.decl().members()) {
+            if (member instanceof Decl.Class nested
+                    && cls.members().classifier(nested.name()) instanceof KotlinClassSymbol n) {
+                checkMembers(n);
+            }
+        }
+    }
+
+    /** A function declared in a body, added to the scope, then checked. */
+    CheckedFunction localFunction(Decl.Function d, BodyChecker checker, Context ctx, LocalScope scope) {
+        FunctionSymbol f = resolver.localFunction(d, ctx.file(), ctx.typeScope());
+        // Visible in its own body.
+        scope.add(f);
+        localOrigins.put(f, new LocalOrigin(checker, ctx, checker.dfa().save()));
+        if (d.body() == null) throw error(f, d.pos(), "A local function needs a body");
+        return function(f, d);
     }
 
     // ==== Towers ====
@@ -346,8 +427,8 @@ public final class Checker {
         if (cached != null) return cached;
         List<Context.TowerElement> base;
         if (cls.outer() == null) {
-            if (cls.isLocal()) throw new IllegalStateException("Local classes are not supported yet: " + cls);
-            base = importing(((KotlinClassSymbol) cls).file());
+            LocalOrigin origin = localOrigins.get(cls);
+            base = origin != null ? origin.context().elements() : importing(((KotlinClassSymbol) cls).file());
         } else {
             ClassContexts outer = classContexts(cls.outer());
             base = cls.isInner() ? outer.regular()
