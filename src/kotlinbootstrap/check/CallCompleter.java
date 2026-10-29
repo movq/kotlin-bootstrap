@@ -36,11 +36,25 @@ final class CallCompleter {
     }
 
     TExpr completeCall(Candidate candidate, Mode mode) {
+        return completeCall(candidate, mode, false);
+    }
+
+    /**
+     * Completes an operator call of a delegated property partially, to be
+     * completed with the delegate, as FIR's FirDelegatedPropertyInferenceSession
+     * does with customCompletionModeInsteadOfFull.
+     */
+    TExpr completeDelegateOperator(Candidate candidate, Mode mode) {
+        return completeCall(candidate, mode, true);
+    }
+
+    private TExpr completeCall(Candidate candidate, Mode mode, boolean partialInsteadOfFull) {
         for (PostponedArgument p : candidate.postponedArguments) p.activate();
         KType initialType = candidate.returnType();
         addConstraintFromExpectedType(candidate, initialType, mode);
         CompletionMode completionMode = mode.forceFullCompletion() ? CompletionMode.FULL
                 : CompletionModeCalculator.compute(candidate.system, initialType, notAnalyzedPostponedArguments(candidate));
+        if (partialInsteadOfFull && completionMode == CompletionMode.FULL) completionMode = CompletionMode.PARTIAL;
         runCompletion(candidate, completionMode, initialType);
         TExpr result;
         if (completionMode == CompletionMode.PARTIAL) {
@@ -108,21 +122,40 @@ final class CallCompleter {
     // ==== Running completion ====
 
     void runCompletion(Candidate candidate, CompletionMode mode, KType topLevelType) {
-        ConstraintSystem system = candidate.system;
+        runCompletion(candidate.system, List.of(candidate), mode, topLevelType);
+    }
+
+    /**
+     * Completes calls together in a system they share, as the calls of a
+     * delegated property are; a postponed argument is analyzed for the
+     * last of the calls it is in.
+     */
+    void runCompletion(ConstraintSystem system, List<Candidate> candidates, CompletionMode mode, KType topLevelType) {
         system.startCompletion();
         ConstraintSystemCompleter.complete(system, mode, topLevelType, new ConstraintSystemCompleter.Context() {
             @Override
             public List<TypeVariable> orderedTypeVariables() {
-                return CallCompleter.orderedTypeVariables(candidate);
+                Set<TypeVariable> result = new LinkedHashSet<>();
+                for (Candidate c : candidates) result.addAll(CallCompleter.orderedTypeVariables(c));
+                return new ArrayList<>(result);
             }
 
             @Override
             public List<? extends PostponedAtom> postponedArguments() {
-                return notAnalyzedPostponedArguments(candidate);
+                List<PostponedArgument> result = new ArrayList<>();
+                for (Candidate c : candidates) result.addAll(notAnalyzedPostponedArguments(c));
+                return result;
             }
 
             @Override
             public void analyze(PostponedAtom argument) {
+                Candidate candidate = candidates.getLast();
+                for (Candidate c : candidates.reversed()) {
+                    if (notAnalyzedPostponedArguments(c).contains(argument)) {
+                        candidate = c;
+                        break;
+                    }
+                }
                 checker.analyzePostponed(system, (PostponedArgument) argument, candidate);
             }
 

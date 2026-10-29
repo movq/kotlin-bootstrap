@@ -16,13 +16,16 @@ import kotlinbootstrap.ast.TypeRef;
 import kotlinbootstrap.ast.ValueArg;
 import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
+import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassKind;
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassifierSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.Modality;
+import kotlinbootstrap.symbols.Origin;
 import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.TypeParamSymbol;
+import kotlinbootstrap.symbols.Visibility;
 import kotlinbootstrap.syntax.SourceFile;
 import kotlinbootstrap.types.FunctionTypes;
 import kotlinbootstrap.types.KType;
@@ -72,6 +75,14 @@ final class BodyChecker {
 
     DataFlowAnalyzer dfa() {
         return dfa;
+    }
+
+    CallResolver calls() {
+        return calls;
+    }
+
+    CallCompleter completer() {
+        return completer;
     }
 
     // ==== Expressions ====
@@ -179,6 +190,7 @@ final class BodyChecker {
                 case Mode.ContextIndependent m -> TypeApproximator.integerLiteralType(ilt, null);
                 case Mode.Receiver m -> TypeApproximator.integerLiteralType(ilt, null);
                 case Mode.ContextDependent m -> ilt;
+                case Mode.Delegate m -> ilt;
             };
         }
         return new TExpr.Const(l.pos(), literalType, value);
@@ -273,7 +285,7 @@ final class BodyChecker {
         return resolved(info, calls.resolve(info, ctx));
     }
 
-    private Candidate resolved(CallInfo info, CallResolver.Result result) {
+    Candidate resolved(CallInfo info, CallResolver.Result result) {
         List<Candidate> candidates = result.candidates();
         if (result.success() && candidates.size() == 1) return candidates.getFirst();
         if (candidates.isEmpty()) throw error(info.pos(), "Unresolved reference " + info.name());
@@ -610,8 +622,8 @@ final class BodyChecker {
     }
 
     private TExpr localVariable(Decl.Property p, Context ctx) {
-        if (p.delegate() != null) throw error(p.pos(), "Local delegated properties are not supported yet");
         KType declared = p.type() == null ? null : resolveType(p.type(), ctx);
+        if (p.delegate() != null) return localDelegatedVariable(p, declared, ctx);
         TExpr initializer = null;
         if (p.initializer() != null) {
             initializer = expr(p.initializer(), ctx, declared != null ? Mode.expecting(declared) : Mode.INDEPENDENT);
@@ -625,6 +637,22 @@ final class BodyChecker {
         ctx.locals().getLast().add(v);
         if (initializer != null) dfa.localVariableInitialized(v, initializer, declared != null, false);
         return new TExpr.LocalVarDecl(p.pos(), unit(), v, initializer);
+    }
+
+    /**
+     * {@code val x by d}: a property local to the body, as in FIR, which
+     * {@code ::x} refers to; its delegate is checked where it is declared.
+     */
+    private TExpr localDelegatedVariable(Decl.Property p, KType declared, Context ctx) {
+        LocalVariable[] variable = new LocalVariable[1];
+        PropertySymbol symbol = new PropertySymbol(p.name(), Origin.KOTLIN_SOURCE, null, Visibility.PUBLIC,
+                Modality.FINAL, Set.of(), false, p, p.isVar(), false, false, null, List::of,
+                () -> CallableSymbol.Signature.NONE, () -> variable[0].type());
+        CheckedDelegate delegate = new DelegatedProperties(this, ts).check(symbol, p.delegate(), declared, null, null,
+                ctx, ctx, this::approximateLocalType);
+        variable[0] = LocalVariable.delegated(symbol, delegate.getter().returnType());
+        ctx.locals().getLast().add(variable[0]);
+        return new TExpr.LocalDelegatedVarDecl(p.pos(), unit(), variable[0], delegate);
     }
 
     /** {@code val (a, b) = x}: a temporary for {@code x}, then the entries. */

@@ -1,0 +1,93 @@
+val lazyInt
+  type: kotlin.Int
+  call kotlin.lazy<kotlin.Int>: kotlin.Lazy<kotlin.Int>
+    lambda: () -> kotlin.Int
+  get
+    call kotlin.getValue<kotlin.Int>: kotlin.Int
+      ref check.delegates.lazyInt: kotlin.reflect.KProperty0<kotlin.Int>
+val lazyList
+  type: kotlin.collections.List<kotlin.String>
+  call kotlin.lazy<kotlin.collections.List<kotlin.String>>: kotlin.Lazy<kotlin.collections.List<kotlin.String>>
+    lambda: () -> kotlin.collections.List<kotlin.String>
+      call kotlin.collections.listOf<kotlin.String>: kotlin.collections.List<kotlin.String>
+  get
+    call kotlin.getValue<kotlin.collections.List<kotlin.String>>: kotlin.collections.List<kotlin.String>
+      ref check.delegates.lazyList: kotlin.reflect.KProperty0<kotlin.collections.List<kotlin.String>>
+val declaredType
+  type: kotlin.Number
+  call kotlin.lazy<kotlin.Int>: kotlin.Lazy<kotlin.Int>
+    lambda: () -> kotlin.Int
+  get
+    call kotlin.getValue<kotlin.Int>: kotlin.Int
+      ref check.delegates.declaredType: kotlin.reflect.KProperty0<kotlin.Number>
+var notNull
+  type: kotlin.Int
+  call kotlin.properties.Delegates.notNull<kotlin.Int>: kotlin.properties.ReadWriteProperty<kotlin.Any?, kotlin.Int>
+  get
+    call kotlin.properties.ReadWriteProperty.getValue: kotlin.Int
+      ref check.delegates.notNull: kotlin.reflect.KMutableProperty0<kotlin.Int>
+  set
+    call kotlin.properties.ReadWriteProperty.setValue: kotlin.Unit
+      ref check.delegates.notNull: kotlin.reflect.KMutableProperty0<kotlin.Int>
+var inferredVar
+  type: kotlin.Int
+  call check.delegates.Box.<init><kotlin.Int>: check.delegates.Box<kotlin.Int>
+  get
+    call check.delegates.Box.getValue: kotlin.Int
+      ref check.delegates.inferredVar: kotlin.reflect.KMutableProperty0<kotlin.Int>
+  set
+    call check.delegates.Box.setValue: kotlin.Unit
+      ref check.delegates.inferredVar: kotlin.reflect.KMutableProperty0<kotlin.Int>
+val provided
+  type: kotlin.String
+  call check.delegates.Provider.provideDelegate: check.delegates.Box<kotlin.String>
+    call check.delegates.Provider.<init>: check.delegates.Provider
+    ref check.delegates.provided: kotlin.reflect.KProperty0<kotlin.String>
+  get
+    call check.delegates.Box.getValue: kotlin.String
+      ref check.delegates.provided: kotlin.reflect.KProperty0<kotlin.String>
+val extension
+  type: kotlin.Long
+  call kotlin.lazy<kotlin.Long>: kotlin.Lazy<kotlin.Long>
+    lambda: () -> kotlin.Long
+  get
+    call kotlin.getValue<kotlin.Long>: kotlin.Long
+      ref check.delegates.extension: kotlin.reflect.KProperty1<kotlin.String, kotlin.Long>
+val fromExpectedType
+  type: kotlin.collections.List<kotlin.String>
+  call check.delegates.Generic.<init>: check.delegates.Generic
+  get
+    call check.delegates.Generic.getValue<kotlin.String>: kotlin.collections.List<kotlin.String>
+      ref check.delegates.fromExpectedType: kotlin.reflect.KProperty0<kotlin.collections.List<kotlin.String>>
+val mapped
+  type: kotlin.String
+  call kotlin.collections.mapOf<kotlin.String, kotlin.String>: kotlin.collections.Map<kotlin.String, kotlin.String>
+    call kotlin.to<kotlin.String, kotlin.String>: kotlin.Pair<kotlin.String, kotlin.String>
+  get
+    call kotlin.collections.getValue<kotlin.String, kotlin.String>: kotlin.String
+      ref check.delegates.mapped: kotlin.reflect.KProperty0<kotlin.String>
+fun readsDelegated
+  val a: kotlin.Int
+    call kotlin.Int.plus: kotlin.Int
+      get check.delegates.lazyInt: kotlin.Int
+      get check.delegates.inferredVar: kotlin.Int
+fun local
+  val a by: kotlin.String
+    call kotlin.lazy<kotlin.String>: kotlin.Lazy<kotlin.String>
+      lambda: () -> kotlin.String
+    get
+      call kotlin.getValue<kotlin.String>: kotlin.String
+        ref a: kotlin.reflect.KProperty0<kotlin.String>
+  val b by: kotlin.Int
+    call kotlin.properties.Delegates.notNull<kotlin.Int>: kotlin.properties.ReadWriteProperty<kotlin.Any?, kotlin.Int>
+    get
+      call kotlin.properties.ReadWriteProperty.getValue: kotlin.Int
+        ref b: kotlin.reflect.KMutableProperty0<kotlin.Int>
+    set
+      call kotlin.properties.ReadWriteProperty.setValue: kotlin.Unit
+        ref b: kotlin.reflect.KMutableProperty0<kotlin.Int>
+  get kotlin.String.length: kotlin.Int
+  val c: kotlin.String
+    call kotlin.String.plus: kotlin.String
+fun localsAreNotSmartCast
+  error: Unresolved reference length

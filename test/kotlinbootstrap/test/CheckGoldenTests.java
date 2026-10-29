@@ -8,23 +8,28 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.StringJoiner;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import kotlinbootstrap.Frontend;
 import kotlinbootstrap.Stdlib;
 import kotlinbootstrap.ast.Decl;
+import kotlinbootstrap.check.CheckedDelegate;
 import kotlinbootstrap.check.CheckedFunction;
 import kotlinbootstrap.check.Checker;
 import kotlinbootstrap.check.TExpr;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.Resolver;
 import kotlinbootstrap.symbols.FunctionSymbol;
+import kotlinbootstrap.symbols.MemberScope;
+import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeRenderer;
 
 /**
  * Golden tests for the checker. For each top-level function of a test
- * file, the outline of its checked body: local variables with their types,
+ * file, the outline of its checked body, and for each top-level delegated
+ * property, of its delegate and accessors: local variables with their types,
  * and calls, property accesses, references, lambdas and SAM conversions
  * with their targets and types, nested as in the tree; or the first error.
  * The outlines for {@code foo.kt} are compared with {@code foo.txt}.
@@ -67,23 +72,38 @@ public final class CheckGoldenTests {
 
     private static String outlines(Resolver resolver, Checker checker, FileContext file) {
         StringBuilder out = new StringBuilder();
-        List<FunctionSymbol> functions = resolver.table().packageScope(file.packageName()).functions().values()
-                .stream().flatMap(List::stream).toList();
+        MemberScope scope = resolver.table().packageScope(file.packageName());
+        List<FunctionSymbol> functions = scope.functions().values().stream().flatMap(List::stream).toList();
+        List<PropertySymbol> properties = scope.properties().values().stream().flatMap(List::stream).toList();
         for (Decl decl : file.file().declarations()) {
             for (FunctionSymbol f : functions) {
                 if (f.source() != decl) continue;
                 out.append("fun ").append(f.name()).append('\n');
-                try {
-                    outline(checker.checkedFunction(f).body(), 1, out);
-                } catch (RuntimeException e) {
-                    // Not the candidates of an inapplicable call.
-                    String message = e.getMessage().replaceFirst(": \\[.*", "");
-                    out.append("  error: ").append(message).append('\n');
-                    if (System.getenv("KBC_TRACE") != null) e.printStackTrace();
-                }
+                outline(() -> checker.checkedFunction(f), out);
+            }
+            for (PropertySymbol p : properties) {
+                if (p.source() != decl || !(decl instanceof Decl.Property d) || d.delegate() == null) continue;
+                out.append(p.isVar() ? "var " : "val ").append(p.name()).append('\n');
+                outline(() -> {
+                    CheckedDelegate delegate = checker.checkedDelegate(p);
+                    out.append("  type: ").append(type(p.returnType())).append('\n');
+                    return delegate;
+                }, out);
             }
         }
         return out.toString();
+    }
+
+    /** The outline of what a check gives, or its error. */
+    private static void outline(Supplier<Object> check, StringBuilder out) {
+        try {
+            outline(check.get(), 1, out);
+        } catch (RuntimeException e) {
+            // Not the candidates of an inapplicable call.
+            String message = e.getMessage().replaceFirst(": \\[.*", "");
+            out.append("  error: ").append(message).append('\n');
+            if (System.getenv("KBC_TRACE") != null) e.printStackTrace();
+        }
     }
 
     // ==== Outlines ====
@@ -94,6 +114,15 @@ public final class CheckGoldenTests {
             }
             case List<?> list -> list.forEach(n -> outline(n, depth, out));
             case CheckedFunction f -> outline(f.body(), depth, out);
+            case CheckedDelegate d -> {
+                outline(d.delegate(), depth, out);
+                out.append("  ".repeat(depth)).append("get\n");
+                outline(d.getter(), depth + 1, out);
+                if (d.setter() != null) {
+                    out.append("  ".repeat(depth)).append("set\n");
+                    outline(d.setter(), depth + 1, out);
+                }
+            }
             case KType t -> {
             }
             case TExpr e -> {
@@ -128,6 +157,7 @@ public final class CheckGoldenTests {
     private static String line(TExpr e) {
         return switch (e) {
             case TExpr.LocalVarDecl d -> "val " + d.variable().name() + ": " + type(d.variable().type());
+            case TExpr.LocalDelegatedVarDecl d -> "val " + d.variable().name() + " by: " + type(d.variable().type());
             case TExpr.Call c when c.function().owner() != null ->
                     "call " + c.function() + typeArgs(c.typeArgs()) + ": " + type(c.type());
             case TExpr.PropertyGet p -> "get " + p.property() + typeArgs(p.typeArgs()) + ": " + type(p.type());

@@ -31,6 +31,8 @@ final class TExprs {
             case TExpr.FieldGet g -> new TExpr.FieldGet(g.pos(), t.apply(g.type()), g.property(), opt(g.receiver(), f));
             case TExpr.FieldSet s -> new TExpr.FieldSet(s.pos(), t.apply(s.type()), s.property(), opt(s.receiver(), f),
                     f.apply(s.value()));
+            case TExpr.DelegateGet g -> new TExpr.DelegateGet(g.pos(), t.apply(g.type()), g.property(),
+                    opt(g.receiver(), f));
             case TExpr.Call c -> new TExpr.Call(c.pos(), t.apply(c.type()), c.function(), types(c.typeArgs(), t),
                     opt(c.dispatchReceiver(), f), opt(c.extensionReceiver(), f), all(c.contextArgs(), f),
                     args(c.args(), f), c.superCall(), c.origin());
@@ -69,6 +71,8 @@ final class TExprs {
                     .map(c -> new TExpr.CatchClause(c.param(), f.apply(c.body()))).toList(), opt(x.finallyBlock(), f));
             case TExpr.LocalVarDecl d -> new TExpr.LocalVarDecl(d.pos(), t.apply(d.type()), d.variable(),
                     opt(d.initializer(), f));
+            case TExpr.LocalDelegatedVarDecl d -> new TExpr.LocalDelegatedVarDecl(d.pos(), t.apply(d.type()),
+                    d.variable(), d.delegate());
             case TExpr.LocalFunctionDecl d -> new TExpr.LocalFunctionDecl(d.pos(), t.apply(d.type()), d.function(),
                     d.body());
             case TExpr.LocalClassDecl d -> new TExpr.LocalClassDecl(d.pos(), t.apply(d.type()), d.cls());
@@ -114,6 +118,7 @@ final class TExprs {
     static boolean isStatement(TExpr e) {
         return switch (e) {
             case TExpr.LocalVarDecl d -> true;
+            case TExpr.LocalDelegatedVarDecl d -> true;
             case TExpr.LocalFunctionDecl d -> true;
             case TExpr.LocalClassDecl d -> true;
             case TExpr.LocalSet s -> true;

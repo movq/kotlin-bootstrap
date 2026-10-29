@@ -192,7 +192,7 @@ public final class Checker {
             case FunctionSymbol f when f.source() instanceof Decl.Function d && d.body() != null -> function(f, d);
             case PropertySymbol p when p.source() instanceof Decl.Property d -> {
                 if (d.initializer() != null) initializer(p, d);
-                if (d.delegate() != null) throw error(p, d.delegate().pos(), "Delegated properties are not supported yet");
+                if (d.delegate() != null) delegate(p, d);
                 if (d.getter() != null && d.getter().body() != null) accessor(p, d, d.getter());
                 if (d.setter() != null && d.setter().body() != null) accessor(p, d, d.setter());
             }
@@ -206,6 +206,11 @@ public final class Checker {
         return function(f, (Decl.Function) f.source());
     }
 
+    /** The checked delegate and accessors of a delegated property. */
+    public CheckedDelegate checkedDelegate(PropertySymbol p) {
+        return delegate(p, (Decl.Property) p.source());
+    }
+
     // ==== Inferred types ====
 
     private KType inferredType(CallableSymbol symbol) {
@@ -214,6 +219,8 @@ public final class Checker {
                     returnedValue(function(f, d)).type();
             case PropertySymbol p when p.source() instanceof Decl.Property d && d.initializer() != null ->
                     initializer(p, d).type();
+            case PropertySymbol p when p.source() instanceof Decl.Property d && d.delegate() != null ->
+                    delegate(p, d).getter().returnType();
             case PropertySymbol p when p.source() instanceof Decl.Property d && d.getter() != null
                     && d.getter().body() != null && !(d.getter().body() instanceof Expr.Block) ->
                     returnedValue(accessor(p, d, d.getter())).type();
@@ -280,6 +287,23 @@ public final class Checker {
             LocalScope scope = dc.cls() != null && p.owner() == dc.cls() ? primaryConstructorScope(dc.cls())
                     : new LocalScope();
             return checker(p, dc).expr(d.initializer(), context(p, dc).withLocalScope(scope), mode);
+        }));
+    }
+
+    private CheckedDelegate delegate(PropertySymbol p, Decl.Property d) {
+        return memo(d.delegate(), () -> inLocalFlow(p, d.delegate(), () -> {
+            Resolver.DeclarationContext dc = resolver.context(p);
+            KType declared = Resolver.hasDeclaredType(p) ? p.returnType() : null;
+            LocalScope scope = dc.cls() != null && p.owner() == dc.cls() ? primaryConstructorScope(dc.cls())
+                    : new LocalScope();
+            Context delegateCtx = context(p, dc).withLocalScope(scope);
+            KType receiver = p.signature().receiver();
+            Context accessorCtx = context(p, dc);
+            if (receiver != null) accessorCtx = accessorCtx.withElement(new Context.ImplicitReceiver(receiver, p, p.name()));
+            accessorCtx = accessorCtx.withLocalScope(new LocalScope());
+            KType dispatchType = dc.cls() == null ? null : resolver.types().defaultType(dc.cls());
+            return new DelegatedProperties(checker(p, dc), ts).check(p, d.delegate(), declared, dc.cls(), dispatchType,
+                    delegateCtx, accessorCtx, t -> approximateDeclarationType(t, p));
         }));
     }
 

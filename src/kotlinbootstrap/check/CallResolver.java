@@ -69,7 +69,16 @@ final class CallResolver {
     }
 
     Result resolve(CallInfo info, Context ctx) {
-        Resolution resolution = new Resolution(ctx, null);
+        return resolve(info, ctx, null);
+    }
+
+    /**
+     * @param baseSystem a system each candidate starts with a copy of: for
+     *                   the operator calls of a delegated property, the
+     *                   delegate's; nullable
+     */
+    Result resolve(CallInfo info, Context ctx, ConstraintSystem baseSystem) {
+        Resolution resolution = new Resolution(ctx, null, baseSystem);
         resolution.enqueueTasks(info);
         resolution.run();
         return resolution.reduce();
@@ -94,7 +103,7 @@ final class CallResolver {
         CallInfo info = new CallInfo(CallInfo.Kind.CALLABLE_REFERENCE, e.name, e.lhs, List.of(), List.of(),
                 TExpr.CallOrigin.PLAIN, false, e.pos);
         Resolution resolution = new Resolution(e.context,
-                new CallInfo.ReferenceInfo(e, expected, system, hasSyntheticOuterCall));
+                new CallInfo.ReferenceInfo(e, expected, system, hasSyntheticOuterCall), null);
         resolution.enqueueTasks(info);
         resolution.run();
         Result result = resolution.reduce();
@@ -278,14 +287,17 @@ final class CallResolver {
         final Context ctx;
         /** For a callable reference, what resolving it needs; null otherwise. */
         final CallInfo.ReferenceInfo reference;
+        /** The system each candidate starts with a copy of, besides a reference's; nullable. */
+        final ConstraintSystem baseSystem;
         final Collector main = new Collector();
         final PriorityQueue<Entry> queue = new PriorityQueue<>(
                 Comparator.comparing(Entry::group).thenComparingLong(Entry::seq));
         long seq;
 
-        Resolution(Context ctx, CallInfo.ReferenceInfo reference) {
+        Resolution(Context ctx, CallInfo.ReferenceInfo reference, ConstraintSystem baseSystem) {
             this.ctx = ctx;
             this.reference = reference;
+            this.baseSystem = baseSystem;
         }
 
         void run() {
@@ -730,6 +742,7 @@ final class CallResolver {
             ConstraintSystem system = new ConstraintSystem(ts);
             // A reference's candidates each have a copy of the containing call's system, as FIR's createForCallableReferences.
             if (reference != null) system.addOtherSystem(reference.baseSystem());
+            if (baseSystem != null) system.addOtherSystem(baseSystem);
             for (CallInfo.Argument a : info.arguments()) ArgumentChecker.addSubsystemFromArgument(system, a.value());
             Candidate c = new Candidate(symbol, info.pos(), system, info, info.argumentValues());
             c.reference = reference;

@@ -183,6 +183,9 @@ final class DataFlowAnalyzer {
             case BackingField f -> {
                 if (f.property().isVar()) return false;
             }
+            case LocalVariable l when l.kind() == LocalVariable.Kind.DELEGATED -> {
+                return false;
+            }
             default -> {
             }
         }

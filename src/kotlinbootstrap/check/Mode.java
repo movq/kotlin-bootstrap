@@ -35,6 +35,14 @@ sealed interface Mode {
         }
     }
 
+    /** The delegate of a delegated property, completed with its operator calls. */
+    record Delegate() implements Mode {
+        @Override
+        public boolean forceFullCompletion() {
+            return false;
+        }
+    }
+
     /**
      * With a type expected of it, which guides inference but is not checked.
      *
@@ -53,6 +61,7 @@ sealed interface Mode {
     Mode INDEPENDENT = new ContextIndependent();
     Mode DEPENDENT = new ContextDependent();
     Mode RECEIVER = new Receiver();
+    Mode DELEGATE = new Delegate();
 
     static Mode expecting(KType type) {
         return new WithExpectedType(type);

@@ -77,6 +77,10 @@ public sealed interface TExpr {
     record FieldSet(int pos, KType type, PropertySymbol property, TExpr receiver, TExpr value) implements TExpr {
     }
 
+    /** The delegate of a delegated property, from its accessors: the field it is kept in. */
+    record DelegateGet(int pos, KType type, PropertySymbol property, TExpr receiver) implements TExpr {
+    }
+
     // ==== Calls ====
 
     /** How a call was written. */
@@ -257,6 +261,11 @@ public sealed interface TExpr {
 
     /** @param initializer nullable */
     record LocalVarDecl(int pos, KType type, LocalVariable variable, TExpr initializer) implements TExpr {
+    }
+
+    /** A local delegated property, whose reads and writes call its accessors. */
+    record LocalDelegatedVarDecl(int pos, KType type, LocalVariable variable, CheckedDelegate delegate)
+            implements TExpr {
     }
 
     record LocalFunctionDecl(int pos, KType type, FunctionSymbol function, CheckedFunction body) implements TExpr {

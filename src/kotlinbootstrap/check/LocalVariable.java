@@ -7,11 +7,11 @@ import kotlinbootstrap.types.KType;
 /**
  * A variable local to a function body: a local {@code val} or {@code var},
  * a value parameter of the function or of a lambda, a catch parameter, a
- * temporary the checker introduces for a desugaring, or {@code field} in a
- * property accessor. Compared by identity.
+ * temporary the checker introduces for a desugaring, {@code field} in a
+ * property accessor, or a local delegated property. Compared by identity.
  */
 public final class LocalVariable {
-    public enum Kind { LOCAL, PARAMETER, CATCH_PARAMETER, TEMPORARY, BACKING_FIELD }
+    public enum Kind { LOCAL, PARAMETER, CATCH_PARAMETER, TEMPORARY, BACKING_FIELD, DELEGATED }
 
     private final String name;
     private final Kind kind;
@@ -40,6 +40,11 @@ public final class LocalVariable {
         return new LocalVariable("field", type, Kind.BACKING_FIELD, true, null, property);
     }
 
+    /** A local delegated property, with the symbol its accessors and {@code ::name} refer to. */
+    static LocalVariable delegated(PropertySymbol property, KType type) {
+        return new LocalVariable(property.name(), type, Kind.DELEGATED, property.isVar(), null, property);
+    }
+
     public String name() {
         return name;
     }
@@ -65,7 +70,7 @@ public final class LocalVariable {
         return param;
     }
 
-    /** For a backing field, its property; otherwise null. */
+    /** For a backing field or a local delegated property, its property; otherwise null. */
     public PropertySymbol property() {
         return property;
     }
