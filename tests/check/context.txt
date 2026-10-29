@@ -1,0 +1,50 @@
+class Logger
+class Session
+class Base
+  constructor (primary)
+    delegate kotlin.Any.<init>
+class Derived
+  constructor (primary)
+    delegate check.context.Base.<init>
+fun info
+  call check.context.Logger.log: kotlin.Unit
+fun given
+fun caller
+  call check.context.info: kotlin.Unit context(logger: check.context.Logger)
+    get check.context.sessionName: kotlin.String context(session: check.context.Session)
+  val g: check.context.Session
+    call check.context.given<check.context.Session>: check.context.Session context(session: check.context.Session)
+fun unnamed
+  call check.context.info: kotlin.Unit context(_: check.context.Logger)
+fun sameGroup
+  val x: check.context.Derived
+    call check.context.given<check.context.Derived>: check.context.Derived context(d: check.context.Derived)
+class Holder
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  fun log
+  fun inner
+    call check.context.info: kotlin.Unit context(other: check.context.Logger)
+  fun outer
+    call check.context.info: kotlin.Unit context(this: check.context.Holder)
+fun withLogger
+fun withContext
+  call kotlin.Function1.invoke: R
+fun lambdas
+  call check.context.withLogger: kotlin.Unit
+    lambda: context(check.context.Logger) () -> kotlin.Unit
+      call check.context.info: kotlin.Unit context(_: check.context.Logger)
+  val n: kotlin.String
+    call check.context.withContext<check.context.Session, kotlin.String>: kotlin.String
+      lambda: context(check.context.Session) () -> kotlin.String
+        get check.context.sessionName: kotlin.String context(_: check.context.Session)
+fun invokes
+  call kotlin.Function2.invoke: kotlin.Unit
+  call kotlin.Function2.invoke: kotlin.Unit
+  val s: kotlin.String
+    call kotlin.Function1.invoke: kotlin.String
+fun inferred
+  val s: check.context.Session
+    call check.context.given<check.context.Session>: check.context.Session context(session: check.context.Session)
+  val n: kotlin.String
+    get check.context.Session.name: kotlin.String

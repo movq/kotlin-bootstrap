@@ -1,7 +1,10 @@
 package kotlinbootstrap.check;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.Scope;
@@ -24,7 +27,7 @@ import kotlinbootstrap.types.KType;
 record Context(FileContext file, Scope typeScope, List<LocalScope> locals, List<TowerElement> elements,
                FunctionFrame function, LoopFrame loop, ClassSymbol containingClass) {
 
-    /** A non-local level of the tower: a scope of static declarations, or an implicit receiver. */
+    /** A non-local level of the tower: a scope of static declarations, an implicit receiver or context values. */
     sealed interface TowerElement {
     }
 
@@ -48,6 +51,16 @@ record Context(FileContext file, Scope typeScope, List<LocalScope> locals, List<
         TExpr expr(int pos) {
             return new TExpr.This(pos, type, owner, true);
         }
+    }
+
+    /**
+     * The context parameters of a function, property or lambda, as values
+     * for the context parameters of the calls in its body; a level of the
+     * tower with nothing in it.
+     *
+     * @param owner as of {@link ImplicitReceiver}
+     */
+    record ContextValues(Object owner, List<LocalVariable> values) implements TowerElement {
     }
 
     /** A function or lambda being checked, the target of returns in it. */
@@ -84,6 +97,31 @@ record Context(FileContext file, Scope typeScope, List<LocalScope> locals, List<
     /** The local scopes, innermost first, as the levels Local(0), Local(1)... of the tower. */
     List<LocalScope> localsInnermostFirst() {
         return locals.reversed();
+    }
+
+    /**
+     * The values of the implicit receivers and context values, grouped by
+     * the declaration they are of, innermost first, as FIR's implicitValueStorage.
+     *
+     * @param receiver the value of an implicit receiver
+     * @param local    the value of a context parameter
+     */
+    List<List<TExpr>> implicitValueGroups(Function<ImplicitReceiver, TExpr> receiver,
+                                          Function<LocalVariable, TExpr> local) {
+        Map<Object, List<TExpr>> groups = new LinkedHashMap<>();
+        for (TowerElement e : elements) {
+            switch (e) {
+                case ImplicitReceiver r -> groups.computeIfAbsent(r.owner(), o -> new ArrayList<>())
+                        .add(receiver.apply(r));
+                case ContextValues c -> {
+                    List<TExpr> group = groups.computeIfAbsent(c.owner(), o -> new ArrayList<>());
+                    for (LocalVariable v : c.values()) group.add(local.apply(v));
+                }
+                case ScopeElement s -> {
+                }
+            }
+        }
+        return List.copyOf(groups.values()).reversed();
     }
 
     /** The non-local elements of the tower, innermost first, as the levels of depth 0, 1... */

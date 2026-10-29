@@ -327,6 +327,8 @@ final class CallResolver {
         final PriorityQueue<Entry> queue = new PriorityQueue<>(
                 Comparator.comparing(Entry::group).thenComparingLong(Entry::seq));
         long seq;
+        /** The implicit values for context arguments, made once for all the candidates. */
+        List<List<TExpr>> implicitValues;
 
         Resolution(Context ctx, CallInfo.ReferenceInfo reference, ConstraintSystem baseSystem) {
             this.ctx = ctx;
@@ -345,6 +347,14 @@ final class CallResolver {
                 if (task.collector.isSuccess() && task.onSuccessfulLevel != null) task.onSuccessfulLevel.accept(e.group());
                 enqueue(task);
             }
+        }
+
+        List<List<TExpr>> implicitValues(int pos) {
+            if (implicitValues == null) {
+                implicitValues = ctx.implicitValueGroups(r -> dfa.smartCast(r.expr(pos)),
+                        v -> dfa.smartCast(new TExpr.LocalGet(pos, v.type(), v)));
+            }
+            return implicitValues;
         }
 
         void enqueue(Task task) {
@@ -518,6 +528,8 @@ final class CallResolver {
                     case Context.ScopeElement s -> onScope.accept(s.scope(), parent.nonLocal(depth));
                     case Context.ImplicitReceiver r ->
                             onImplicitReceiver.accept(dfa.smartCast(r.expr(info.pos())), parent.implicit(depth));
+                    case Context.ContextValues v -> {
+                    }
                 }
             }
         }
@@ -807,6 +819,7 @@ final class CallResolver {
             c.explicitReceiverKind = level.kind();
             c.memberSubstitution = memberSubstitution;
             c.invokeReceiver = task.invokeReceiver;
+            c.implicitValues = () -> implicitValues(info.pos());
             c.builder = reference != null ? w -> buildReference(w, c) : w -> build(w, c);
             if (info.origin().isOperator() && (!(symbol instanceof FunctionSymbol)
                     || task.invokeReceiver != null && !(task.invokeReceiver.symbol instanceof FunctionSymbol))) {
@@ -826,9 +839,9 @@ final class CallResolver {
                 && c.explicitReceiverKind == Candidate.ExplicitReceiverKind.DISPATCH;
         return switch (c.symbol) {
             case FunctionSymbol f -> new TExpr.Call(c.pos, w.callType(c, f.returnType()), f, w.typeArguments(c),
-                    dispatch, extension, List.of(), arguments(w, c, f), superCall, c.call.origin());
+                    dispatch, extension, contextArguments(w, c), arguments(w, c, f), superCall, c.call.origin());
             case PropertySymbol p -> new TExpr.PropertyGet(c.pos, w.callType(c, p.returnType()), p,
-                    w.typeArguments(c), dispatch, extension, superCall);
+                    w.typeArguments(c), dispatch, extension, contextArguments(w, c), superCall);
             default -> new TExpr.ObjectValue(c.pos, c.valueType, ((KType.ClassType) c.valueType).symbol());
         };
     }
@@ -849,14 +862,26 @@ final class CallResolver {
         KType type = TypeApproximator.approximateToSuperTypeOrSelf(ts, w.substitute(c.referenceType),
                 TypeApproximator.Config.INTERMEDIATE_APPROXIMATION_AFTER_COMPLETION);
         return new TExpr.CallableReference(c.pos, type, c.callable(), w.typeArguments(c), dispatch, extension,
-                c.adaptation);
+                contextArguments(w, c), c.adaptation);
     }
 
-    /** The arguments in source order, those of a vararg parameter together where the first of them is. */
+    /** The context arguments, but those of an invoke, which are its first arguments. */
+    private static List<TExpr> contextArguments(CompletionWriter w, Candidate c) {
+        if (c.contextArgumentsOfInvoke > 0) return List.of();
+        return c.contextArguments.stream().map(w::write).toList();
+    }
+
+    /**
+     * The arguments in source order, those of a vararg parameter together
+     * where the first of them is; after the context arguments of an invoke.
+     */
     private List<TExpr.Argument> arguments(CompletionWriter w, Candidate c, FunctionSymbol f) {
         List<ValueParamSymbol> params = f.signature().params();
         List<CallInfo.Argument> args = c.call.arguments();
         List<TExpr.Argument> result = new ArrayList<>();
+        for (int p = 0; p < c.contextArgumentsOfInvoke; p++) {
+            result.add(new TExpr.Argument(p, w.write(c.contextArguments.get(p))));
+        }
         int varargIndex = -1;
         List<TExpr.VarargElement> elements = new ArrayList<>();
         for (int i = 0; i < args.size(); i++) {

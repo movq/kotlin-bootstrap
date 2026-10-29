@@ -1,12 +1,19 @@
 class Box
   constructor (primary)
     delegate kotlin.Any.<init>
+  fun getValue
+    get check.delegates.Box.v: T
+  fun setValue
 class Provider
   constructor (primary)
     delegate kotlin.Any.<init>
+  fun provideDelegate
+    call check.delegates.Box.<init><kotlin.String>: check.delegates.Box<kotlin.String>
 class Generic
   constructor (primary)
     delegate kotlin.Any.<init>
+  fun getValue
+    call kotlin.collections.listOf<T>: kotlin.collections.List<T>
 val lazyInt
   type: kotlin.Int
   call kotlin.lazy<kotlin.Int>: kotlin.Lazy<kotlin.Int>

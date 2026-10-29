@@ -149,7 +149,7 @@ final class DelegatedProperties {
     private static TExpr propertyReference(int pos, PropertySymbol p, KType.ClassType type) {
         List<KType> typeArgs = new ArrayList<>();
         for (TypeParamSymbol tp : p.typeParams()) typeArgs.add(new KType.TypeParamType(tp, false));
-        return new TExpr.CallableReference(pos, type, p, typeArgs, null, null, null);
+        return new TExpr.CallableReference(pos, type, p, typeArgs, null, null, List.of(), null);
     }
 
     private KType.ClassType propertyReferenceType(PropertySymbol p, boolean member) {
@@ -186,7 +186,7 @@ final class DelegatedProperties {
         if (!(a.value() instanceof TExpr.CallableReference r)) return e;
         List<TExpr.Argument> args = new ArrayList<>(c.args());
         args.set(1, new TExpr.Argument(a.param(), new TExpr.CallableReference(r.pos(), type, r.target(), r.typeArgs(),
-                r.dispatchReceiver(), r.extensionReceiver(), r.adaptation())));
+                r.dispatchReceiver(), r.extensionReceiver(), r.contextArgs(), r.adaptation())));
         return new TExpr.Call(c.pos(), c.type(), c.function(), c.typeArgs(), c.dispatchReceiver(), c.extensionReceiver(),
                 c.contextArgs(), args, c.superCall(), c.origin());
     }

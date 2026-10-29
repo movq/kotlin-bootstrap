@@ -1,5 +1,6 @@
 package kotlinbootstrap.check;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -44,15 +45,15 @@ final class ResolutionStages {
 
     private final List<Stage> variableAccess = List.of(this::checkHidden, this::checkVisibility,
             this::discriminateSyntheticAndForbiddenProperties, this::initializeEmptyArgumentMap, this::createFreshVariables, this::checkDispatchReceiver,
-            this::checkExtensionReceiver, this::checkLowPriority);
+            this::checkExtensionReceiver, this::checkContextArguments, this::checkLowPriority);
     private final List<Stage> function = List.of(this::checkHidden, this::checkVisibility, this::mapArguments,
             this::mapTypeArguments, this::createFreshVariables, this::checkDispatchReceiver,
-            this::checkExtensionReceiver, this::checkArguments, this::checkCallModifiers,
+            this::checkExtensionReceiver, this::checkArguments, this::checkContextArguments, this::checkCallModifiers,
             this::eagerResolveCallableReferences, this::checkLowPriority);
     private final List<Stage> callableReference = List.of(this::checkHidden, this::checkVisibility,
             this::discriminateSyntheticAndForbiddenProperties, this::initializeEmptyArgumentMap,
             this::createFreshVariables, this::checkDispatchReceiver, this::checkExtensionReceiver,
-            this::checkCallableReferenceExpectedType, this::checkLowPriority);
+            this::checkContextArguments, this::checkCallableReferenceExpectedType, this::checkLowPriority);
 
     ResolutionStages(TypeSystem ts, TypeResolver types, ArgumentChecker arguments, SamResolver sam,
                      JvmMappedScope mapped, VisibilityChecker visibility) {
@@ -153,8 +154,11 @@ final class ResolutionStages {
         boolean[] mapped = new boolean[params.size()];
         boolean isIndexedSetOperator = c.call.origin() == TExpr.CallOrigin.OPERATOR && f.name().equals("set")
                 && isOperator(f);
+        // The first parameters of such an invoke take context arguments.
+        c.contextArgumentsOfInvoke = contextParameterCountForInvoke(c, params.size());
+        for (int p = 0; p < c.contextArgumentsOfInvoke; p++) mapped[p] = true;
 
-        int position = 0;
+        int position = c.contextArgumentsOfInvoke;
         boolean namedOnly = false;
         boolean inVararg = false;
         int external = -1;
@@ -256,6 +260,20 @@ final class ResolutionStages {
         c.numDefaults = defaults;
     }
 
+    /**
+     * For an implicit invoke of a value of a type like {@code context(C) () -> R},
+     * the number of context parameters, unless the arguments are for them
+     * too; 0 otherwise. As FIR's getExpectedContextParameterTypesForInvoke.
+     */
+    private static int contextParameterCountForInvoke(Candidate c, int paramCount) {
+        if (!c.call.isImplicitInvoke() || c.dispatchReceiver == null
+                || !(Types.lowerBound(c.dispatchReceiver.type()) instanceof KType.ClassType t)) {
+            return 0;
+        }
+        int count = t.contextParams();
+        return count + c.call.arguments().size() <= paramCount ? count : 0;
+    }
+
     private static void mappingError(Candidate c, String message) {
         c.addDiagnostic(Applicability.INAPPLICABLE_ARGUMENTS_MAPPING_ERROR, message);
     }
@@ -280,7 +298,8 @@ final class ResolutionStages {
             KType declared = parameterType(params.get(p), args.get(i));
             KType withSamConversion = expectedTypeWithSamConversion(c, value, declared);
             KType expected = c.substitute(withSamConversion != null ? withSamConversion : declared);
-            arguments.resolveArgument(c, value, expected, i == 0 && receiverAsArgument, false);
+            boolean isReceiver = i == 0 && c.contextArgumentsOfInvoke == 0 && receiverAsArgument;
+            arguments.resolveArgument(c, value, expected, isReceiver, false);
         }
         if (c.system.hasContradiction() && !args.isEmpty()) {
             c.addDiagnostic(Applicability.INAPPLICABLE, "Inapplicable: " + c.system.errors());
@@ -429,6 +448,54 @@ final class ResolutionStages {
         if (!(c.symbol instanceof CallableSymbol s) || s.signature().receiver() == null) return;
         if (c.extensionReceiver == null) return;
         arguments.resolveArgument(c, c.extensionReceiver, c.substitute(s.signature().receiver()), true, false);
+    }
+
+    // ==== Context arguments ====
+
+    /**
+     * Chooses an implicit value for each context parameter, from the
+     * innermost group with ones of fitting types, as FIR's CheckContextArguments.
+     */
+    private void checkContextArguments(Candidate c, Context ctx) {
+        if (!(c.symbol instanceof CallableSymbol s)) return;
+        List<KType> expectedTypes = c.contextArgumentsOfInvoke > 0
+                ? s.signature().params().subList(0, c.contextArgumentsOfInvoke).stream()
+                        .map(ValueParamSymbol::type).toList()
+                : s.signature().contextParams();
+        if (expectedTypes.isEmpty()) return;
+        List<TExpr> result = new ArrayList<>();
+        for (KType type : expectedTypes) {
+            KType expected = c.substitute(type);
+            List<ImplicitArgument> matching = closestMatchingContextArguments(c, expected);
+            switch (matching.size()) {
+                case 0 -> c.addDiagnostic(Applicability.INAPPLICABLE, "No context argument for " + expected);
+                case 1 -> {
+                    result.add(matching.getFirst().value());
+                    c.system.addSubtypeConstraint(matching.getFirst().type(), expected,
+                            ConstraintPosition.of(ConstraintPosition.Kind.OTHER));
+                }
+                default -> c.addDiagnostic(Applicability.INAPPLICABLE, "Ambiguous context argument for " + expected
+                        + ": " + matching);
+            }
+        }
+        if (result.size() == expectedTypes.size()) c.contextArguments = result;
+    }
+
+    /** An implicit value with its type as an argument, as FIR's ImplicitArgumentDescription. */
+    private record ImplicitArgument(TExpr value, KType type) {
+    }
+
+    /** The values of fitting types in the innermost group with any. */
+    private List<ImplicitArgument> closestMatchingContextArguments(Candidate c, KType expected) {
+        for (List<TExpr> group : c.implicitValues.get()) {
+            List<ImplicitArgument> result = new ArrayList<>();
+            for (TExpr value : group) {
+                KType type = arguments.implicitArgumentType(value.type(), expected);
+                if (c.system.isSubtypeConstraintCompatible(type, expected)) result.add(new ImplicitArgument(value, type));
+            }
+            if (!result.isEmpty()) return result;
+        }
+        return List.of();
     }
 
     // ==== Modifiers ====

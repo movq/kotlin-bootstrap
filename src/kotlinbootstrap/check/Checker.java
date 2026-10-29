@@ -282,7 +282,7 @@ public final class Checker {
             List<LocalVariable> contextParams = contextParams(f, d.modifiers().contextParams(), scope);
             KType receiver = f.signature().receiver();
             CheckedFunction function = new CheckedFunction(f, f.name(), receiver, contextParams, params, returnType);
-            Context ctx = context(f, dc);
+            Context ctx = withContextValues(context(f, dc), f, d.modifiers().contextParams(), contextParams);
             if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, f, f.name()));
             ctx = ctx.withLocalScope(scope);
             checker.dfa().enterFunction(d);
@@ -390,7 +390,7 @@ public final class Checker {
             KType receiver = p.signature().receiver();
             KType returnType = accessor.isGetter() ? propertyType : checker.unit();
             CheckedFunction function = new CheckedFunction(p, null, receiver, contextParams, params, returnType);
-            Context ctx = context(p, dc);
+            Context ctx = withContextValues(context(p, dc), p, d.modifiers().contextParams(), contextParams);
             if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, p, p.name()));
             ctx = ctx.withLocalScope(scope).withFunction(new Context.FunctionFrame(function, null, false, null));
             checker.dfa().enterFunction(accessor);
@@ -403,7 +403,6 @@ public final class Checker {
     /**
      * The context parameters of a declaration, as variables in its bodies;
      * {@code _} and those of the older {@code context(Foo)} form have no name.
-     * TODO: context parameters as contextual values for the calls in the body
      */
     private static List<LocalVariable> contextParams(CallableSymbol symbol, List<NamedType> decls, LocalScope scope) {
         List<LocalVariable> result = new ArrayList<>();
@@ -416,6 +415,19 @@ public final class Checker {
             if (name != null && !name.equals("_")) scope.add(v);
         }
         return result;
+    }
+
+    /**
+     * With the context parameters as values for the context parameters of
+     * calls, but those of the older form, as FIR's withLabelAndReceiverType.
+     */
+    private static Context withContextValues(Context ctx, CallableSymbol owner, List<NamedType> decls,
+                                             List<LocalVariable> params) {
+        List<LocalVariable> values = new ArrayList<>();
+        for (int i = 0; i < decls.size(); i++) {
+            if (decls.get(i).name() != null) values.add(params.get(i));
+        }
+        return values.isEmpty() ? ctx : ctx.withElement(new Context.ContextValues(owner, values));
     }
 
     /**

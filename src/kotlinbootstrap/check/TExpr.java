@@ -61,13 +61,15 @@ public sealed interface TExpr {
      * @param dispatchReceiver  for a member, the instance; null otherwise
      * @param extensionReceiver for an extension, the receiver; null otherwise
      * @param typeArgs          for a generic extension property
+     * @param contextArgs       the values of the property's context parameters
      */
     record PropertyGet(int pos, KType type, PropertySymbol property, List<KType> typeArgs, TExpr dispatchReceiver,
-                       TExpr extensionReceiver, boolean superCall) implements TExpr {
+                       TExpr extensionReceiver, List<TExpr> contextArgs, boolean superCall) implements TExpr {
     }
 
     record PropertySet(int pos, KType type, PropertySymbol property, List<KType> typeArgs, TExpr dispatchReceiver,
-                       TExpr extensionReceiver, boolean superCall, TExpr value) implements TExpr {
+                       TExpr extensionReceiver, List<TExpr> contextArgs, boolean superCall, TExpr value)
+            implements TExpr {
     }
 
     /** The backing field of a property, from its accessors or initializers: {@code field}. */
@@ -296,11 +298,12 @@ public sealed interface TExpr {
      *
      * @param dispatchReceiver  for a member, the instance bound into the reference; nullable
      * @param extensionReceiver for an extension, the receiver bound into the reference; nullable
+     * @param contextArgs       the values of the target's context parameters, bound into the reference
      * @param adaptation        how a function is adapted to the type expected of it; nullable
      */
     record CallableReference(int pos, KType type, CallableSymbol target, List<KType> typeArgs,
-                             TExpr dispatchReceiver, TExpr extensionReceiver, ReferenceAdaptation adaptation)
-            implements TExpr {
+                             TExpr dispatchReceiver, TExpr extensionReceiver, List<TExpr> contextArgs,
+                             ReferenceAdaptation adaptation) implements TExpr {
     }
 
     /**

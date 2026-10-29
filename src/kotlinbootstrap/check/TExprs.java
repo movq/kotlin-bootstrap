@@ -24,10 +24,11 @@ final class TExprs {
             case TExpr.LocalGet g -> new TExpr.LocalGet(g.pos(), t.apply(g.type()), g.variable());
             case TExpr.LocalSet s -> new TExpr.LocalSet(s.pos(), t.apply(s.type()), s.variable(), f.apply(s.value()));
             case TExpr.PropertyGet g -> new TExpr.PropertyGet(g.pos(), t.apply(g.type()), g.property(),
-                    types(g.typeArgs(), t), opt(g.dispatchReceiver(), f), opt(g.extensionReceiver(), f), g.superCall());
+                    types(g.typeArgs(), t), opt(g.dispatchReceiver(), f), opt(g.extensionReceiver(), f),
+                    all(g.contextArgs(), f), g.superCall());
             case TExpr.PropertySet s -> new TExpr.PropertySet(s.pos(), t.apply(s.type()), s.property(),
-                    types(s.typeArgs(), t), opt(s.dispatchReceiver(), f), opt(s.extensionReceiver(), f), s.superCall(),
-                    f.apply(s.value()));
+                    types(s.typeArgs(), t), opt(s.dispatchReceiver(), f), opt(s.extensionReceiver(), f),
+                    all(s.contextArgs(), f), s.superCall(), f.apply(s.value()));
             case TExpr.FieldGet g -> new TExpr.FieldGet(g.pos(), t.apply(g.type()), g.property(), opt(g.receiver(), f));
             case TExpr.FieldSet s -> new TExpr.FieldSet(s.pos(), t.apply(s.type()), s.property(), opt(s.receiver(), f),
                     f.apply(s.value()));
@@ -79,7 +80,8 @@ final class TExprs {
             case TExpr.LocalClassDecl d -> new TExpr.LocalClassDecl(d.pos(), t.apply(d.type()), d.cls());
             case TExpr.Lambda l -> new TExpr.Lambda(l.pos(), t.apply(l.type()), l.function(), l.anonymousFunction());
             case TExpr.CallableReference r -> new TExpr.CallableReference(r.pos(), t.apply(r.type()), r.target(),
-                    types(r.typeArgs(), t), opt(r.dispatchReceiver(), f), opt(r.extensionReceiver(), f), r.adaptation());
+                    types(r.typeArgs(), t), opt(r.dispatchReceiver(), f), opt(r.extensionReceiver(), f),
+                    all(r.contextArgs(), f), r.adaptation());
             case TExpr.ClassReference r -> new TExpr.ClassReference(r.pos(), t.apply(r.type()), t.apply(r.classType()),
                     opt(r.receiver(), f));
             case TExpr.ObjectLiteral o -> new TExpr.ObjectLiteral(o.pos(), t.apply(o.type()), o.cls());

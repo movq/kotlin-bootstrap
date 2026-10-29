@@ -832,7 +832,7 @@ final class BodyChecker {
         TExpr result = switch (target) {
             case TExpr.LocalGet g -> new TExpr.LocalSet(pos, unit(), g.variable(), value);
             case TExpr.PropertyGet g -> new TExpr.PropertySet(pos, unit(), g.property(), g.typeArgs(),
-                    g.dispatchReceiver(), g.extensionReceiver(), g.superCall(), value);
+                    g.dispatchReceiver(), g.extensionReceiver(), g.contextArgs(), g.superCall(), value);
             case TExpr.FieldGet g -> new TExpr.FieldSet(pos, unit(), g.property(), g.receiver(), value);
             default -> throw error(pos, "Not assignable");
         };
@@ -987,7 +987,7 @@ final class BodyChecker {
         if (needsTemporary(dispatch)) dispatch = temporaryFor("<receiver>", dispatch, statements);
         if (needsTemporary(extension)) extension = temporaryFor("<receiver>", extension, statements);
         TExpr read = new TExpr.PropertyGet(g.pos(), g.type(), g.property(), g.typeArgs(), dispatch, extension,
-                g.superCall());
+                g.contextArgs(), g.superCall());
         return variable instanceof TExpr.SmartCast s ? new TExpr.SmartCast(s.pos(), s.type(), read) : read;
     }
 
@@ -1690,9 +1690,17 @@ final class BodyChecker {
             if (!name.equals("_") && !name.equals("<destruct>")) scope.add(v);
         }
         if (receiver != null) receiver = lambdaInputType(lambda, receiver, true);
+        // The context parameters have no names: they are only context values.
+        List<LocalVariable> contextParams = new ArrayList<>();
+        for (KType t : atom.contextParameterTypes) {
+            contextParams.add(new LocalVariable("_", lambdaInputType(lambda, current.apply(t), false),
+                    LocalVariable.Kind.PARAMETER, false, null));
+        }
 
-        CheckedFunction function = new CheckedFunction(null, lambda.label, receiver, List.of(), params, expectedReturnType);
+        CheckedFunction function = new CheckedFunction(null, lambda.label, receiver, contextParams, params,
+                expectedReturnType);
         Context ctx = outer.withLocalScope(scope);
+        if (!contextParams.isEmpty()) ctx = ctx.withElement(new Context.ContextValues(function, contextParams));
         if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, function, lambda.label));
         Context.FunctionFrame frame = new Context.FunctionFrame(function, lambda.label, lambda.isLambda, outer.function());
         ctx = ctx.withFunction(frame);
@@ -1748,8 +1756,8 @@ final class BodyChecker {
         List<TExpr> returned = new ArrayList<>();
         for (TExpr value : frame.returns) returned.add(value != null ? value : unitValue(lambda.pos()));
         FunctionTypes.Kind kind = atom.kind != null ? atom.kind.nonReflect() : FunctionTypes.Kind.FUNCTION;
-        KType type = FunctionTypes.create(ts.table(), kind, List.of(), receiver,
-                params.stream().map(LocalVariable::type).toList(), current.apply(atom.returnType));
+        KType type = FunctionTypes.create(ts.table(), kind, contextParams.stream().map(LocalVariable::type).toList(),
+                receiver, params.stream().map(LocalVariable::type).toList(), current.apply(atom.returnType));
         return new LambdaResults(new TExpr.Lambda(lambda.pos(), type, function, !lambda.isLambda), returned, last,
                 explicitEmptyReturn);
     }

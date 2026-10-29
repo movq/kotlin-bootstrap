@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
@@ -65,6 +66,16 @@ final class Candidate {
     int[] argumentMapping;
     /** How many parameters take their default values. */
     int numDefaults;
+    /**
+     * For an implicit invoke of a value of a function type with context
+     * parameters, how many of the first parameters take context arguments,
+     * as FIR's expectedContextParameterCountForInvoke; 0 otherwise.
+     */
+    int contextArgumentsOfInvoke;
+    /** The values for the context parameters, or for the first parameters of such an invoke. */
+    List<TExpr> contextArguments = List.of();
+    /** The implicit values the context arguments are chosen from, as of {@link Context#implicitValueGroups}. */
+    Supplier<List<List<TExpr>>> implicitValues = List::of;
     /** Lambdas and callable references among the arguments, analyzed during completion. */
     final List<PostponedArgument> postponedArguments = new ArrayList<>();
     /** How many of the resolution stages have been run. */

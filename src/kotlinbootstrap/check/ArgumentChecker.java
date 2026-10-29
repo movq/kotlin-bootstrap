@@ -138,6 +138,14 @@ final class ArgumentChecker {
         }
     }
 
+    /** The type of an implicit value as an argument for a parameter, as FIR's prepareImplicitArgument. */
+    KType implicitArgumentType(KType valueType, KType expected) {
+        KType type = captureFromTypeParameterUpperBoundIfNeeded(valueType, expected);
+        KType captured = ts.captureFromExpression(type);
+        if (captured != null) type = captured;
+        return type instanceof KType.IntegerLiteral l ? l.possibleTypes().getFirst() : type;
+    }
+
     /** Adds {@code lower <: upper} unless that makes a contradiction; returns whether it did. */
     static boolean addSubtypeConstraintIfCompatible(ConstraintSystem system, KType lower, KType upper,
                                                     ConstraintPosition position) {

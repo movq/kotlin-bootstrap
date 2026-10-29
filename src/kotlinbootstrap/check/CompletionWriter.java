@@ -154,7 +154,8 @@ final class CompletionWriter {
                 : atom.kind != null ? atom.kind : FunctionTypes.Kind.FUNCTION;
         List<KType> params = new ArrayList<>();
         for (LocalVariable p : function.params()) params.add(p.type());
-        KType type = FunctionTypes.create(ts.table(), kind.nonReflect(), List.of(), function.receiverType(), params,
+        List<KType> contextParams = function.contextParams().stream().map(LocalVariable::type).toList();
+        KType type = FunctionTypes.create(ts.table(), kind.nonReflect(), contextParams, function.receiverType(), params,
                 returnType);
         return new TExpr.Lambda(analyzed.pos(), type, function, analyzed.anonymousFunction());
     }

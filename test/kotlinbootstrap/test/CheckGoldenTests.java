@@ -108,7 +108,7 @@ public final class CheckGoldenTests {
         return out.toString();
     }
 
-    /** The bodies of a class besides its members', then of its nested classes. */
+    /** The bodies of a class, its functions', then of its nested classes. */
     private void classOutline(ClassSymbol c, int depth, StringBuilder out) {
         KotlinClassSymbol cls = (KotlinClassSymbol) c;
         String indent = "  ".repeat(depth);
@@ -137,6 +137,14 @@ public final class CheckGoldenTests {
             outline(() -> checker.checkedEnumEntry(cls, e), depth + 2, out);
         }
         for (Decl member : cls.decl().members()) {
+            if (!(member instanceof Decl.Function d) || d.body() == null) continue;
+            for (FunctionSymbol f : cls.members().functions(d.name())) {
+                if (f.source() != d) continue;
+                out.append(indent).append("  fun ").append(f.name()).append('\n');
+                outline(() -> checker.checkedFunction(f), depth + 2, out);
+            }
+        }
+        for (Decl member : cls.decl().members()) {
             if (member instanceof Decl.Class n && cls.members().classifier(n.name()) instanceof KotlinClassSymbol nested) {
                 classOutline(nested, depth + 1, out);
             }
@@ -148,10 +156,10 @@ public final class CheckGoldenTests {
         try {
             outline(check.get(), depth, out);
         } catch (RuntimeException e) {
+            if (System.getenv("KBC_TRACE") != null) e.printStackTrace();
             // Not the candidates of an inapplicable call.
             String message = e.getMessage().replaceFirst(": \\[.*", "");
             out.append("  ".repeat(depth)).append("error: ").append(message).append('\n');
-            if (System.getenv("KBC_TRACE") != null) e.printStackTrace();
         }
     }
 
@@ -217,8 +225,10 @@ public final class CheckGoldenTests {
             case TExpr.LocalVarDecl d -> "val " + d.variable().name() + ": " + type(d.variable().type());
             case TExpr.LocalDelegatedVarDecl d -> "val " + d.variable().name() + " by: " + type(d.variable().type());
             case TExpr.Call c when c.function().owner() != null ->
-                    "call " + c.function() + typeArgs(c.typeArgs()) + ": " + type(c.type());
-            case TExpr.PropertyGet p -> "get " + p.property() + typeArgs(p.typeArgs()) + ": " + type(p.type());
+                    "call " + c.function() + typeArgs(c.typeArgs()) + ": " + type(c.type())
+                            + contextArgs(c.contextArgs());
+            case TExpr.PropertyGet p -> "get " + p.property() + typeArgs(p.typeArgs()) + ": " + type(p.type())
+                    + contextArgs(p.contextArgs());
             case TExpr.CallableReference r -> "ref " + r.target() + typeArgs(r.typeArgs()) + ": " + type(r.type())
                     + (r.adaptation() != null ? " (adapted)" : "");
             case TExpr.DelegatingConstructorCall d -> "delegate " + d.constructor() + typeArgs(d.typeArgs())
@@ -228,6 +238,17 @@ public final class CheckGoldenTests {
             case TExpr.SamConversion s -> "sam: " + type(s.type());
             default -> null;
         };
+    }
+
+    /** The context arguments, which are implicit values: {@code this} or context parameters. */
+    private static String contextArgs(List<TExpr> args) {
+        if (args.isEmpty()) return "";
+        StringJoiner j = new StringJoiner(", ", " context(", ")");
+        for (TExpr a : args) {
+            TExpr value = a instanceof TExpr.SmartCast s ? s.expr() : a;
+            j.add((value instanceof TExpr.LocalGet g ? g.variable().name() : "this") + ": " + type(a.type()));
+        }
+        return j.toString();
     }
 
     private static String typeArgs(List<KType> types) {
