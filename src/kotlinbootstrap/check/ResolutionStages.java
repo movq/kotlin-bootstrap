@@ -34,6 +34,7 @@ final class ResolutionStages {
     private final TypeSystem ts;
     private final ArgumentChecker arguments;
     private final SamResolver sam;
+    private final JvmMappedScope mapped;
     private final VisibilityChecker visibility;
     private final CallableReferenceTypes references;
 
@@ -54,7 +55,8 @@ final class ResolutionStages {
             this::checkCallableReferenceExpectedType, this::checkLowPriority);
 
     ResolutionStages(TypeSystem ts, TypeResolver types, ArgumentChecker arguments, SamResolver sam,
-                     VisibilityChecker visibility) {
+                     JvmMappedScope mapped, VisibilityChecker visibility) {
+        this.mapped = mapped;
         this.ts = ts;
         this.types = types;
         this.arguments = arguments;
@@ -82,6 +84,9 @@ final class ResolutionStages {
         if (Annotations.isDeprecatedHidden(c.symbol)
                 || c.typeAlias != null && Annotations.isDeprecatedHidden(c.typeAlias)) {
             c.addDiagnostic(Applicability.HIDDEN, "Deprecated and hidden");
+        } else if (c.symbol instanceof CallableSymbol s
+                && mapped.isHidden(s, c.call.explicitReceiver() instanceof CallInfo.SuperReceiver)) {
+            c.addDiagnostic(Applicability.HIDDEN, "Hidden JDK member");
         }
     }
 

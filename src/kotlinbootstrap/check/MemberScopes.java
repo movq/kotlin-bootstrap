@@ -49,6 +49,7 @@ final class MemberScopes {
 
     private final TypeSystem ts;
     private final TypeResolver types;
+    private final JvmMappedScope mapped;
     /** Members of a class by name, with substitutions in terms of the class's own type parameters. */
     private final Map<ClassSymbol, Map<String, List<Member>>> functions = new HashMap<>();
     private final Map<ClassSymbol, Map<String, List<Member>>> properties = new HashMap<>();
@@ -58,9 +59,10 @@ final class MemberScopes {
     /** Synthetic Java properties by getter and setter, so that each is one symbol. */
     private final Map<FunctionSymbol, Map<Optional<FunctionSymbol>, PropertySymbol>> synthetic = new HashMap<>();
 
-    MemberScopes(TypeSystem ts, TypeResolver types) {
+    MemberScopes(TypeSystem ts, TypeResolver types, JvmMappedScope mapped) {
         this.ts = ts;
         this.types = types;
+        this.mapped = mapped;
     }
 
     // ==== Members of types ====
@@ -157,7 +159,7 @@ final class MemberScopes {
         return result;
     }
 
-    private static String propertyNameByGetterName(String getter) {
+    static String propertyNameByGetterName(String getter) {
         String name = propertyNameFromAccessorName(getter, "get", true);
         return name != null ? name : propertyNameFromAccessorName(getter, "is", false);
     }
@@ -310,6 +312,9 @@ final class MemberScopes {
                 ? cls.members().functions(name) : cls.members().properties(name);
         for (CallableSymbol m : declared) {
             if (!m.isStatic()) result.add(new Member(m, Substitution.EMPTY));
+        }
+        if (functions) {
+            for (FunctionSymbol m : mapped.functions(cls, name)) result.add(new Member(m, Substitution.EMPTY));
         }
         for (KType st : cls.supertypes()) {
             if (!(st instanceof KType.ClassType c)) continue;

@@ -12,12 +12,14 @@ import kotlinbootstrap.symbols.ClassId;
  * mutable Kotlin interface; a Java collection type is seen as the flexible
  * type ranging over both.
  */
-final class JavaTypeMapping {
+public final class JavaTypeMapping {
     /** @param mutable the mutable variant, or null if the same as readOnly */
     record Mapped(ClassId readOnly, ClassId mutable) {
     }
 
     private static final Map<String, Mapped> MAP = new HashMap<>();
+    /** From each Kotlin class, read-only or mutable, to its Java class. */
+    private static final Map<ClassId, ClassId> TO_JAVA = new HashMap<>();
 
     static {
         add("java.lang.Object", "kotlin.Any");
@@ -50,10 +52,13 @@ final class JavaTypeMapping {
 
     private static void add(String java, String kotlin) {
         MAP.put(java, new Mapped(id(kotlin), null));
+        TO_JAVA.put(id(kotlin), id(java));
     }
 
     private static void collection(String java, String readOnly, String mutable) {
         MAP.put(java, new Mapped(id(readOnly), id(mutable)));
+        TO_JAVA.put(id(readOnly), id(java));
+        TO_JAVA.put(id(mutable), id(java));
     }
 
     /** A class id from a name in which packages are lower case and classes capitalized. */
@@ -68,6 +73,25 @@ final class JavaTypeMapping {
     /** The Kotlin view of a Java class, by canonical name, or null if it is not mapped. */
     static Mapped get(String javaCanonicalName) {
         return MAP.get(javaCanonicalName);
+    }
+
+    /** The Java class a Kotlin class is on the JVM, or null if it is not mapped. */
+    public static ClassId javaClass(ClassId kotlinClass) {
+        return TO_JAVA.get(kotlinClass);
+    }
+
+    /** The mutable variant of a read-only Kotlin collection interface, or null if it is not one. */
+    public static ClassId mutableClass(ClassId readOnlyClass) {
+        ClassId java = TO_JAVA.get(readOnlyClass);
+        Mapped mapped = java == null ? null : MAP.get(java.fqName());
+        return mapped != null && readOnlyClass.equals(mapped.readOnly()) ? mapped.mutable() : null;
+    }
+
+    /** Whether a Kotlin class is the mutable variant of a collection interface. */
+    public static boolean isMutable(ClassId kotlinClass) {
+        ClassId java = TO_JAVA.get(kotlinClass);
+        Mapped mapped = java == null ? null : MAP.get(java.fqName());
+        return mapped != null && kotlinClass.equals(mapped.mutable());
     }
 
     private JavaTypeMapping() {
