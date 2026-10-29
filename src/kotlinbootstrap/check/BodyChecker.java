@@ -147,6 +147,7 @@ final class BodyChecker {
             case Expr.ObjectLiteral o -> objectLiteral(o, ctx);
             case Expr.ClassLiteral c -> classLiteral(c, ctx);
             case Expr.CallableRef r -> callableReference(r, ctx, mode);
+            case Expr.CollectionLiteral c -> arrayLiteral(c, ctx, mode);
             default -> throw error(e.pos(), "Unsupported expression: " + e.getClass().getSimpleName());
         };
     }
@@ -323,6 +324,27 @@ final class BodyChecker {
             }
         };
         dfa.exitFunctionCall(mode.forceFullCompletion());
+        return result;
+    }
+
+    /**
+     * {@code this(...)} or {@code super(...)} from a constructor, a
+     * supertype initializer or the arguments of an enum entry, as FIR's
+     * transformDelegatedConstructorCall: the arguments are checked in the
+     * header of the class, without its instance, and the call is resolved
+     * where it is, so that an inner superclass gets its outer instance.
+     */
+    TExpr delegatingConstructorCall(int pos, KType.ClassType constructed, List<ValueArg> args, Context argsCtx,
+                                    Context ctx) {
+        List<Expr> argExprs = new ArrayList<>();
+        for (ValueArg a : args) argExprs.add(a.value());
+        dfa.enterCallArguments(lambdaArguments(argExprs));
+        CallInfo info = new CallInfo(CallInfo.Kind.FUNCTION, FunctionSymbol.CONSTRUCTOR_NAME, null,
+                arguments(constructed.symbol().name(), args, List.of(), argsCtx), List.of(), TExpr.CallOrigin.PLAIN,
+                false, pos);
+        TExpr result = completer.completeCall(resolved(info, calls.resolveDelegatingConstructor(info, constructed, ctx)),
+                Mode.INDEPENDENT);
+        dfa.exitFunctionCall(true);
         return result;
     }
 
@@ -508,6 +530,20 @@ final class BodyChecker {
                     owner.localClass(c, this, ctx, ctx.locals().getLast()));
             default -> throw error(d.pos(), "Unsupported local declaration: " + d.getClass().getSimpleName());
         };
+    }
+
+    /**
+     * {@code [a, b]}, which is only allowed where an array is expected in an
+     * annotation: an array of the type expected, as FIR's
+     * transformCollectionLiteralInAnnotation.
+     */
+    private TExpr arrayLiteral(Expr.CollectionLiteral c, Context ctx, Mode mode) {
+        KType element = mode instanceof Mode.WithExpectedType w ? owner.resolver().types().arrayElementType(w.type())
+                : null;
+        if (element == null) throw error(c.pos(), "A collection literal needs an array type expected");
+        List<TExpr> elements = new ArrayList<>();
+        for (Expr e : c.elements()) elements.add(expr(e, ctx, Mode.expecting(element)));
+        return new TExpr.ArrayLiteral(c.pos(), ((Mode.WithExpectedType) mode).type(), elements);
     }
 
     /**

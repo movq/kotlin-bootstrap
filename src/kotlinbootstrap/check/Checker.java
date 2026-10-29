@@ -1,11 +1,13 @@
 package kotlinbootstrap.check;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import kotlinbootstrap.ast.Decl;
@@ -119,16 +121,21 @@ public final class Checker {
     public record Report(int declarations, List<Failure> failures) {
     }
 
-    public record Failure(CallableSymbol declaration, RuntimeException error) {
+    /** @param declaration a function or property, or a class for the bodies of {@link #checkClass} */
+    public record Failure(Symbol declaration, RuntimeException error) {
     }
 
     public Report checkAll() {
         List<CallableSymbol> callables = new ArrayList<>();
+        List<KotlinClassSymbol> classes = new ArrayList<>();
         Set<String> packages = new LinkedHashSet<>();
         for (FileContext file : resolver.files()) packages.add(file.packageName());
         for (String pkg : packages) collect(resolver.table().packageScope(pkg), callables);
         for (ClassifierSymbol c : resolver.table().kotlinClassifiers().values()) {
-            if (c instanceof KotlinClassSymbol cls && !isExpect(cls)) collect(cls.members(), callables);
+            if (c instanceof KotlinClassSymbol cls && !isExpect(cls)) {
+                collect(cls.members(), callables);
+                classes.add(cls);
+            }
         }
         int count = 0;
         List<Failure> errors = new ArrayList<>();
@@ -139,6 +146,14 @@ public final class Checker {
                 check(c);
             } catch (RuntimeException e) {
                 errors.add(new Failure(c, e));
+            }
+        }
+        for (KotlinClassSymbol cls : classes) {
+            count++;
+            try {
+                checkClass(cls);
+            } catch (RuntimeException e) {
+                errors.add(new Failure(cls, e));
             }
         }
         return new Report(count, errors);
@@ -262,26 +277,55 @@ public final class Checker {
             Resolver.DeclarationContext dc = resolver.context(f);
             BodyChecker checker = checker(f, dc);
             KType returnType = Resolver.hasDeclaredType(f) ? f.returnType() : null;
-            List<LocalVariable> params = new ArrayList<>();
             LocalScope scope = new LocalScope();
-            for (ValueParamSymbol p : f.signature().params()) {
-                KType type = p.isVararg() ? resolver.types().varargArrayType(p.type()) : p.type();
-                LocalVariable v = new LocalVariable(p.name(), type, LocalVariable.Kind.PARAMETER, false, p);
-                params.add(v);
-                scope.add(v);
-            }
+            List<LocalVariable> params = params(f, scope);
             List<LocalVariable> contextParams = contextParams(f, d.modifiers().contextParams(), scope);
-            // TODO: default values
             KType receiver = f.signature().receiver();
             CheckedFunction function = new CheckedFunction(f, f.name(), receiver, contextParams, params, returnType);
             Context ctx = context(f, dc);
             if (receiver != null) ctx = ctx.withElement(new Context.ImplicitReceiver(receiver, f, f.name()));
-            ctx = ctx.withLocalScope(scope).withFunction(new Context.FunctionFrame(function, f.name(), false, null));
+            ctx = ctx.withLocalScope(scope);
             checker.dfa().enterFunction(d);
+            // All the parameters are visible in the default values, as FIR's withParameters.
+            function.setDefaultValues(defaultValues(checker, f, params, ctx));
+            ctx = ctx.withFunction(new Context.FunctionFrame(function, f.name(), false, null));
             function.setBody(body(checker, function, d.body(), ctx));
             checker.dfa().exitFunction();
             return function;
         }));
+    }
+
+    /** The value parameters of a function or constructor, added to the scope of its body. */
+    private List<LocalVariable> params(FunctionSymbol f, LocalScope scope) {
+        List<LocalVariable> params = new ArrayList<>();
+        for (ValueParamSymbol p : f.signature().params()) {
+            KType type = p.isVararg() ? resolver.types().varargArrayType(p.type()) : p.type();
+            LocalVariable v = new LocalVariable(p.name(), type, LocalVariable.Kind.PARAMETER, false, p);
+            params.add(v);
+            scope.add(v);
+        }
+        return params;
+    }
+
+    /**
+     * The default values of the parameters, null where none: each with the
+     * parameter's type expected, in a data flow of its own, as FIR's
+     * transformValueParameter.
+     */
+    private List<TExpr> defaultValues(BodyChecker checker, FunctionSymbol f, List<LocalVariable> params, Context ctx) {
+        List<TExpr> result = new ArrayList<>();
+        List<ValueParamSymbol> symbols = f.signature().params();
+        for (int i = 0; i < symbols.size(); i++) {
+            Expr value = symbols.get(i).source() instanceof Decl.Param p ? p.defaultValue() : null;
+            if (value == null) {
+                result.add(null);
+                continue;
+            }
+            DataFlowAnalyzer.State before = checker.dfa().save();
+            result.add(checker.expr(value, ctx, Mode.expecting(params.get(i).type())));
+            checker.dfa().restore(before);
+        }
+        return result;
     }
 
     private TExpr initializer(PropertySymbol p, Decl.Property d) {
@@ -386,8 +430,11 @@ public final class Checker {
     }
 
     private BodyChecker checker(CallableSymbol symbol, Resolver.DeclarationContext dc) {
-        LocalOrigin origin = localOrigin(symbol, dc);
-        return origin != null ? origin.checker() : new BodyChecker(this, dc.file().file().source());
+        return checker(localOrigin(symbol, dc), dc.file());
+    }
+
+    private BodyChecker checker(LocalOrigin origin, FileContext file) {
+        return origin != null ? origin.checker() : new BodyChecker(this, file.file().source());
     }
 
     /**
@@ -408,16 +455,25 @@ public final class Checker {
     /** Where a local function, or the innermost local class a declaration is in, was declared; null if none. */
     private LocalOrigin localOrigin(CallableSymbol symbol, Resolver.DeclarationContext dc) {
         LocalOrigin origin = localOrigins.get(symbol);
-        for (ClassSymbol c = dc.cls(); origin == null && c != null; c = c.outer()) origin = localOrigins.get(c);
+        return origin != null ? origin : localOrigin(dc.cls());
+    }
+
+    /** Where the innermost local class a class is in, or itself, was declared; null if none. */
+    private LocalOrigin localOrigin(ClassSymbol cls) {
+        LocalOrigin origin = null;
+        for (ClassSymbol c = cls; origin == null && c != null; c = c.outer()) origin = localOrigins.get(c);
         return origin;
+    }
+
+    private <T> T inLocalFlow(CallableSymbol symbol, Supplier<T> check) {
+        return inLocalFlow(localOrigin(symbol, resolver.context(symbol)), check);
     }
 
     /**
      * Checks a body of a local declaration in the data flow of the body it
      * is in, from where it was declared, as a lambda not called in place.
      */
-    private <T> T inLocalFlow(CallableSymbol symbol, Supplier<T> check) {
-        LocalOrigin origin = localOrigin(symbol, resolver.context(symbol));
+    private <T> T inLocalFlow(LocalOrigin origin, Supplier<T> check) {
         if (origin == null) return check.get();
         DataFlowAnalyzer dfa = origin.checker().dfa();
         DataFlowAnalyzer.LambdaFrame frame = dfa.enterLocalDeclaration(origin.flow());
@@ -426,6 +482,157 @@ public final class Checker {
         } finally {
             dfa.exitLocalDeclaration(frame);
         }
+    }
+
+    // ==== Classes ====
+
+    /**
+     * Checks the bodies of a class besides those of its members: its
+     * constructors, init blocks, supertype delegates and enum entries, and
+     * for an object, which has no constructor, the call of its superclass's.
+     */
+    public void checkClass(KotlinClassSymbol cls) {
+        for (FunctionSymbol k : cls.members().constructors()) checkedConstructor(k);
+        if (cls.isObject()) checkedSuperCall(cls);
+        for (Decl member : cls.decl().members()) {
+            if (member instanceof Decl.Initializer i) checkedInitBlock(cls, i);
+        }
+        for (Decl.SuperTypeEntry e : cls.decl().superTypes()) {
+            if (e.delegate() != null) checkedSupertypeDelegate(cls, e);
+        }
+        for (Decl.EnumEntry e : cls.decl().enumEntries()) checkedEnumEntry(cls, e);
+    }
+
+    /**
+     * A checked constructor, as FIR's transformConstructor: the default
+     * values and the delegating call in the header of the class, which has
+     * no instance yet, with all the parameters; the body of a secondary
+     * constructor in the class. A primary or implicit constructor calls
+     * the superclass's by the supertype initializer, if any.
+     */
+    public CheckedFunction checkedConstructor(FunctionSymbol k) {
+        return memo(k, () -> inLocalFlow(k, () -> {
+            Resolver.DeclarationContext dc = resolver.context(k);
+            KotlinClassSymbol cls = dc.cls();
+            BodyChecker checker = checker(k, dc);
+            LocalScope scope = new LocalScope();
+            List<LocalVariable> params = params(k, scope);
+            CheckedFunction function = new CheckedFunction(k, null, null, List.of(), params, checker.unit());
+            Context header = classContext(cls, true).withLocalScope(scope);
+            Decl.Class d = cls.decl();
+            Object node = k.source() instanceof Decl.SecondaryConstructor s ? s
+                    : Arrays.asList(d.primaryConstructor(), d.superTypes());
+            checker.dfa().enterFunction(node);
+            function.setDefaultValues(defaultValues(checker, k, params, header));
+            List<TExpr> statements = new ArrayList<>();
+            if (k.source() instanceof Decl.SecondaryConstructor s) {
+                KType.ClassType constructed = s.delegation() == Decl.DelegationKind.THIS
+                        ? resolver.types().defaultType(cls) : superclassType(cls);
+                if (constructed != null) {
+                    statements.add(checker.delegatingConstructorCall(s.pos(), constructed, s.delegationArgs(), header,
+                            classContext(cls, false)));
+                }
+                if (s.body() != null) {
+                    Context body = classContext(cls, false).withLocalScope(scope)
+                            .withFunction(new Context.FunctionFrame(function, null, false, null));
+                    statements.add(checker.block(s.body().pos(), s.body().statements(), body, Mode.INDEPENDENT));
+                }
+            } else {
+                TExpr call = superCall(checker, cls, header);
+                if (call != null) statements.add(call);
+            }
+            function.setBody(new TExpr.Block(d.pos(), checker.unit(), statements));
+            checker.dfa().exitFunction();
+            return function;
+        }));
+    }
+
+    /** The call of the superclass's constructor from an object, which has no constructor; null if none. */
+    public TExpr checkedSuperCall(KotlinClassSymbol cls) {
+        return inClass(cls, cls, checker -> {
+            checker.dfa().enterFunction(cls.decl().superTypes());
+            TExpr call = superCall(checker, cls, classContext(cls, true));
+            checker.dfa().exitFunction();
+            return call;
+        });
+    }
+
+    /** An init block, in the class with the primary constructor's parameters. */
+    public TExpr checkedInitBlock(KotlinClassSymbol cls, Decl.Initializer i) {
+        return inClass(cls, i, checker -> {
+            Context ctx = classContext(cls, false).withLocalScope(primaryConstructorScope(cls));
+            checker.dfa().enterInitBlock(i);
+            TExpr body = checker.block(i.body().pos(), i.body().statements(), ctx, Mode.INDEPENDENT);
+            checker.dfa().exitInitBlock(i);
+            return body;
+        });
+    }
+
+    /**
+     * The delegate of a supertype, {@code I by d}, with the supertype
+     * expected, in the header of the class with the primary constructor's
+     * parameters, as FIR's withField.
+     */
+    public TExpr checkedSupertypeDelegate(KotlinClassSymbol cls, Decl.SuperTypeEntry e) {
+        return inClass(cls, e.delegate(), checker -> checker.expr(e.delegate(),
+                classContext(cls, true).withLocalScope(primaryConstructorScope(cls)), Mode.expecting(cls.supertype(e))));
+    }
+
+    /** The call of the enum class's constructor an entry makes, in the header of the class, as FIR's withEnumEntry. */
+    public TExpr checkedEnumEntry(KotlinClassSymbol cls, Decl.EnumEntry e) {
+        return inClass(cls, e, checker -> {
+            Context ctx = classContext(cls, true);
+            return checker.delegatingConstructorCall(e.pos(), resolver.types().defaultType(cls),
+                    e.args(), ctx, ctx);
+        });
+    }
+
+    /**
+     * The call of the superclass's constructor by the supertype initializer,
+     * {@code : B(...)}, or else without arguments; null for none.
+     */
+    private TExpr superCall(BodyChecker checker, KotlinClassSymbol cls, Context header) {
+        for (Decl.SuperTypeEntry e : cls.decl().superTypes()) {
+            if (e.args() != null) {
+                return checker.delegatingConstructorCall(e.pos(), (KType.ClassType) cls.supertype(e), e.args(), header,
+                        classContext(cls, false));
+            }
+        }
+        KType.ClassType superclass = superclassType(cls);
+        return superclass == null ? null
+                : checker.delegatingConstructorCall(cls.decl().pos(), superclass, List.of(), header,
+                classContext(cls, false));
+    }
+
+    /**
+     * The superclass whose constructor is called if none is written, as
+     * FIR's transformDelegatedConstructorCall: the first supertype that is
+     * a class, else Any; null for Any, and for an enum class, whose
+     * constructors call Enum's implicitly.
+     */
+    private KType.ClassType superclassType(KotlinClassSymbol cls) {
+        if (cls == ts.anyClass() || cls.kind() == ClassKind.ENUM_CLASS) return null;
+        for (KType st : cls.supertypes()) {
+            if (st instanceof KType.ClassType t && !t.symbol().isInterface()) return t;
+        }
+        return ts.any();
+    }
+
+    /** A body of a class, checked once, in the data flow where the class was declared if local. */
+    private <T> T inClass(KotlinClassSymbol cls, Object node, Function<BodyChecker, T> check) {
+        return memo(node, () -> {
+            LocalOrigin origin = localOrigin(cls);
+            return inLocalFlow(origin, () -> check.apply(checker(origin, cls.file())));
+        });
+    }
+
+    /** The context in the body of a class, or in its header, which has no instance of the class yet. */
+    private Context classContext(KotlinClassSymbol cls, boolean header) {
+        LocalOrigin origin = localOrigin(cls);
+        List<LocalScope> locals = origin != null ? origin.context().locals() : List.of();
+        ClassContexts contexts = classContexts(cls);
+        return new Context(cls.file(), cls.bodyScope(true), locals,
+                header ? contexts.forConstructorHeader() : contexts.regular(), null, null, cls);
     }
 
     // ==== Local declarations ====
@@ -443,6 +650,7 @@ public final class Checker {
     }
 
     private void checkMembers(KotlinClassSymbol cls) {
+        checkClass(cls);
         List<CallableSymbol> callables = new ArrayList<>();
         collect(cls.members(), callables);
         for (CallableSymbol c : callables) {
@@ -477,11 +685,14 @@ public final class Checker {
     /**
      * The towers in a class body, outermost first, as FIR's
      * FirRegularTowerDataContexts: for members; for nested classes, which
-     * have no instance of the class, unless it is an object; and for the
-     * companion object, which is not its own receiver as the companion.
+     * have no instance of the class, unless it is an object; for the
+     * companion object, which is not its own receiver as the companion; and
+     * for constructor headers, supertype delegates and enum entries, which
+     * have no instance yet.
      */
     private record ClassContexts(List<Context.TowerElement> regular, List<Context.TowerElement> forNestedClasses,
-                                 List<Context.TowerElement> forCompanionObject) {
+                                 List<Context.TowerElement> forCompanionObject,
+                                 List<Context.TowerElement> forConstructorHeader) {
     }
 
     /** As FIR's withScopesForClass and collectTowerDataElementsForClass. */
@@ -524,7 +735,8 @@ public final class Checker {
 
         boolean singleton = cls.isObject() || cls.kind() == ClassKind.ENUM_ENTRY;
         ClassContexts result = new ClassContexts(List.copyOf(regular),
-                singleton ? List.copyOf(regular) : List.copyOf(staticsAndCompanion), List.copyOf(statics));
+                singleton ? List.copyOf(regular) : List.copyOf(staticsAndCompanion), List.copyOf(statics),
+                List.copyOf(staticsAndCompanion));
         classContexts.put(cls, result);
         return result;
     }

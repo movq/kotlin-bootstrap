@@ -967,6 +967,14 @@ final class DataFlowAnalyzer {
         assignments.exitFunction();
     }
 
+    void enterInitBlock(Decl.Initializer node) {
+        assignments.enterAnonymousInitializer(node);
+    }
+
+    void exitInitBlock(Decl.Initializer node) {
+        assignments.exitAnonymousInitializer(node);
+    }
+
     /** Enters the body of a local class or object literal. */
     void enterClass(Decl.Class node, boolean isAnonymousObject) {
         assignments.enterClass(node, isAnonymousObject);

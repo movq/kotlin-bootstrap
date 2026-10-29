@@ -1,0 +1,107 @@
+fun g
+fun g
+class Base
+  constructor
+    delegate check.classes.Base.<init><T>
+      call kotlin.text.repeat: kotlin.String
+  constructor (primary)
+    default label
+    delegate kotlin.Any.<init>
+class Derived
+  constructor (primary)
+    default b
+      call kotlin.toString: kotlin.String
+    default c
+      get kotlin.String.length: kotlin.Int
+    delegate check.classes.Base.<init><kotlin.String>
+  init
+    val e: kotlin.Long
+      call check.classes.g: kotlin.Long
+    call kotlin.Int.plus: kotlin.Int
+      call kotlin.Long.toInt: kotlin.Int
+class Secondaries
+  constructor
+    delegate check.classes.Base.<init><kotlin.Int>
+  constructor
+    delegate check.classes.Secondaries.<init>
+      get kotlin.String.length: kotlin.Int
+    val n: kotlin.Int
+      call check.classes.g: kotlin.Int
+class Implicit
+  constructor
+    delegate kotlin.Any.<init>
+    val y: kotlin.Long
+      call check.classes.g: kotlin.Long
+class Failure
+  constructor
+    delegate check.classes.Failure.<init>
+  constructor (primary)
+    delegate java.lang.Exception.<init>
+fun f
+  default x
+  default y
+  default z
+class Wrapper
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  by
+    call kotlin.collections.List.subList: kotlin.collections.List<kotlin.String>
+class Color
+  constructor
+    delegate check.classes.Color.<init>
+  constructor (primary)
+  entry RED
+    delegate check.classes.Color.<init>
+  entry GREEN
+    delegate check.classes.Color.<init>
+  entry BLUE
+    delegate check.classes.Color.<init>
+class Singleton
+  super
+    delegate check.classes.Base.<init><kotlin.Long>
+class Outer
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  class Inner
+    constructor (primary)
+      delegate kotlin.Any.<init>
+  class SubInner
+    constructor (primary)
+      delegate check.classes.Outer.Inner.<init> on check.classes.Outer
+        get check.classes.Outer.n: kotlin.Int
+class OtherOuter
+  constructor (primary)
+    delegate check.classes.Outer.<init>
+  class Sub
+    constructor (primary)
+      delegate check.classes.Outer.Inner.<init> on check.classes.OtherOuter
+class Tags
+  constructor (primary)
+    default names
+      array: kotlin.Array<kotlin.String>
+    default ids
+      array: kotlin.IntArray
+    delegate kotlin.Any.<init>
+fun local
+  val x: kotlin.Any?
+  class Local
+    constructor (primary)
+      default s
+        call check.classes.g: kotlin.Int
+      delegate check.classes.Base.<init><kotlin.Int>
+        call check.classes.g: kotlin.Int
+    init
+      val i: kotlin.Int
+        call check.classes.g: kotlin.Int
+  val o: check.classes.<anonymous>
+    class <anonymous>
+      super
+        delegate check.classes.Base.<init><kotlin.Int>
+          call check.classes.g: kotlin.Int
+fun localUnstable
+  val x: kotlin.Any?
+  class Local
+    constructor (primary)
+      default s
+        call check.classes.g: kotlin.Long
+      delegate kotlin.Any.<init>

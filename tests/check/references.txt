@@ -1,10 +1,14 @@
 fun twice
   call kotlin.Int.times: kotlin.Int
 fun withDefault
+  default y
   call kotlin.Int.plus: kotlin.Int
 fun many
   get kotlin.Array.size: kotlin.Int
 fun unit
+class Box
+  constructor (primary)
+    delegate kotlin.Any.<init>
 fun memberOfType
   val a: kotlin.collections.List<kotlin.String>
     call kotlin.collections.filter<kotlin.String>: kotlin.collections.List<kotlin.String>

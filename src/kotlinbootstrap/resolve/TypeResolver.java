@@ -207,6 +207,18 @@ public final class TypeResolver {
         return classType("kotlin.Array", new TypeArg(Variance.OUT, element));
     }
 
+    /** The element type of an array type, primitive or not; null for other types. */
+    public KType arrayElementType(KType array) {
+        if (!(Types.lowerBound(array) instanceof KType.ClassType c)
+                || !c.symbol().id().packageName().equals("kotlin")) {
+            return null;
+        }
+        String name = c.symbol().name();
+        if (name.equals("Array")) return c.args().getFirst().isStar() ? nullableAny() : c.args().getFirst().type();
+        String element = name.endsWith("Array") ? name.substring(0, name.length() - "Array".length()) : "";
+        return ARRAY_ELEMENTS.contains(element) ? classType("kotlin." + element) : null;
+    }
+
     private static final Set<String> ARRAY_ELEMENTS = Set.of("Boolean", "Byte", "Short", "Int", "Long", "Char",
             "Float", "Double", "UByte", "UShort", "UInt", "ULong");
 

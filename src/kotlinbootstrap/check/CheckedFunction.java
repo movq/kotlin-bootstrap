@@ -9,7 +9,8 @@ import kotlinbootstrap.types.KType;
  * A checked function body: of a declared function, accessor or constructor,
  * of a local function, or of a lambda or anonymous function. Compared by
  * identity; it is the target of the returns in its body, so the body is set
- * once checked.
+ * once checked. A constructor's body starts with its delegating call, and
+ * a primary constructor's is only that.
  */
 public final class CheckedFunction {
     private final CallableSymbol symbol;
@@ -18,6 +19,7 @@ public final class CheckedFunction {
     private final List<LocalVariable> contextParams;
     private final List<LocalVariable> params;
     private KType returnType;
+    private List<TExpr> defaultValues;
     private TExpr body;
 
     /**
@@ -62,6 +64,15 @@ public final class CheckedFunction {
     /** For a lambda, whose return type is inferred from its body. */
     void setReturnType(KType returnType) {
         this.returnType = returnType;
+    }
+
+    /** The default values of the parameters, a null element for none; empty for a lambda. */
+    public List<TExpr> defaultValues() {
+        return defaultValues == null ? List.of() : defaultValues;
+    }
+
+    void setDefaultValues(List<TExpr> defaultValues) {
+        this.defaultValues = defaultValues;
     }
 
     /** The body, null for one without a body or not checked yet. */

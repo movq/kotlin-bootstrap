@@ -19,7 +19,9 @@ import kotlinbootstrap.check.CheckedFunction;
 import kotlinbootstrap.check.Checker;
 import kotlinbootstrap.check.TExpr;
 import kotlinbootstrap.resolve.FileContext;
+import kotlinbootstrap.resolve.KotlinClassSymbol;
 import kotlinbootstrap.resolve.Resolver;
+import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.MemberScope;
 import kotlinbootstrap.symbols.PropertySymbol;
@@ -28,8 +30,10 @@ import kotlinbootstrap.types.TypeRenderer;
 
 /**
  * Golden tests for the checker. For each top-level function of a test
- * file, the outline of its checked body, and for each top-level delegated
- * property, of its delegate and accessors: local variables with their types,
+ * file, the outline of its checked body; for each top-level delegated
+ * property, of its delegate and accessors; and for each class, of its
+ * constructors, init blocks, supertype delegates and enum entries, and of
+ * its nested classes': local variables with their types,
  * and calls, property accesses, references, lambdas and SAM conversions
  * with their targets and types, nested as in the tree; or the first error.
  * The outlines for {@code foo.kt} are compared with {@code foo.txt}.
@@ -48,14 +52,14 @@ public final class CheckGoldenTests {
         List<Path> paths = new ArrayList<>(Stdlib.sourceRoots(kotlinSource));
         paths.add(dir);
         Resolver resolver = Frontend.load(paths, "8");
-        Checker checker = new Checker(resolver);
+        CheckGoldenTests tests = new CheckGoldenTests(new Checker(resolver));
 
         int failures = 0;
         for (Path input : inputs) {
             FileContext file = resolver.files().stream()
                     .filter(f -> f.file().source().path().equals(input.toString())).findFirst().orElseThrow();
             Path expected = Path.of(input.toString().replaceFirst("\\.kt$", ".txt"));
-            String actual = outlines(resolver, checker, file);
+            String actual = tests.outlines(resolver, file);
             if (update) {
                 Files.writeString(expected, actual, StandardCharsets.UTF_8);
             } else if (!Files.exists(expected)) {
@@ -70,7 +74,13 @@ public final class CheckGoldenTests {
         System.exit(failures == 0 ? 0 : 1);
     }
 
-    private static String outlines(Resolver resolver, Checker checker, FileContext file) {
+    private final Checker checker;
+
+    private CheckGoldenTests(Checker checker) {
+        this.checker = checker;
+    }
+
+    private String outlines(Resolver resolver, FileContext file) {
         StringBuilder out = new StringBuilder();
         MemberScope scope = resolver.table().packageScope(file.packageName());
         List<FunctionSymbol> functions = scope.functions().values().stream().flatMap(List::stream).toList();
@@ -79,7 +89,7 @@ public final class CheckGoldenTests {
             for (FunctionSymbol f : functions) {
                 if (f.source() != decl) continue;
                 out.append("fun ").append(f.name()).append('\n');
-                outline(() -> checker.checkedFunction(f), out);
+                outline(() -> checker.checkedFunction(f), 1, out);
             }
             for (PropertySymbol p : properties) {
                 if (p.source() != decl || !(decl instanceof Decl.Property d) || d.delegate() == null) continue;
@@ -88,32 +98,78 @@ public final class CheckGoldenTests {
                     CheckedDelegate delegate = checker.checkedDelegate(p);
                     out.append("  type: ").append(type(p.returnType())).append('\n');
                     return delegate;
-                }, out);
+                }, 1, out);
+            }
+            if (decl instanceof Decl.Class d
+                    && scope.classifier(d.name()) instanceof KotlinClassSymbol cls && cls.decl() == d) {
+                classOutline(cls, 0, out);
             }
         }
         return out.toString();
     }
 
+    /** The bodies of a class besides its members', then of its nested classes. */
+    private void classOutline(ClassSymbol c, int depth, StringBuilder out) {
+        KotlinClassSymbol cls = (KotlinClassSymbol) c;
+        String indent = "  ".repeat(depth);
+        out.append(indent).append("class ").append(cls.name() != null ? cls.name() : "<anonymous>").append('\n');
+        for (FunctionSymbol k : cls.members().constructors()) {
+            out.append(indent).append("  constructor")
+                    .append(k.source() instanceof Decl.SecondaryConstructor ? "\n" : " (primary)\n");
+            outline(() -> checker.checkedConstructor(k), depth + 2, out);
+        }
+        if (cls.isObject()) {
+            out.append(indent).append("  super\n");
+            outline(() -> checker.checkedSuperCall(cls), depth + 2, out);
+        }
+        for (Decl member : cls.decl().members()) {
+            if (!(member instanceof Decl.Initializer i)) continue;
+            out.append(indent).append("  init\n");
+            outline(() -> checker.checkedInitBlock(cls, i), depth + 2, out);
+        }
+        for (Decl.SuperTypeEntry e : cls.decl().superTypes()) {
+            if (e.delegate() == null) continue;
+            out.append(indent).append("  by\n");
+            outline(() -> checker.checkedSupertypeDelegate(cls, e), depth + 2, out);
+        }
+        for (Decl.EnumEntry e : cls.decl().enumEntries()) {
+            out.append(indent).append("  entry ").append(e.name()).append('\n');
+            outline(() -> checker.checkedEnumEntry(cls, e), depth + 2, out);
+        }
+        for (Decl member : cls.decl().members()) {
+            if (member instanceof Decl.Class n && cls.members().classifier(n.name()) instanceof KotlinClassSymbol nested) {
+                classOutline(nested, depth + 1, out);
+            }
+        }
+    }
+
     /** The outline of what a check gives, or its error. */
-    private static void outline(Supplier<Object> check, StringBuilder out) {
+    private void outline(Supplier<Object> check, int depth, StringBuilder out) {
         try {
-            outline(check.get(), 1, out);
+            outline(check.get(), depth, out);
         } catch (RuntimeException e) {
             // Not the candidates of an inapplicable call.
             String message = e.getMessage().replaceFirst(": \\[.*", "");
-            out.append("  error: ").append(message).append('\n');
+            out.append("  ".repeat(depth)).append("error: ").append(message).append('\n');
             if (System.getenv("KBC_TRACE") != null) e.printStackTrace();
         }
     }
 
     // ==== Outlines ====
 
-    private static void outline(Object node, int depth, StringBuilder out) {
+    private void outline(Object node, int depth, StringBuilder out) {
         switch (node) {
             case null -> {
             }
             case List<?> list -> list.forEach(n -> outline(n, depth, out));
-            case CheckedFunction f -> outline(f.body(), depth, out);
+            case CheckedFunction f -> {
+                for (int i = 0; i < f.defaultValues().size(); i++) {
+                    if (f.defaultValues().get(i) == null) continue;
+                    out.append("  ".repeat(depth)).append("default ").append(f.params().get(i).name()).append('\n');
+                    outline(f.defaultValues().get(i), depth + 1, out);
+                }
+                outline(f.body(), depth, out);
+            }
             case CheckedDelegate d -> {
                 outline(d.delegate(), depth, out);
                 out.append("  ".repeat(depth)).append("get\n");
@@ -125,6 +181,8 @@ public final class CheckGoldenTests {
             }
             case KType t -> {
             }
+            case TExpr.LocalClassDecl d -> classOutline(d.cls(), depth, out);
+            case TExpr.ObjectLiteral o -> classOutline(o.cls(), depth, out);
             case TExpr e -> {
                 String line = line(e);
                 if (line != null) out.append("  ".repeat(depth)).append(line).append('\n');
@@ -137,7 +195,7 @@ public final class CheckGoldenTests {
     }
 
     /** The outline of the record components that are expressions or contain them. */
-    private static void children(Record r, int depth, StringBuilder out) {
+    private void children(Record r, int depth, StringBuilder out) {
         for (RecordComponent c : r.getClass().getRecordComponents()) {
             Object value;
             try {
@@ -163,6 +221,9 @@ public final class CheckGoldenTests {
             case TExpr.PropertyGet p -> "get " + p.property() + typeArgs(p.typeArgs()) + ": " + type(p.type());
             case TExpr.CallableReference r -> "ref " + r.target() + typeArgs(r.typeArgs()) + ": " + type(r.type())
                     + (r.adaptation() != null ? " (adapted)" : "");
+            case TExpr.DelegatingConstructorCall d -> "delegate " + d.constructor() + typeArgs(d.typeArgs())
+                    + (d.outerReceiver() != null ? " on " + type(d.outerReceiver().type()) : "");
+            case TExpr.ArrayLiteral a -> "array: " + type(a.type());
             case TExpr.Lambda l -> "lambda: " + type(l.type());
             case TExpr.SamConversion s -> "sam: " + type(s.type());
             default -> null;

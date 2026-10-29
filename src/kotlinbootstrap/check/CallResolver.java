@@ -84,6 +84,36 @@ final class CallResolver {
         return resolution.reduce();
     }
 
+    /**
+     * A {@code this(...)} or {@code super(...)} call, or a supertype
+     * initializer, as FIR's runResolverForDelegatingConstructor: the
+     * constructors of the class constructed, with the type arguments of
+     * the type constructed; of an inner class, on the nearest receiver of
+     * the outer class outside the class being constructed.
+     */
+    Result resolveDelegatingConstructor(CallInfo info, KType.ClassType constructed, Context ctx) {
+        ClassSymbol cls = constructed.symbol();
+        TExpr dispatch = null;
+        if (cls.isInner()) {
+            List<Context.ImplicitReceiver> receivers = ctx.receivers();
+            for (Context.ImplicitReceiver r : receivers.subList(Math.min(1, receivers.size()), receivers.size())) {
+                if (ts.asSupertype(r.type(), cls.outer()) != null) {
+                    dispatch = r.expr(info.pos());
+                    break;
+                }
+            }
+        }
+        CallInfo withTypeArgs = new CallInfo(info.kind(), info.name(), null, info.arguments(),
+                constructed.args().subList(0, cls.typeParams().size()), info.origin(), false, info.pos());
+        Resolution resolution = new Resolution(ctx, null, null);
+        TExpr outer = dispatch;
+        resolution.enqueue(resolution.levels(resolution.mainTask(), t -> t.levels.add(new Level(
+                TowerGroup.EMPTY_ROOT.member(), new ConstructorsLevel(cls, outer), withTypeArgs,
+                Candidate.ExplicitReceiverKind.NONE))));
+        resolution.run();
+        return resolution.reduce();
+    }
+
     // ==== Callable references ====
 
     /**
@@ -148,6 +178,10 @@ final class CallResolver {
         ScopeLevel(TowerScope scope, TExpr extension) {
             this(scope, extension, false, extension == null ? ConstructorFilter.ONLY_NESTED : ConstructorFilter.BOTH);
         }
+    }
+
+    /** The constructors of a class, for a delegating constructor call; with the outer instance for an inner class. */
+    private record ConstructorsLevel(ClassSymbol cls, TExpr dispatch) implements TowerLevel {
     }
 
     private record Level(TowerGroup group, TowerLevel level, CallInfo info, Candidate.ExplicitReceiverKind kind) {
@@ -616,6 +650,16 @@ final class CallResolver {
         void process(Task task, Level level, TowerGroup group) {
             CallInfo info = level.info();
             switch (level.level()) {
+                case ConstructorsLevel k -> {
+                    for (FunctionSymbol constructor : k.cls().members().constructors()) {
+                        Candidate c = candidate(task, level, constructor, k.dispatch(), null, Substitution.EMPTY);
+                        c.builder = w -> buildDelegatingCall(w, c);
+                        if (k.cls().isInner() && k.dispatch() == null) {
+                            c.addDiagnostic(Applicability.INAPPLICABLE, "No instance of " + k.cls().outer());
+                        }
+                        consume(task, group, c);
+                    }
+                }
                 case MemberLevel m -> processMembers(task, level, group, m);
                 case ScopeLevel s -> {
                     if (info.kind() != CallInfo.Kind.VARIABLE) {
@@ -787,6 +831,13 @@ final class CallResolver {
                     w.typeArguments(c), dispatch, extension, superCall);
             default -> new TExpr.ObjectValue(c.pos, c.valueType, ((KType.ClassType) c.valueType).symbol());
         };
+    }
+
+    private TExpr buildDelegatingCall(CompletionWriter w, Candidate c) {
+        FunctionSymbol constructor = (FunctionSymbol) c.symbol;
+        TExpr outer = c.dispatchReceiver == null ? null : w.write(c.dispatchReceiver);
+        return new TExpr.DelegatingConstructorCall(c.pos, types.unit(), constructor, w.typeArguments(c), outer,
+                arguments(w, c, constructor));
     }
 
     /** The checked form of a reference whose callable is completed with the call it is an argument of. */

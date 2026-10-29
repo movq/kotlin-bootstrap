@@ -38,6 +38,7 @@ final class TExprs {
                     args(c.args(), f), c.superCall(), c.origin());
             case TExpr.Vararg v -> new TExpr.Vararg(v.pos(), t.apply(v.type()), v.elements().stream()
                     .map(el -> new TExpr.VarargElement(f.apply(el.value()), el.spread())).toList());
+            case TExpr.ArrayLiteral a -> new TExpr.ArrayLiteral(a.pos(), t.apply(a.type()), all(a.elements(), f));
             case TExpr.DelegatingConstructorCall d -> new TExpr.DelegatingConstructorCall(d.pos(), t.apply(d.type()),
                     d.constructor(), types(d.typeArgs(), t), opt(d.outerReceiver(), f), args(d.args(), f));
             case TExpr.SafeCall s -> new TExpr.SafeCall(s.pos(), t.apply(s.type()), f.apply(s.receiver()), s.subject(),

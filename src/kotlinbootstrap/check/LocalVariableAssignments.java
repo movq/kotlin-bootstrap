@@ -240,6 +240,15 @@ final class LocalVariableAssignments {
         }
     }
 
+    /** Enters an init block: the root if none is entered, else nothing, as FIR's enterAnonymousInitializer. */
+    void enterAnonymousInitializer(Decl.Initializer node) {
+        if (root == null) enterFunction(node, false);
+    }
+
+    void exitAnonymousInitializer(Decl.Initializer node) {
+        if (root == node) exitFunction();
+    }
+
     void enterClass(Decl.Class node, boolean isAnonymousObject) {
         if (root == null) return;
         Scope scope = enterScope(node, isAnonymousObject);
@@ -436,6 +445,8 @@ final class LocalVariableAssignments {
                 case Record r -> {
                     for (RecordComponent c : r.getClass().getRecordComponents()) visit(get(r, c));
                 }
+                // The header of a class, as the root for its primary constructor.
+                case Collection<?> c -> c.forEach(this::visit);
                 default -> throw new IllegalArgumentException(node.toString());
             }
         }

@@ -98,9 +98,13 @@ public final class Resolver {
     public record DeclarationContext(FileContext file, Scope scope, KotlinClassSymbol cls) {
     }
 
-    /** The context of a function or property declared in Kotlin source, or null. */
+    /** The context of a function, constructor or property declared in Kotlin source, or null. */
     public DeclarationContext context(CallableSymbol symbol) {
         return contexts.get(symbol);
+    }
+
+    void addContext(CallableSymbol symbol, DeclarationContext context) {
+        contexts.put(symbol, context);
     }
 
     // ==== Entering declarations ====

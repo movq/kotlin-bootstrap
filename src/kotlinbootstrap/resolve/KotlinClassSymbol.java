@@ -347,11 +347,19 @@ public final class KotlinClassSymbol extends ClassSymbol {
         Visibility defaultVisibility = kind() == ClassKind.ENUM_CLASS ? Visibility.PRIVATE
                 : modality() == Modality.SEALED ? Visibility.PROTECTED : Visibility.PUBLIC;
         Scope scope = bodyScope(true);
-        return new FunctionSymbol(FunctionSymbol.CONSTRUCTOR_NAME, Origin.KOTLIN_SOURCE, this,
+        FunctionSymbol result = new FunctionSymbol(FunctionSymbol.CONSTRUCTOR_NAME, Origin.KOTLIN_SOURCE, this,
                 Resolver.visibility(modifiers, defaultVisibility), Modality.FINAL, Resolver.keywords(modifiers),
                 false, source, this::typeParams,
                 () -> new CallableSymbol.Signature(null, List.of(), resolver.valueParams(params, scope, file)),
                 () -> resolver.types().defaultType(this));
+        resolver.addContext(result, new Resolver.DeclarationContext(file, scope, this));
+        return result;
+    }
+
+    /** The type a supertype entry of the declaration resolves to. */
+    public KType supertype(Decl.SuperTypeEntry entry) {
+        int offset = kind() == ClassKind.ENUM_CLASS ? 1 : 0;
+        return supertypes().get(decl.superTypes().indexOf(entry) + offset);
     }
 
     private PropertySymbol constructorProperty(Decl.Param p) {

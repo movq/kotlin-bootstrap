@@ -1,3 +1,12 @@
+class Box
+  constructor (primary)
+    delegate kotlin.Any.<init>
+class Provider
+  constructor (primary)
+    delegate kotlin.Any.<init>
+class Generic
+  constructor (primary)
+    delegate kotlin.Any.<init>
 val lazyInt
   type: kotlin.Int
   call kotlin.lazy<kotlin.Int>: kotlin.Lazy<kotlin.Int>

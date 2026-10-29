@@ -1,3 +1,4 @@
+class Pred
 fun usePred
   call check.sam.Pred.test: kotlin.Boolean
 fun foo

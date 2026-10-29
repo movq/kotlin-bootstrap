@@ -130,7 +130,11 @@ public sealed interface TExpr {
     record VarargElement(TExpr value, boolean spread) {
     }
 
-    /** {@code this(...)} or {@code super(...)} from a constructor, or a supertype initializer. */
+    /** {@code [a, b]} in an annotation, or a default value of an annotation's parameter: an array. */
+    record ArrayLiteral(int pos, KType type, List<TExpr> elements) implements TExpr {
+    }
+
+    /** {@code this(...)} or {@code super(...)} from a constructor, a supertype initializer, or an enum entry. */
     record DelegatingConstructorCall(int pos, KType type, FunctionSymbol constructor, List<KType> typeArgs,
                                      TExpr outerReceiver, List<Argument> args) implements TExpr {
     }
