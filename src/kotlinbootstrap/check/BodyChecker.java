@@ -1059,7 +1059,17 @@ final class BodyChecker {
                 TExpr operand = dfa.smartCast(new TExpr.LocalGet(i.pos(), subject.type(), subject));
                 yield typeCheck(i.pos(), operand, typeOperand(i.type(), operand.type(), ctx), i.negated());
             }
-            case Expr.InCondition i when subject != null -> throw error(i.pos(), "'in' conditions are not supported yet");
+            case Expr.InCondition i when subject != null -> {
+                // in r is r.contains(subject); !in r is !r.contains(subject).
+                List<CallInfo.Argument> args = List.of(new CallInfo.Argument(
+                        dfa.smartCast(new TExpr.LocalGet(i.pos(), subject.type(), subject)), null, false, false));
+                CallInfo contains = function(i.pos(), "contains", receiver(i.expr(), ctx), args, List.of(),
+                        TExpr.CallOrigin.OPERATOR);
+                if (!i.negated()) yield completer.completeCall(resolved(contains, ctx), Mode.expecting(bool()));
+                TExpr value = completer.completeCall(resolved(contains, ctx), Mode.RECEIVER);
+                yield completer.completeCall(resolved(function(i.pos(), "not", new CallInfo.ValueReceiver(value),
+                        List.of(), List.of(), TExpr.CallOrigin.OPERATOR), ctx), Mode.expecting(bool()));
+            }
             default -> throw error(c.pos(), "A when without a subject needs Boolean conditions");
         };
     }

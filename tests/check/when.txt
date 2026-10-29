@@ -1,0 +1,10 @@
+fun inConditions
+  val a: kotlin.String
+    val <subject>: kotlin.Int
+    call kotlin.ranges.IntRange.contains: kotlin.Boolean
+      call kotlin.Int.rangeTo: kotlin.ranges.IntRange
+    call kotlin.Boolean.not: kotlin.Boolean
+      call kotlin.collections.List.contains: kotlin.Boolean
+        call kotlin.collections.map<kotlin.Long, kotlin.Int>: kotlin.collections.List<kotlin.Int>
+          lambda: (kotlin.Long) -> kotlin.Int
+            call kotlin.Long.toInt: kotlin.Int
