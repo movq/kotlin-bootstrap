@@ -1,0 +1,72 @@
+fun twice
+  call kotlin.Int.times: kotlin.Int
+fun withDefault
+  call kotlin.Int.plus: kotlin.Int
+fun many
+  get kotlin.Array.size: kotlin.Int
+fun unit
+fun memberOfType
+  val a: kotlin.collections.List<kotlin.String>
+    call kotlin.collections.filter<kotlin.String>: kotlin.collections.List<kotlin.String>
+      call kotlin.collections.listOf<kotlin.String>: kotlin.collections.List<kotlin.String>
+      ref kotlin.text.isNotBlank: kotlin.reflect.KFunction1<kotlin.String, kotlin.Boolean>
+fun topLevel
+  val a: kotlin.collections.List<kotlin.Int>
+    call kotlin.collections.map<kotlin.Int, kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      ref check.references.twice: kotlin.reflect.KFunction1<kotlin.Int, kotlin.Int>
+fun withDefaultAdapted
+  val a: kotlin.collections.List<kotlin.Int>
+    call kotlin.collections.map<kotlin.Int, kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      ref check.references.withDefault: (kotlin.Int) -> kotlin.Int (adapted)
+fun constructor
+  val a: kotlin.collections.List<java.io.File>
+    call kotlin.collections.map<kotlin.String, java.io.File>: kotlin.collections.List<java.io.File>
+      call kotlin.collections.listOf<kotlin.String>: kotlin.collections.List<kotlin.String>
+      ref java.io.File.<init>: kotlin.reflect.KFunction1<kotlin.String!, java.io.File>
+fun javaStatic
+  val a: kotlin.Float
+    call kotlin.let<kotlin.String, kotlin.Float>: kotlin.Float
+      ref java.lang.Float.parseFloat: kotlin.reflect.KFunction1<kotlin.String!, kotlin.Float>
+fun property
+  val a: kotlin.collections.List<kotlin.Int>
+    call kotlin.collections.map<kotlin.String, kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      call kotlin.collections.listOf<kotlin.String>: kotlin.collections.List<kotlin.String>
+      ref kotlin.String.length: kotlin.reflect.KProperty1<kotlin.String, kotlin.Int>
+fun varargAsArray
+  val a: kotlin.collections.List<kotlin.Int>
+    call kotlin.collections.map<kotlin.Array<kotlin.String>, kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      call kotlin.collections.listOf<kotlin.Array<kotlin.String>>: kotlin.collections.List<kotlin.Array<kotlin.String>>
+        call kotlin.arrayOf<kotlin.String>: kotlin.Array<kotlin.String>
+      ref check.references.many: kotlin.reflect.KFunction1<kotlin.Array<out kotlin.String>, kotlin.Int>
+fun varargElement
+  val a: kotlin.collections.List<kotlin.Int>
+    call kotlin.collections.map<kotlin.String, kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      call kotlin.collections.listOf<kotlin.String>: kotlin.collections.List<kotlin.String>
+      ref check.references.many: (kotlin.String) -> kotlin.Int (adapted)
+fun genericType
+  val a: kotlin.collections.List<kotlin.Int>
+    call kotlin.collections.map<kotlin.collections.List<kotlin.Int>, kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      call kotlin.collections.listOf<kotlin.collections.List<kotlin.Int>>: kotlin.collections.List<kotlin.collections.List<kotlin.Int>>
+        call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      ref kotlin.collections.List.size: kotlin.reflect.KProperty1<kotlin.collections.List<kotlin.Int>, kotlin.Int>
+fun boundMutable
+  val a: kotlin.reflect.KMutableProperty0<kotlin.Int>
+    ref check.references.Box.value: kotlin.reflect.KMutableProperty0<kotlin.Int>
+      call check.references.Box.<init><kotlin.Int>: check.references.Box<kotlin.Int>
+fun noExpectedType
+  val a: kotlin.reflect.KFunction1<kotlin.Int, kotlin.Int>
+    ref check.references.twice: kotlin.reflect.KFunction1<kotlin.Int, kotlin.Int>
+fun commonSupertype
+  val a: kotlin.reflect.KFunction<kotlin.Int>
+    ref check.references.twice: kotlin.reflect.KFunction1<kotlin.Int, kotlin.Int>
+    ref check.references.withDefault: kotlin.reflect.KFunction2<kotlin.Int, kotlin.Int, kotlin.Int>
+fun commonSupertypeUnit
+  val a: kotlin.reflect.KFunction1<kotlin.Int, kotlin.Any>
+    ref check.references.twice: kotlin.reflect.KFunction1<kotlin.Int, kotlin.Int>
+    ref check.references.unit: kotlin.reflect.KFunction1<kotlin.Int, kotlin.Unit>
+fun coercionToUnit
+  call kotlin.collections.forEach<kotlin.Int>: kotlin.Unit
+    call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+    ref check.references.twice: (kotlin.Int) -> kotlin.Unit (adapted)

@@ -201,6 +201,11 @@ public final class Checker {
         }
     }
 
+    /** The checked body of a function with one. */
+    public CheckedFunction checkedFunction(FunctionSymbol f) {
+        return function(f, (Decl.Function) f.source());
+    }
+
     // ==== Inferred types ====
 
     private KType inferredType(CallableSymbol symbol) {

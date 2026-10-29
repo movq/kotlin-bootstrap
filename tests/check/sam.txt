@@ -1,0 +1,69 @@
+fun usePred
+  call check.sam.Pred.test: kotlin.Boolean
+fun foo
+fun foo
+fun bar
+fun bar
+fun typeAliasConstructor
+  val a: java.util.Comparator<kotlin.String>
+    call kotlin.Comparator<kotlin.String>: java.util.Comparator<kotlin.String>
+      lambda: (kotlin.String!, kotlin.String!) -> kotlin.Int
+        call kotlin.Int.minus: kotlin.Int
+          get kotlin.String.length: kotlin.Int
+          get kotlin.String.length: kotlin.Int
+fun inferredTypeArgument
+  val a: kotlin.collections.List<kotlin.String>
+    call kotlin.collections.sortedWith<kotlin.String>: kotlin.collections.List<kotlin.String>
+      call kotlin.collections.listOf<kotlin.String>: kotlin.collections.List<kotlin.String>
+      call kotlin.Comparator<kotlin.String>: java.util.Comparator<kotlin.String>
+        lambda: (kotlin.String!, kotlin.String!) -> kotlin.Int
+          call kotlin.String.compareTo: kotlin.Int
+fun javaConstructor
+  val a: java.lang.Runnable
+    call java.lang.Runnable: java.lang.Runnable
+      lambda: () -> kotlin.Unit
+fun funInterfaceConstructor
+  val a: check.sam.Pred<kotlin.Int>
+    call check.sam.Pred<kotlin.Int>: check.sam.Pred<kotlin.Int>
+      lambda: (kotlin.Int) -> kotlin.Boolean
+        call kotlin.Int.compareTo: kotlin.Int
+fun funInterfaceArgument
+  val a: kotlin.Boolean
+    call check.sam.usePred<kotlin.Int>: kotlin.Boolean
+      sam: check.sam.Pred<kotlin.Int>
+        lambda: (kotlin.Int) -> kotlin.Boolean
+          call kotlin.Int.compareTo: kotlin.Int
+fun javaMethodArgument
+  val a: kotlin.Int!
+    call java.util.concurrent.ConcurrentHashMap.computeIfAbsent: kotlin.Int!
+      call java.util.concurrent.ConcurrentHashMap.<init><kotlin.String, kotlin.Int>: java.util.concurrent.ConcurrentHashMap<kotlin.String, kotlin.Int>
+      sam: java.util.function.Function<in kotlin.String!, out kotlin.Int!>!
+        lambda: (kotlin.String!) -> kotlin.Int!
+          get kotlin.String.length: kotlin.Int
+fun javaConstructorArgument
+  val a: java.lang.Thread
+    call java.lang.Thread.<init>: java.lang.Thread
+      sam: java.lang.Runnable!
+        lambda: () -> kotlin.Unit
+          call kotlin.io.println: kotlin.Unit
+fun functionValueArgument
+  val f: () -> kotlin.Unit
+    lambda: () -> kotlin.Unit
+  val a: java.lang.Thread
+    call java.lang.Thread.<init>: java.lang.Thread
+      sam: java.lang.Runnable!
+fun functionTypeWins
+  val a: kotlin.String
+    call check.sam.foo: kotlin.String
+      lambda: () -> kotlin.Unit
+fun noSamWithoutConversion
+  val r: java.lang.Runnable
+    call java.lang.Runnable: java.lang.Runnable
+      lambda: () -> kotlin.Unit
+  val a: kotlin.Int
+    call check.sam.foo: kotlin.Int
+fun referenceArgument
+  val a: java.lang.Thread
+    call java.lang.Thread.<init>: java.lang.Thread
+      sam: java.lang.Runnable!
+        ref kotlin.io.println: kotlin.reflect.KFunction0<kotlin.Unit>

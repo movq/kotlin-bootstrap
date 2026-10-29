@@ -1,0 +1,41 @@
+fun initCause
+  val a: kotlin.Throwable!
+    call kotlin.Throwable.initCause: kotlin.Throwable!
+fun suppressed
+  val a: (kotlin.Array<kotlin.Throwable!>..kotlin.Array<out kotlin.Throwable!>?)
+    get kotlin.Throwable.suppressed: (kotlin.Array<kotlin.Throwable!>..kotlin.Array<out kotlin.Throwable!>?)
+fun localizedMessage
+  val a: kotlin.String!
+    get kotlin.Throwable.localizedMessage: kotlin.String!
+fun stream
+  val a: java.util.stream.Stream<kotlin.Int!>!
+    call kotlin.collections.Collection.stream: java.util.stream.Stream<kotlin.Int!>!
+fun removeIf
+  val a: kotlin.Boolean
+    call kotlin.collections.MutableCollection.removeIf: kotlin.Boolean
+      sam: java.util.function.Predicate<in kotlin.Int!>!
+        lambda: (kotlin.Int!) -> kotlin.Boolean
+fun declaredInKotlin
+  val a: kotlin.Int
+    call kotlin.collections.Map.getOrDefault: kotlin.Int
+fun javaSubclass
+  val a: kotlin.Int!
+    call java.util.HashMap.computeIfAbsent: kotlin.Int!
+      sam: java.util.function.Function<in kotlin.String!, out kotlin.Int!>!
+        lambda: (kotlin.String!) -> kotlin.Int!
+fun charSequence
+  val a: java.util.stream.IntStream!
+    call kotlin.CharSequence.chars: java.util.stream.IntStream!
+fun hidesMembers
+  call kotlin.collections.forEach<kotlin.String>: kotlin.Unit
+    lambda: (kotlin.String) -> kotlin.Unit
+      get kotlin.String.length: kotlin.Int
+fun hiddenUsesExtension
+  val a: kotlin.Boolean
+    call kotlin.text.isBlank: kotlin.Boolean
+fun readOnlyHasNoRemoveIf
+  error: Unresolved reference removeIf
+fun renamed
+  error: Unresolved reference intValue
+fun hiddenOverride
+  error: No applicable sort
