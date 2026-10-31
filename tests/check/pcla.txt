@@ -146,3 +146,10 @@ fun i1
   call kotlin.sequences.iterator<kotlin.String>: kotlin.collections.Iterator<kotlin.String>
     lambda: suspend kotlin.sequences.SequenceScope<kotlin.String>.() -> kotlin.Unit
       call kotlin.sequences.SequenceScope.yield: kotlin.Unit
+fun downlevel
+  call kotlin.Function0.invoke: R
+fun takeO
+fun branches
+  call check.pcla.takeO<O>: kotlin.Unit
+    call check.pcla.downlevel<O>: O
+      lambda: () -> O

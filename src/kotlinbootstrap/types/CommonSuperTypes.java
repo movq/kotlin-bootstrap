@@ -68,7 +68,9 @@ final class CommonSuperTypes {
             return null;
         }
         Object constructor = SubtypeChecker.constructor(result);
-        return types.stream().allMatch(t -> checker.hasPathByNotMarkedNullableNodes(t, constructor)) ? result : null;
+        // A non-null type variable is a stub type, which equals anything here.
+        return types.stream().allMatch(t -> isTypeVariable(t) && !t.nullable()
+                || checker.hasPathByNotMarkedNullableNodes(t, constructor)) ? result : null;
     }
 
     private KType commonSuperTypeOfNotNull(List<KType> types, int depth) {

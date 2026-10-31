@@ -95,3 +95,11 @@ fun l6() = buildList<String> {
 fun i1() = iterator {
     yield("a")
 }
+
+// The not fixed R stands for a stub type in the common supertype of the branches: O, not O?.
+inline fun <R> downlevel(block: () -> R): R = block()
+fun <O> takeO(o: O) {}
+
+fun <O> branches(c: Boolean, o: O) {
+    takeO<O>(if (c) o else downlevel { o })
+}
