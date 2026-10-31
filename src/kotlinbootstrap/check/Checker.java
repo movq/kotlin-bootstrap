@@ -57,6 +57,7 @@ public final class Checker {
     private final OverloadResolver overloads;
     private final ConstantEvaluator constants;
     private final Map<FileContext, List<Context.TowerElement>> importingScopes = new HashMap<>();
+    private final LanguageSettings settings;
     private final Map<ClassSymbol, ClassContexts> classContexts = new HashMap<>();
     /** The direct subclasses of the sealed classes of the sources; computed on first use. */
     private Map<ClassSymbol, List<ClassSymbol>> sealedInheritors;
@@ -73,7 +74,12 @@ public final class Checker {
     }
 
     public Checker(Resolver resolver) {
+        this(resolver, LanguageSettings.DEFAULT);
+    }
+
+    public Checker(Resolver resolver, LanguageSettings settings) {
         this.resolver = resolver;
+        this.settings = settings;
         this.ts = new TypeSystem(resolver.table());
         this.arguments = new ArgumentChecker(ts);
         this.synthetic = new SyntheticCalls(ts, arguments);
@@ -90,6 +96,10 @@ public final class Checker {
 
     TypeSystem ts() {
         return ts;
+    }
+
+    LanguageSettings settings() {
+        return settings;
     }
 
     Resolver resolver() {
@@ -140,7 +150,8 @@ public final class Checker {
         Set<String> packages = new LinkedHashSet<>();
         for (FileContext file : resolver.files()) packages.add(file.packageName());
         for (String pkg : packages) collect(resolver.table().packageScope(pkg), callables);
-        for (ClassifierSymbol c : resolver.table().kotlinClassifiers().values()) {
+        // Collecting members may enter more classifiers, e.g. of local declarations.
+        for (ClassifierSymbol c : List.copyOf(resolver.table().kotlinClassifiers().values())) {
             if (c instanceof KotlinClassSymbol cls && !isExpect(cls)) {
                 collect(cls.members(), callables);
                 classes.add(cls);

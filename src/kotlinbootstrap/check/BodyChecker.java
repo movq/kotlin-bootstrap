@@ -855,11 +855,12 @@ final class BodyChecker {
     /**
      * The entries of a destructuring of a variable: {@code val a = x.component1()}
      * and so on, skipping {@code _}; for the full form {@code (val a, val b)},
-     * which destructures by name, {@code val a = x.a}.
+     * which destructures by name, {@code val a = x.a}, as does the short
+     * form with parentheses if so set, as FIR's destructuringKindOf.
      */
     private void destructure(Decl.Destructuring d, LocalVariable source, Context ctx, List<TExpr> out) {
-        boolean byName = !d.squareBrackets() && d.valOrVar() == Decl.ValOrVar.NONE
-                && d.entries().stream().allMatch(e -> e.valOrVar() != Decl.ValOrVar.NONE);
+        boolean fullForm = !d.entries().isEmpty() && d.entries().getFirst().valOrVar() != Decl.ValOrVar.NONE;
+        boolean byName = !d.squareBrackets() && (fullForm || owner.settings().nameBasedDestructuringShortForm());
         for (int i = 0; i < d.entries().size(); i++) {
             Decl.DestructuringEntry e = d.entries().get(i);
             if (e.name().equals("_") && (!byName || e.sourceName() == null)) continue;
@@ -870,7 +871,7 @@ final class BodyChecker {
                     ? completer.completeCall(resolved(variable(e.pos(), e.sourceName() != null ? e.sourceName() : e.name(),
                             r), ctx), mode)
                     : desugaredCall(e.pos(), "component" + (i + 1), r, ctx, mode);
-            boolean isVar = (byName ? e.valOrVar() : d.valOrVar()) == Decl.ValOrVar.VAR;
+            boolean isVar = (fullForm ? e.valOrVar() : d.valOrVar()) == Decl.ValOrVar.VAR;
             LocalVariable v = new LocalVariable(e.name(), declared != null ? declared : approximateLocalType(value.type()),
                     LocalVariable.Kind.LOCAL, isVar, null);
             if (!e.name().equals("_")) ctx.locals().getLast().add(v);

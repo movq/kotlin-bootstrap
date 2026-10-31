@@ -69,15 +69,20 @@ test-resolve: $(TEST_CLASSES)/.stamp
 test-types: $(TEST_CLASSES)/.stamp
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.TypeSystemGoldenTests $(KOTLIN_SRC) tests/types
 
-# Outlines of the checked bodies of tests/check, against the stdlib sources.
+# Outlines of the checked bodies of tests/check, against the stdlib sources; of
+# tests/check-name-based with name-based destructuring, as the compiler is built.
 test-check: $(TEST_CLASSES)/.stamp
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.CheckGoldenTests $(KOTLIN_SRC) tests/check
+	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.CheckGoldenTests -Xname-based-destructuring=complete \
+		$(KOTLIN_SRC) tests/check-name-based
 
 update-golden: $(TEST_CLASSES)/.stamp
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.GoldenTests --update tests/parser
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.ResolveGoldenTests --update $(KOTLIN_SRC) tests/resolve
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.TypeSystemGoldenTests --update $(KOTLIN_SRC) tests/types
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.CheckGoldenTests --update $(KOTLIN_SRC) tests/check
+	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.CheckGoldenTests --update -Xname-based-destructuring=complete \
+		$(KOTLIN_SRC) tests/check-name-based
 
 # The reference parser's own test data: files whose PSI dump has no error
 # elements must parse; files with errors must be rejected.

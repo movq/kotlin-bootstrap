@@ -10,6 +10,7 @@ import java.util.Map;
 import kotlinbootstrap.ast.AstPrinter;
 import kotlinbootstrap.check.CheckException;
 import kotlinbootstrap.check.Checker;
+import kotlinbootstrap.check.LanguageSettings;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.ResolveException;
 import kotlinbootstrap.resolve.Resolver;
@@ -24,7 +25,8 @@ public final class Main {
     private static final String USAGE = """
             usage: kbc parse <file.kt>...
                    kbc resolve [--jdk-release N] [--dump] <file.kt, file.java, file.jar or directory>...
-                   kbc check [--jdk-release N] [--errors] <file.kt, file.java, file.jar or directory>...""";
+                   kbc check [--jdk-release N] [--errors] [-Xname-based-destructuring=complete]
+                             <file.kt, file.java, file.jar or directory>...""";
 
     private Main() {
     }
@@ -96,19 +98,22 @@ public final class Main {
     private static void check(List<String> args) throws IOException {
         String release = "8";
         boolean printErrors = false;
+        boolean nameBasedDestructuring = false;
         List<Path> paths = new ArrayList<>();
         for (int i = 0; i < args.size(); i++) {
             if (args.get(i).equals("--jdk-release") && i + 1 < args.size()) {
                 release = args.get(++i);
             } else if (args.get(i).equals("--errors")) {
                 printErrors = true;
+            } else if (args.get(i).equals("-Xname-based-destructuring=complete")) {
+                nameBasedDestructuring = true;
             } else {
                 paths.add(Path.of(args.get(i)));
             }
         }
         Checker.Report report;
         try {
-            report = new Checker(Frontend.load(paths, release)).checkAll();
+            report = new Checker(Frontend.load(paths, release), new LanguageSettings(nameBasedDestructuring)).checkAll();
         } catch (SyntaxError | ResolveException e) {
             System.err.println(e);
             System.exit(1);

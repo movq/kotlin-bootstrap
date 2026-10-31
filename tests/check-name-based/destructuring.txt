@@ -1,0 +1,61 @@
+class Layer
+  constructor (primary)
+    delegate kotlin.Any.<init>
+fun destructure
+  val <destruct>: check.namebased.Layer<kotlin.Int>
+  val exits: kotlin.collections.List<kotlin.String>
+    get check.namebased.Layer.exits: kotlin.collections.List<kotlin.String>
+  val v: kotlin.Int
+    get check.namebased.Layer.value: kotlin.Int
+  val <destruct>: kotlin.Pair<kotlin.String, kotlin.Long>
+  val first: kotlin.String
+    get kotlin.Pair.first: kotlin.String
+  val second: kotlin.Long
+    get kotlin.Pair.second: kotlin.Long
+  val <destruct>: kotlin.Pair<kotlin.String, kotlin.Long>
+  val a: kotlin.String
+    call kotlin.Pair.component1: kotlin.String
+  val b: kotlin.Long
+    call kotlin.Pair.component2: kotlin.Long
+  val <destruct>: check.namebased.Layer<kotlin.Int>
+  val value: kotlin.Int
+    get check.namebased.Layer.value: kotlin.Int
+  val <iterator>: kotlin.collections.Iterator<kotlin.collections.Map.Entry<kotlin.String, kotlin.Int>>
+    call kotlin.collections.iterator<kotlin.String, kotlin.Int>: kotlin.collections.Iterator<kotlin.collections.Map.Entry<kotlin.String, kotlin.Int>>
+  call kotlin.collections.Iterator.hasNext: kotlin.Boolean
+  val <destruct>: kotlin.collections.Map.Entry<kotlin.String, kotlin.Int>
+    call kotlin.collections.Iterator.next: kotlin.collections.Map.Entry<kotlin.String, kotlin.Int>
+  val key: kotlin.String
+    get kotlin.collections.Map.Entry.key: kotlin.String
+  val _: kotlin.Int
+    get kotlin.collections.Map.Entry.value: kotlin.Int
+  val <iterator>: kotlin.collections.Iterator<kotlin.collections.IndexedValue<kotlin.String>>
+    call kotlin.collections.Iterable.iterator: kotlin.collections.Iterator<kotlin.collections.IndexedValue<kotlin.String>>
+      call kotlin.collections.withIndex<kotlin.String>: kotlin.collections.Iterable<kotlin.collections.IndexedValue<kotlin.String>>
+  call kotlin.collections.Iterator.hasNext: kotlin.Boolean
+  val <destruct>: kotlin.collections.IndexedValue<kotlin.String>
+    call kotlin.collections.Iterator.next: kotlin.collections.IndexedValue<kotlin.String>
+  val index: kotlin.Int
+    call kotlin.collections.IndexedValue.component1: kotlin.Int
+  val element: kotlin.String
+    call kotlin.collections.IndexedValue.component2: kotlin.String
+  call kotlin.collections.forEach<kotlin.String, kotlin.Int>: kotlin.Unit
+    lambda: (kotlin.collections.Map.Entry<kotlin.String, kotlin.Int>) -> kotlin.Unit
+      val k: kotlin.String
+        call kotlin.collections.component1<kotlin.String, kotlin.Int>: kotlin.String
+      val n: kotlin.Int
+        call kotlin.collections.component2<kotlin.String, kotlin.Int>: kotlin.Int
+class Point
+  constructor (primary)
+    delegate kotlin.Any.<init>
+fun fullForm
+  val <destruct>: check.namebased.Point
+  val y: kotlin.Int
+    get check.namebased.Point.y: kotlin.Int
+  val x: kotlin.Int
+    get check.namebased.Point.x: kotlin.Int
+  val <destruct>: check.namebased.Point
+  val first: kotlin.Int
+    call check.namebased.Point.component1: kotlin.Int
+  val second: kotlin.Int
+    call check.namebased.Point.component2: kotlin.Int

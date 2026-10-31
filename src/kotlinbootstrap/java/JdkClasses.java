@@ -243,7 +243,10 @@ public final class JdkClasses implements ClassFinder {
             List<KType> result = new ArrayList<>();
             TypeMirror superclass = element.getSuperclass();
             if (superclass.getKind() == TypeKind.DECLARED) result.add(supertype(superclass));
-            for (TypeMirror i : element.getInterfaces()) result.add(supertype(i));
+            for (TypeMirror i : element.getInterfaces()) {
+                // Missing from the class path, e.g. the stdlib's marker interfaces of Kotlin classes in a jar.
+                if (i.getKind() != TypeKind.ERROR) result.add(supertype(i));
+            }
             if (result.isEmpty() && !element.getQualifiedName().contentEquals("java.lang.Object")) {
                 result.add(types.any());
             }

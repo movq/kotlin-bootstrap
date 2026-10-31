@@ -20,6 +20,7 @@ import kotlinbootstrap.check.CheckedDelegate;
 import kotlinbootstrap.check.CheckedFunction;
 import kotlinbootstrap.check.Checker;
 import kotlinbootstrap.check.ConstantValue;
+import kotlinbootstrap.check.LanguageSettings;
 import kotlinbootstrap.check.TExpr;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.KotlinClassSymbol;
@@ -42,13 +43,15 @@ import kotlinbootstrap.types.TypeRenderer;
  * with their targets and types, nested as in the tree; or the first error.
  * The outlines for {@code foo.kt} are compared with {@code foo.txt}.
  *
- * <p>Arguments: [--update] kotlin-source-root test-directory.
+ * <p>Arguments: [--update] [-Xname-based-destructuring=complete] kotlin-source-root test-directory.
  */
 public final class CheckGoldenTests {
     public static void main(String[] args) throws IOException {
-        boolean update = args[0].equals("--update");
-        Path kotlinSource = Path.of(args[update ? 1 : 0]);
-        Path dir = Path.of(args[update ? 2 : 1]);
+        List<String> options = List.of(args).subList(0, args.length - 2);
+        boolean update = options.contains("--update");
+        boolean nameBasedDestructuring = options.contains("-Xname-based-destructuring=complete");
+        Path kotlinSource = Path.of(args[args.length - 2]);
+        Path dir = Path.of(args[args.length - 1]);
         List<Path> inputs;
         try (Stream<Path> files = Files.list(dir)) {
             inputs = files.filter(f -> f.toString().endsWith(".kt")).sorted().toList();
@@ -56,7 +59,7 @@ public final class CheckGoldenTests {
         List<Path> paths = new ArrayList<>(Stdlib.sourceRoots(kotlinSource));
         paths.add(dir);
         Resolver resolver = Frontend.load(paths, "8");
-        CheckGoldenTests tests = new CheckGoldenTests(new Checker(resolver));
+        CheckGoldenTests tests = new CheckGoldenTests(new Checker(resolver, new LanguageSettings(nameBasedDestructuring)));
 
         int failures = 0;
         for (Path input : inputs) {
