@@ -584,6 +584,8 @@ final class CallResolver {
 
         /** As FIR's enqueueResolverTasksForInvokeReceiverCandidates, for one variable. */
         void invokeOnCandidate(CallInfo info, boolean builtinMode, Candidate variable, TowerGroup receiverGroup) {
+            // A variable whose type is being inferred has an error type, without invoke.
+            if (variable.symbol instanceof CallableSymbol s && s.isReturnTypeComputing()) return;
             boolean isExtension = variable.symbol instanceof CallableSymbol s && isExtensionFunctionType(s.returnType());
             if (builtinMode && !isExtension) return;
             TExpr receiver;

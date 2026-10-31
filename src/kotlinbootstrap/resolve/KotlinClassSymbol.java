@@ -80,6 +80,18 @@ public final class KotlinClassSymbol extends ClassSymbol {
         if (decl.modifiers().has(Modifier.ABSTRACT)) return Modality.ABSTRACT;
         if (decl.modifiers().has(Modifier.OPEN)) return Modality.OPEN;
         if (decl.modifiers().has(Modifier.SEALED)) return Modality.SEALED;
+        // As kotlinc: an enum class is abstract with abstract members, and open with entries with bodies.
+        if (decl.modifiers().has(Modifier.ENUM)) {
+            for (Decl member : decl.members()) {
+                if (member instanceof Decl.Function f && f.modifiers().has(Modifier.ABSTRACT)
+                        || member instanceof Decl.Property p && p.modifiers().has(Modifier.ABSTRACT)) {
+                    return Modality.ABSTRACT;
+                }
+            }
+            for (Decl.EnumEntry e : decl.enumEntries()) {
+                if (e.body() != null) return Modality.OPEN;
+            }
+        }
         return decl.kind() == Decl.ClassKind.INTERFACE ? Modality.ABSTRACT : Modality.FINAL;
     }
 

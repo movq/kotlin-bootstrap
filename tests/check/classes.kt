@@ -57,10 +57,16 @@ enum class Op(val symbol: String) {
     TIMES("*") {
         val unit = 1
         override fun apply(a: Int, b: Int): Int = g(symbol) * a * b * unit
+    },
+    // The entry is an Op, as an implicit receiver too.
+    MINUS("-") {
+        override fun apply(a: Int, b: Int) = a - b + negated()
     };
 
     abstract fun apply(a: Int, b: Int): Int
 }
+
+fun Op.negated(): Int = -apply(1, 1)
 
 object Singleton : Base<Long>(1L, 2)
 

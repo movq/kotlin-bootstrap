@@ -109,6 +109,11 @@ public abstract sealed class CallableSymbol implements Symbol permits FunctionSy
         return returnType.get();
     }
 
+    /** Whether the return type is being inferred, from a body that refers to the symbol. */
+    public boolean isReturnTypeComputing() {
+        return returnType.isComputing();
+    }
+
     @Override
     public String toString() {
         return (owner == null ? "" : owner + ".") + name;

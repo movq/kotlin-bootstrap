@@ -75,6 +75,17 @@ class Op
               call check.classes.g: kotlin.Int
                 get check.classes.Op.symbol: kotlin.String
           get check.classes.<anonymous>.unit: kotlin.Int
+  entry MINUS
+    class <anonymous>
+      super
+        delegate check.classes.Op.<init>
+      fun apply
+        call kotlin.Int.plus: kotlin.Int
+          call kotlin.Int.minus: kotlin.Int
+          call check.classes.negated: kotlin.Int
+fun negated
+  call kotlin.Int.unaryMinus: kotlin.Int
+    call check.classes.Op.apply: kotlin.Int
 class Singleton
   super
     delegate check.classes.Base.<init><kotlin.Long>
