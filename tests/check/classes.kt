@@ -188,3 +188,9 @@ class ListRecorder : Recorder {
 // super<T> may leave out the type arguments of a generic supertype.
 interface Counted<F> { fun count(): Int = 1 }
 class CountedString : Counted<String> { override fun count(): Int = super<Counted>.count() + 1 }
+
+// copy takes the parameters of the primary constructor, even after a secondary one.
+data class Pair2 private constructor(val first: Int, val second: String) {
+    constructor() : this(1, "")
+    fun withFirst(x: Int): Pair2 = copy(first = x)
+}

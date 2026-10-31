@@ -279,7 +279,8 @@ public final class KotlinClassSymbol extends ClassSymbol {
                 scope.add(synthesized("component" + ++n, Visibility.PUBLIC, EnumSet.of(Modifier.OPERATOR), false, List::of,
                         property::returnType));
             }
-            FunctionSymbol ctor = scope.constructors().getFirst();
+            FunctionSymbol ctor = scope.constructors().stream()
+                    .filter(c -> c.source() == decl.primaryConstructor()).findFirst().orElseThrow();
             scope.add(synthesized("copy", copyVisibility(ctor), EnumSet.noneOf(Modifier.class), false, () -> {
                 List<ValueParamSymbol> copyParams = new ArrayList<>();
                 for (ValueParamSymbol p : ctor.signature().params()) {
