@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import kotlinbootstrap.infer.CompletionMode;
+import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.types.KType;
@@ -135,6 +136,15 @@ final class PclaSession {
         KType lower = Types.lowerBound(type);
         if (lower instanceof KType.DefinitelyNotNull d) lower = d.inner();
         return lower instanceof KType.TypeVariableType v ? v.variable() : null;
+    }
+
+    /**
+     * A constraint from other than a call, like an assignment of a value
+     * whose type has variables, as FIR's addSubtypeConstraintIfCompatible.
+     */
+    void addSubtypeConstraintIfCompatible(KType lower, KType upper) {
+        ArgumentChecker.addSubtypeConstraintIfCompatible(currentCommonSystem, lower, upper,
+                ConstraintPosition.of(ConstraintPosition.Kind.EXPECTED_TYPE));
     }
 
     ConstraintSystem currentCommonSystem() {

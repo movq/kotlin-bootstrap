@@ -110,3 +110,9 @@ class Member { val operator = true }
 fun processMembers(p: (Member) -> Unit) { p(Member()) }
 fun <T> findFirst(condition: (T) -> Boolean, processMembers: ((T) -> Unit) -> Unit): T? = null
 fun firstOperator() = findFirst({ it.operator }, { processMembers(it) })
+
+// In a lambda analyzed with PCLA, an assignment constrains the variables.
+class Slot<T> { var value: T? = null }
+fun <T> fill(f: (Slot<T>) -> Unit): T = TODO()
+var stringSlot: Slot<String>? = null
+fun assignedSlot() = fill { stringSlot = it }

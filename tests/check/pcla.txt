@@ -166,3 +166,11 @@ fun firstOperator
       get check.pcla.Member.operator: kotlin.Boolean
     lambda: ((check.pcla.Member) -> kotlin.Unit) -> kotlin.Unit
       call check.pcla.processMembers: kotlin.Unit
+class Slot
+  constructor (primary)
+    delegate kotlin.Any.<init>
+fun fill
+  call kotlin.TODO: kotlin.Nothing
+fun assignedSlot
+  call check.pcla.fill<kotlin.String>: kotlin.String
+    lambda: (check.pcla.Slot<kotlin.String>) -> kotlin.Unit

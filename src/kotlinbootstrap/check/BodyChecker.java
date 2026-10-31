@@ -122,7 +122,7 @@ final class BodyChecker {
             case Expr.Prefix p when p.op() == Expr.PrefixOp.INC || p.op() == Expr.PrefixOp.DEC ->
                     incrementOrDecrement(p.pos(), p.expr(), p.op() == Expr.PrefixOp.INC, true, ctx);
             case Expr.Prefix p -> prefix(p, ctx, mode);
-            case Expr.This t -> thisExpr(t, ctx);
+            case Expr.This t -> thisExpr(t, ctx, mode);
             case Expr.Block b -> block(b.pos(), b.statements(), ctx, mode);
             case Expr.DeclExpr d -> declaration(d.decl(), ctx);
             case Expr.If i -> ifExpr(i, ctx, mode);
@@ -274,10 +274,15 @@ final class BodyChecker {
         return completer.completeCall(resolved(variable(n.pos(), n.name(), null), ctx), mode);
     }
 
-    private TExpr thisExpr(Expr.This t, Context ctx) {
+    private TExpr thisExpr(Expr.This t, Context ctx, Mode mode) {
         for (Context.ImplicitReceiver r : ctx.receivers()) {
             if (t.label() == null || t.label().equals(r.label())) {
-                return dfa.smartCast(new TExpr.This(t.pos(), r.type(), r.owner(), false));
+                TExpr result = dfa.smartCast(new TExpr.This(t.pos(), r.type(), r.owner(), false));
+                // As FIR: in a lambda analyzed with PCLA, val list: MutableList<String> = this infers the variable.
+                if (inferenceSession != null && mode instanceof Mode.WithExpectedType w && !w.fromCast()) {
+                    inferenceSession.addSubtypeConstraintIfCompatible(result.type(), w.type());
+                }
+                return result;
             }
         }
         throw error(t.pos(), t.label() == null ? "'this' is not defined in this context"
@@ -938,8 +943,13 @@ final class BodyChecker {
             return onIndexed(i.receiver(), ctx, r -> operatorCall(a.pos(), "set", r, args, TExpr.CallOrigin.OPERATOR,
                     ctx, Mode.INDEPENDENT));
         }
-        return onVariable(target, ctx, Mode.INDEPENDENT,
-                v -> assignment(a.pos(), v, expr(a.value(), ctx, Mode.expecting(withoutSmartCast(v).type()))));
+        return onVariable(target, ctx, Mode.INDEPENDENT, v -> {
+            KType type = withoutSmartCast(v).type();
+            TExpr value = expr(a.value(), ctx, Mode.expecting(type));
+            // As FIR: in a lambda analyzed with PCLA, the assignment may constrain the variables.
+            if (inferenceSession != null) inferenceSession.addSubtypeConstraintIfCompatible(value.type(), type);
+            return assignment(a.pos(), v, value);
+        });
     }
 
     private static TExpr withoutSmartCast(TExpr e) {
