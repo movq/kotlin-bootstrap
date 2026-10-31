@@ -158,8 +158,9 @@ record Context(FileContext file, Scope typeScope, List<LocalScope> locals, List<
         return new Context(file, scope, locals, elements, function, loop, containingClass);
     }
 
+    /** A lambda keeps the loops around it, which break and continue in it may leave, as from an inline lambda. */
     Context withFunction(FunctionFrame frame) {
-        return new Context(file, typeScope, locals, elements, frame, null, containingClass);
+        return new Context(file, typeScope, locals, elements, frame, frame.isLambda ? loop : null, containingClass);
     }
 
     Context withLoop(TExpr.Loop l) {
