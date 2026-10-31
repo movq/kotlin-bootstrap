@@ -1013,11 +1013,11 @@ final class DataFlowAnalyzer {
     }
 
     /**
-     * A final property read where its explicit backing field is visible
-     * has the field's type, as FIR's processBackingFieldAccess.
+     * A property read where its explicit backing field is visible has the
+     * field's type, if stable, as FIR's processBackingFieldAccess.
      */
     private void processBackingFieldAccess(PropertySymbol p, TExpr result) {
-        if (p.modality() != Modality.FINAL || result instanceof TExpr.Unresolved) return;
+        if (result instanceof TExpr.Unresolved) return;
         if (variable(result, true, false) instanceof RealVariable v) {
             addTypeStatement(TypeStatement.typeEq(v, checker.backingFieldType(p)));
         }

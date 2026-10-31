@@ -152,3 +152,18 @@ class OverridesDefault : WithDefault() {
         return f()
     }
 }
+
+// Also for an override, where the property is stable.
+abstract class MapHolder {
+    abstract val byName: Map<String, List<Int>>
+}
+
+class MapCollector : MapHolder() {
+    override val byName: Map<String, List<Int>>
+        field = mutableMapOf<String, MutableList<Int>>()
+
+    @Throws(IllegalStateException::class)
+    fun add(name: String) {
+        byName.getOrPut(name) { mutableListOf() }.add(1)
+    }
+}

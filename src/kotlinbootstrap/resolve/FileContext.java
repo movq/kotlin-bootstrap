@@ -2,6 +2,7 @@ package kotlinbootstrap.resolve;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -9,8 +10,10 @@ import java.util.Set;
 
 import kotlinbootstrap.ast.KtFile;
 import kotlinbootstrap.symbols.ClassId;
+import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassifierSymbol;
 import kotlinbootstrap.symbols.SymbolTable;
+import kotlinbootstrap.symbols.TypeAliasSymbol;
 
 /** A Kotlin source file being compiled, with its import scope. */
 public final class FileContext {
@@ -24,6 +27,13 @@ public final class FileContext {
     public static final List<String> DEFAULT_IMPORTS = List.of(
             "kotlin", "kotlin.annotation", "kotlin.collections", "kotlin.comparisons", "kotlin.io",
             "kotlin.ranges", "kotlin.sequences", "kotlin.text", "kotlin.jvm");
+
+    /**
+     * Type aliases dropped when found with the class they stand for, as
+     * kotlinc's classTypealiasesThatDontCauseAmbiguity: kotlin.Throws.
+     */
+    private static final Map<ClassId, ClassId> TYPEALIASES_WITHOUT_AMBIGUITY = Map.of(
+            new ClassId("kotlin.jvm", "Throws"), new ClassId("kotlin", "Throws"));
 
     private final KtFile file;
     private final String packageName;
@@ -92,9 +102,25 @@ public final class FileContext {
             if (c != null) found.add(c);
         }
         if (found.size() > 1) {
+            Set<ClassId> aliases = new HashSet<>();
+            for (ClassifierSymbol c : found) {
+                ClassId alias = TYPEALIASES_WITHOUT_AMBIGUITY.get(id(c));
+                if (alias != null) aliases.add(alias);
+            }
+            found.removeIf(c -> aliases.contains(id(c)));
+        }
+        if (found.size() > 1) {
             throw new ResolveException(file.source(), 0, "Ambiguous classifier " + name + ": " + found);
         }
         return found.isEmpty() ? null : found.iterator().next();
+    }
+
+    private static ClassId id(ClassifierSymbol c) {
+        return switch (c) {
+            case ClassSymbol cls -> cls.id();
+            case TypeAliasSymbol a -> a.id();
+            default -> null;
+        };
     }
 
     @Override
