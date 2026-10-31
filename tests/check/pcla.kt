@@ -103,3 +103,10 @@ fun <O> takeO(o: O) {}
 fun <O> branches(c: Boolean, o: O) {
     takeO<O>(if (c) o else downlevel { o })
 }
+
+// Only a lambda with a variable in a type argument of an input type is analyzed with PCLA;
+// one with just T waits for it to be inferred from the other.
+class Member { val operator = true }
+fun processMembers(p: (Member) -> Unit) { p(Member()) }
+fun <T> findFirst(condition: (T) -> Boolean, processMembers: ((T) -> Unit) -> Unit): T? = null
+fun firstOperator() = findFirst({ it.operator }, { processMembers(it) })

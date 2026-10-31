@@ -189,6 +189,26 @@ final class InferenceTypes {
         return result;
     }
 
+    /**
+     * The type variables used as type arguments in the type, at any depth
+     * but not at the top level, as kotlinc's extractTypeVariables.
+     */
+    static Set<TypeVariable> extractTypeVariables(KType t) {
+        Set<TypeVariable> result = new LinkedHashSet<>();
+        extractTypeVariables(t, result);
+        return result;
+    }
+
+    private static void extractTypeVariables(KType t, Set<TypeVariable> result) {
+        if (!(Types.lowerBound(t) instanceof KType.ClassType c)) return;
+        for (TypeArg a : c.args()) {
+            if (a.isStar()) continue;
+            TypeVariable v = typeVariable(a.type());
+            if (v != null) result.add(v);
+            else extractTypeVariables(a.type(), result);
+        }
+    }
+
     /** Whether the type mentions the variable, also in projections of captured types. */
     static boolean containsTypeVariable(KType t, TypeVariable variable) {
         if (contains(t, x -> typeVariable(x) == variable)) return true;

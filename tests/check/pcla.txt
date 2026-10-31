@@ -153,3 +153,16 @@ fun branches
   call check.pcla.takeO<O>: kotlin.Unit
     call check.pcla.downlevel<O>: O
       lambda: () -> O
+class Member
+  constructor (primary)
+    delegate kotlin.Any.<init>
+fun processMembers
+  call kotlin.Function1.invoke: kotlin.Unit
+    call check.pcla.Member.<init>: check.pcla.Member
+fun findFirst
+fun firstOperator
+  call check.pcla.findFirst<check.pcla.Member>: check.pcla.Member?
+    lambda: (check.pcla.Member) -> kotlin.Boolean
+      get check.pcla.Member.operator: kotlin.Boolean
+    lambda: ((check.pcla.Member) -> kotlin.Unit) -> kotlin.Unit
+      call check.pcla.processMembers: kotlin.Unit

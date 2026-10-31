@@ -155,10 +155,9 @@ public final class ConstraintSystemCompleter {
         boolean anyAnalyzed = false;
         for (PostponedAtom argument : postponedArguments) {
             if (!context.isLambda(argument)) continue;
-            boolean notFixedInputTypes = argument.inputTypes().stream().anyMatch(t -> InferenceTypes.contains(t, x -> {
-                TypeVariable v = InferenceTypes.typeVariable(x);
-                return v != null && !c.fixedTypeVariables().containsKey(v);
-            }));
+            // Only variables in type arguments: a lambda with just T as an input type waits for T to be fixed.
+            boolean notFixedInputTypes = argument.inputTypes().stream().anyMatch(t -> InferenceTypes
+                    .extractTypeVariables(t).stream().anyMatch(v -> !c.fixedTypeVariables().containsKey(v)));
             if (!notFixedInputTypes) continue;
             context.analyze(argument, true);
             anyAnalyzed = true;
