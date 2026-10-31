@@ -1,0 +1,7 @@
+class KHolder
+fun javaOverrides
+  val a: check.java.AccessorImpl!
+    get check.java.HolderImpl.accessor: check.java.AccessorImpl!
+  val b: kotlin.Any
+    get check.java.KHolder.accessor: kotlin.Any
+  get check.java.AccessorImpl.isDefault: kotlin.Boolean

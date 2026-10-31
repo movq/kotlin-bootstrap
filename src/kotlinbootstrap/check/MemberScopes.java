@@ -324,16 +324,45 @@ final class MemberScopes {
         if (functions) {
             for (FunctionSymbol m : mapped.functions(cls, name)) result.add(new Member(m, Substitution.EMPTY));
         }
+        boolean java = cls.origin() == Origin.JAVA_SOURCE || cls.origin() == Origin.JAVA_BINARY;
         for (KType st : cls.supertypes()) {
             if (!(st instanceof KType.ClassType c)) continue;
             Substitution toSupertype = classSubstitution(c);
             for (Member m : classMembers(c.symbol(), name, functions)) {
                 if (m.symbol().visibility() == Visibility.PRIVATE) continue;
-                add(result, new Member(m.symbol(), m.substitution().andThen(toSupertype)));
+                PropertySymbol javaOverride = java && m.symbol() instanceof PropertySymbol p
+                        ? javaAccessorOverride(cls, p) : null;
+                add(result, javaOverride != null ? new Member(javaOverride, Substitution.EMPTY)
+                        : new Member(m.symbol(), m.substitution().andThen(toSupertype)));
             }
         }
         byName.put(name, result);
         return result;
+    }
+
+    /**
+     * For a Kotlin property a Java class inherits, the synthetic property of
+     * the getter the class declares for it, if any, which overrides it, as
+     * FIR's JavaClassUseSiteMemberScope: so it has the getter's type.
+     */
+    private PropertySymbol javaAccessorOverride(ClassSymbol cls, PropertySymbol inherited) {
+        if (inherited.isJavaField() || inherited.signature().receiver() != null) return null;
+        String name = inherited.name();
+        String getterName = startsWithIsPrefix(name) ? name : "get" + capitalizeAsciiOnly(name);
+        for (FunctionSymbol f : cls.members().functions(getterName)) {
+            if (f.isStatic() || !f.typeParams().isEmpty() || !f.signature().params().isEmpty()) continue;
+            if (f.isReturnTypeComputing()) return null;
+            FunctionSymbol setter = null;
+            if (inherited.isVar()) {
+                for (FunctionSymbol s : cls.members().functions(setterName(getterName))) {
+                    if (!s.isStatic() && s.typeParams().isEmpty() && s.signature().params().size() == 1) setter = s;
+                }
+            }
+            FunctionSymbol matchingSetter = setter;
+            return synthetic.computeIfAbsent(f, k -> new HashMap<>()).computeIfAbsent(Optional.ofNullable(setter),
+                    k -> PropertySymbol.syntheticJavaProperty(name, f, matchingSetter));
+        }
+        return null;
     }
 
     /**
