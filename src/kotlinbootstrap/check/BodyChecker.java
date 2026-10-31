@@ -8,6 +8,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+import kotlinbootstrap.ast.Annotation;
 import kotlinbootstrap.ast.Decl;
 import kotlinbootstrap.ast.Expr;
 import kotlinbootstrap.ast.Modifier;
@@ -25,6 +26,7 @@ import kotlinbootstrap.symbols.Modality;
 import kotlinbootstrap.symbols.Origin;
 import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.TypeParamSymbol;
+import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.symbols.Visibility;
 import kotlinbootstrap.syntax.SourceFile;
 import kotlinbootstrap.types.FunctionTypes;
@@ -50,6 +52,8 @@ final class BodyChecker {
     private final DataFlowAnalyzer dfa;
     /** The name of the call whose arguments are being checked, as FIR's calleeNamesForLambda; nullable. */
     private String calleeNameForLambda;
+    /** Whether checking the arguments of an annotation. */
+    private boolean insideAnnotation;
 
     BodyChecker(Checker owner, SourceFile source) {
         this.owner = owner;
@@ -96,7 +100,10 @@ final class BodyChecker {
             case Expr.NullLit l -> new TExpr.Const(l.pos(), ts.nullableNothing(), null);
             case Expr.StringTemplate s -> stringTemplate(s, ctx);
             case Expr.Paren p -> expr(p.expr(), ctx, mode);
-            case Expr.Annotated a -> expr(a.expr(), ctx, mode);
+            case Expr.Annotated a -> {
+                annotations(a.annotations(), ctx);
+                yield expr(a.expr(), ctx, mode);
+            }
             case Expr.Name n -> name(n, ctx, mode);
             case Expr.Member m -> member(m, ctx, mode);
             case Expr.Call c -> call(c, ctx, mode);
@@ -302,16 +309,18 @@ final class BodyChecker {
 
     private TExpr call(Expr.Call c, Context ctx, Mode mode) {
         List<TypeArg> typeArgs = typeArguments(c.typeArgs(), ctx);
+        List<Mode> modes = argumentModesInAnnotation(c.args(), mode);
         List<Expr> argExprs = new ArrayList<>();
         for (ValueArg a : c.args()) argExprs.add(a.value());
         argExprs.addAll(c.lambdas());
         dfa.enterCallArguments(lambdaArguments(argExprs));
         TExpr result = switch (c.callee()) {
             case Expr.Name n -> completer.completeCall(resolved(function(c.pos(), n.name(), null,
-                    arguments(n.name(), c.args(), c.lambdas(), ctx), typeArgs, TExpr.CallOrigin.PLAIN), ctx), mode);
+                    arguments(n.name(), c.args(), c.lambdas(), ctx, modes), typeArgs, TExpr.CallOrigin.PLAIN), ctx),
+                    mode);
             case Expr.Member m -> {
                 CallInfo.Receiver receiver = receiver(m.receiver(), ctx);
-                List<CallInfo.Argument> args = arguments(m.name(), c.args(), c.lambdas(), ctx);
+                List<CallInfo.Argument> args = arguments(m.name(), c.args(), c.lambdas(), ctx, modes);
                 yield onReceiver(m.pos(), receiver, m.safe(), r -> completer.completeCall(
                         resolved(function(c.pos(), m.name(), r, args, typeArgs, TExpr.CallOrigin.PLAIN), ctx), mode));
             }
@@ -336,16 +345,101 @@ final class BodyChecker {
      */
     TExpr delegatingConstructorCall(int pos, KType.ClassType constructed, List<ValueArg> args, Context argsCtx,
                                     Context ctx) {
+        return delegatingConstructorCall(pos, constructed, args, null, argsCtx, ctx);
+    }
+
+    /** @param modes the modes the arguments are checked in; null for dependent */
+    private TExpr delegatingConstructorCall(int pos, KType.ClassType constructed, List<ValueArg> args, List<Mode> modes,
+                                            Context argsCtx, Context ctx) {
         List<Expr> argExprs = new ArrayList<>();
         for (ValueArg a : args) argExprs.add(a.value());
         dfa.enterCallArguments(lambdaArguments(argExprs));
         CallInfo info = new CallInfo(CallInfo.Kind.FUNCTION, FunctionSymbol.CONSTRUCTOR_NAME, null,
-                arguments(constructed.symbol().name(), args, List.of(), argsCtx), List.of(), TExpr.CallOrigin.PLAIN,
+                arguments(constructed.symbol().name(), args, List.of(), argsCtx, modes), List.of(), TExpr.CallOrigin.PLAIN,
                 false, pos);
         TExpr result = completer.completeCall(resolved(info, calls.resolveDelegatingConstructor(info, constructed, ctx)),
                 Mode.INDEPENDENT);
         dfa.exitFunctionCall(true);
         return result;
+    }
+
+    /**
+     * An annotation, as FIR's resolveAnnotationCall: a call of the
+     * annotation class's constructor, its arguments evaluated, as
+     * FirAnnotationExpressionChecker requires them constant.
+     */
+    ConstantValue.Annotation annotation(Annotation a, Context ctx) {
+        KType type = resolveType(a.type(), ctx);
+        if (!(Types.lowerBound(type) instanceof KType.ClassType t) || t.symbol().kind() != ClassKind.ANNOTATION_CLASS) {
+            throw error(a.pos(), "Not an annotation class: " + type);
+        }
+        boolean outer = insideAnnotation;
+        insideAnnotation = true;
+        TExpr.DelegatingConstructorCall call;
+        try {
+            call = (TExpr.DelegatingConstructorCall) delegatingConstructorCall(a.pos(), t, a.args(),
+                    annotationArgumentModes(t.symbol(), a.args()), ctx, ctx);
+        } finally {
+            insideAnnotation = outer;
+        }
+        try {
+            return owner.constants().annotation(t, call.constructor(), call.args());
+        } catch (ConstantEvaluator.NotConstant e) {
+            throw error(e.expr.pos(), e.failure.message);
+        }
+    }
+
+    /**
+     * The modes the arguments of a call in an annotation are checked in,
+     * as FIR's transformCallArgumentsInsideAnnotationContext: of a nested
+     * annotation, with the types of the parameters they are for expected;
+     * of a call where an array is expected, as arrayOf, with its element
+     * type expected; null for others.
+     */
+    private List<Mode> argumentModesInAnnotation(List<ValueArg> args, Mode mode) {
+        if (!insideAnnotation || !(mode instanceof Mode.WithExpectedType w)) return null;
+        if (Types.lowerBound(w.type()) instanceof KType.ClassType t && t.symbol().kind() == ClassKind.ANNOTATION_CLASS) {
+            return annotationArgumentModes(t.symbol(), args);
+        }
+        KType element = owner.resolver().types().arrayElementType(w.type());
+        if (element == null) return null;
+        List<Mode> modes = new ArrayList<>();
+        for (ValueArg a : args) modes.add(a.spread() ? Mode.expecting(w.type()) : Mode.expecting(element));
+        return modes;
+    }
+
+    /**
+     * The arguments of an annotation, with the types of the parameters
+     * they map to expected, as FIR's transformAnnotationCallArgumentsPreCollectionLiterals;
+     * an element of a vararg gets the element type.
+     */
+    private List<Mode> annotationArgumentModes(ClassSymbol annotation, List<ValueArg> args) {
+        List<FunctionSymbol> constructors = owner.memberScopes().constructors(annotation);
+        List<Mode> modes = new ArrayList<>();
+        List<ValueParamSymbol> params = constructors.isEmpty() ? List.of()
+                : constructors.getFirst().signature().params();
+        int position = 0;
+        for (ValueArg a : args) {
+            ValueParamSymbol param = null;
+            if (a.name() != null) {
+                for (ValueParamSymbol p : params) {
+                    if (p.name().equals(a.name())) param = p;
+                }
+            } else if (position < params.size()) {
+                param = params.get(position);
+                if (!param.isVararg()) position++;
+            }
+            KType type = param == null ? null : !param.isVararg() ? param.type()
+                    : a.spread() || a.name() != null ? owner.resolver().types().varargArrayType(param.type())
+                    : param.type();
+            modes.add(type == null ? Mode.DEPENDENT : Mode.expecting(type));
+        }
+        return modes;
+    }
+
+    /** Checks the annotations of an expression or local declaration. */
+    private void annotations(List<Annotation> annotations, Context ctx) {
+        for (Annotation a : annotations) owner.checkedAnnotation(a, this, ctx);
     }
 
     /** The lambdas and anonymous functions among the arguments of a call. */
@@ -364,12 +458,20 @@ final class BodyChecker {
      * @param callee the name of the function called, the default label of lambdas in the arguments
      */
     private List<CallInfo.Argument> arguments(String callee, List<ValueArg> args, List<Expr> lambdas, Context ctx) {
+        return arguments(callee, args, lambdas, ctx, null);
+    }
+
+    /** @param argumentModes the modes the arguments are checked in; null for dependent */
+    private List<CallInfo.Argument> arguments(String callee, List<ValueArg> args, List<Expr> lambdas, Context ctx,
+                                              List<Mode> argumentModes) {
         String outerCallee = calleeNameForLambda;
         calleeNameForLambda = callee;
         try {
             List<CallInfo.Argument> result = new ArrayList<>();
-            for (ValueArg a : args) {
-                result.add(new CallInfo.Argument(expr(a.value(), ctx, Mode.DEPENDENT), a.name(), a.spread(), false));
+            for (int i = 0; i < args.size(); i++) {
+                ValueArg a = args.get(i);
+                Mode mode = argumentModes != null ? argumentModes.get(i) : Mode.DEPENDENT;
+                result.add(new CallInfo.Argument(expr(a.value(), ctx, mode), a.name(), a.spread(), false));
             }
             for (Expr l : lambdas) result.add(new CallInfo.Argument(expr(l, ctx, Mode.DEPENDENT), null, false, true));
             return result;
@@ -674,6 +776,7 @@ final class BodyChecker {
     }
 
     private TExpr localVariable(Decl.Property p, Context ctx) {
+        annotations(p.modifiers().annotations(), ctx);
         KType declared = p.type() == null ? null : resolveType(p.type(), ctx);
         if (p.delegate() != null) return localDelegatedVariable(p, declared, ctx);
         TExpr initializer = null;

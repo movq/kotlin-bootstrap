@@ -1,0 +1,62 @@
+class Level
+  constructor (primary)
+    delegate kotlin.Any.<init>
+class Names
+  constructor (primary)
+    delegate kotlin.Any.<init>
+class Nested
+  constructor (primary)
+    default kinds
+      array: kotlin.Array<kotlin.reflect.KClass<*>>
+    delegate kotlin.Any.<init>
+class Color
+  constructor (primary)
+  entry RED
+    delegate check.annotations.Color.<init>
+  entry GREEN
+    delegate check.annotations.Color.<init>
+class Colored
+  constructor (primary)
+    delegate kotlin.Any.<init>
+class JavaRetained
+  annotation java.lang.annotation.Retention(value = java.lang.annotation.RetentionPolicy.RUNTIME)
+  constructor (primary)
+    delegate kotlin.Any.<init>
+const val BASE = 10: kotlin.Int
+const val NAME = "n10"
+const val SHIFTED = 136: kotlin.Int
+const val LONG = 4294967294: kotlin.Long
+const val TEXT = "n10:11"
+const val CHAR = 'c'
+const val NEG = -3: kotlin.Int
+const val DBL = 15.0: kotlin.Double
+const val CMP = true: kotlin.Boolean
+fun a
+  annotation check.annotations.Level(value = 20: kotlin.Int)
+fun b
+  annotation check.annotations.Names(names = ["a", "n10"])
+fun c
+  annotation check.annotations.Names(names = ["x", "y"])
+fun d
+  annotation check.annotations.Names(names = ["p", "q"])
+fun e
+  annotation check.annotations.Nested(level = check.annotations.Level(value = 1: kotlin.Int), kinds = [kotlin.String::class, kotlin.Int::class])
+fun f
+  annotation check.annotations.Colored(color = check.annotations.Color.GREEN)
+fun g
+  annotation kotlin.Deprecated(message = "old", replaceWith = kotlin.ReplaceWith(expression = "g()", imports = ["kotlin.math.abs"]), level = kotlin.DeprecationLevel.WARNING)
+fun suppressed
+  annotation kotlin.Suppress(names = ["UNUSED"])
+  val x: kotlin.Int
+fun named
+  annotation kotlin.jvm.JvmName(name = "renamed")
+fun nonConst
+  error: Only 'const val' can be used in constant expressions
+class Annotated
+  annotation check.annotations.Level(value = 1: kotlin.Int)
+  annotation check.annotations.Level(value = 2: kotlin.Int)
+  annotation check.annotations.Level(value = 3: kotlin.Int)
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  fun member
+    annotation check.annotations.Level(value = 5: kotlin.Int)

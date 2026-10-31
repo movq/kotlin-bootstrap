@@ -244,7 +244,32 @@ public final class JavaSourceClasses implements ClassFinder {
                         javaVisibility(tree.getModifiers(), outer()), Modality.FINAL, Set.of(), false, null,
                         this::typeParams, () -> CallableSymbol.Signature.NONE, this::defaultType));
             }
+            if (kind() == ClassKind.ANNOTATION_CLASS) scope.add(annotationConstructor());
             return scope;
+        }
+
+        /**
+         * The constructor of an annotation, as FIR's buildConstructorForAnnotationClass:
+         * a parameter for each method, {@code value} first, which is a vararg if an array.
+         */
+        private FunctionSymbol annotationConstructor() {
+            return new FunctionSymbol(FunctionSymbol.CONSTRUCTOR_NAME, Origin.JAVA_SOURCE, this, Visibility.PUBLIC,
+                    Modality.FINAL, Set.of(), false, null, List::of,
+                    () -> {
+                        List<ValueParamSymbol> params = new ArrayList<>();
+                        for (Tree member : tree.getMembers()) {
+                            if (!(member instanceof MethodTree m)) continue;
+                            String name = m.getName().toString();
+                            KType type = types.annotationMemberType(type(m.getReturnType(), bodyScope));
+                            boolean vararg = name.equals("value") && m.getReturnType() instanceof ArrayTypeTree;
+                            ValueParamSymbol p = new ValueParamSymbol(name,
+                                    vararg ? types.arrayElementType(type) : type, m.getDefaultValue() != null,
+                                    vararg ? EnumSet.of(kotlinbootstrap.ast.Modifier.VARARG) : Set.of(), m);
+                            if (name.equals("value")) params.addFirst(p); else params.add(p);
+                        }
+                        return new CallableSymbol.Signature(null, List.of(), params);
+                    },
+                    this::defaultType);
         }
 
         private KType defaultType() {

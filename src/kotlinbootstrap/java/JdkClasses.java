@@ -258,7 +258,33 @@ public final class JdkClasses implements ClassFinder {
                     }
                 }
             }
+            if (element.getKind() == ElementKind.ANNOTATION_TYPE) scope.add(annotationConstructor());
             return scope;
+        }
+
+        /**
+         * The constructor of an annotation, as FIR's buildConstructorForAnnotationClass:
+         * a parameter for each method, {@code value} first, which is a vararg if an array.
+         */
+        private FunctionSymbol annotationConstructor() {
+            return new FunctionSymbol(FunctionSymbol.CONSTRUCTOR_NAME, Origin.JAVA_BINARY, this, Visibility.PUBLIC,
+                    Modality.FINAL, Set.of(), false, element, List::of,
+                    () -> {
+                        List<ValueParamSymbol> params = new ArrayList<>();
+                        for (Element e : element.getEnclosedElements()) {
+                            if (e.getKind() != ElementKind.METHOD || isStatic(e)) continue;
+                            ExecutableElement m = (ExecutableElement) e;
+                            String name = m.getSimpleName().toString();
+                            KType type = types.annotationMemberType(type(m.getReturnType()));
+                            boolean vararg = name.equals("value") && m.getReturnType().getKind() == TypeKind.ARRAY;
+                            ValueParamSymbol p = new ValueParamSymbol(name,
+                                    vararg ? types.arrayElementType(type) : type, m.getDefaultValue() != null,
+                                    vararg ? EnumSet.of(Modifier.VARARG) : Set.of(), m);
+                            if (name.equals("value")) params.addFirst(p); else params.add(p);
+                        }
+                        return new CallableSymbol.Signature(null, List.of(), params);
+                    },
+                    this::defaultType);
         }
 
         private FunctionSymbol function(ExecutableElement e, String name) {

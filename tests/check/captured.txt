@@ -1,6 +1,7 @@
 fun g
 fun g
 fun both
+  annotation kotlin.OptIn(markerClass = [kotlin.contracts.ExperimentalContracts::class])
   call kotlin.contracts.contract: kotlin.Unit
     lambda: kotlin.contracts.ContractBuilder.() -> kotlin.Unit
       call kotlin.contracts.ContractBuilder.callsInPlace<kotlin.Unit>: kotlin.contracts.CallsInPlace

@@ -122,6 +122,32 @@ final class JavaTypes {
         return t instanceof KType.Flexible f ? f.lower() : t;
     }
 
+    /**
+     * The type of a parameter of a Java annotation's constructor, as FIR's
+     * ANNOTATION_MEMBER mode: not flexible, {@code Class} as {@code KClass},
+     * and arrays of such types.
+     */
+    KType annotationMemberType(KType t) {
+        KType.ClassType c = (KType.ClassType) supertype(t);
+        if (c.symbol().id().fqName().equals("java.lang.Class")) {
+            List<TypeArg> args = c.args().isEmpty() ? List.of(TypeArg.STAR) : c.args();
+            return new KType.ClassType(table.requireClass("kotlin.reflect.KClass"), args, false);
+        }
+        if (c.symbol().id().fqName().equals("kotlin.Array")) {
+            return new KType.ClassType(c.symbol(), List.of(TypeArg.of(annotationMemberType(c.args().getFirst().type()))),
+                    false);
+        }
+        return c.withNullable(false);
+    }
+
+    /** The element type of an array type from {@link #annotationMemberType}. */
+    KType arrayElementType(KType array) {
+        KType.ClassType c = (KType.ClassType) array;
+        String name = c.symbol().name();
+        return name.equals("Array") ? c.args().getFirst().type()
+                : primitive(name.substring(0, name.length() - "Array".length()));
+    }
+
     KType any() {
         return primitive("Any");
     }

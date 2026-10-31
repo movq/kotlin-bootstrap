@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+import kotlinbootstrap.ast.Annotation;
 import kotlinbootstrap.ast.Decl;
 import kotlinbootstrap.ast.Expr;
 import kotlinbootstrap.ast.Modifier;
@@ -54,6 +55,7 @@ public final class Checker {
     private final SamResolver sam;
     private final ResolutionStages stages;
     private final OverloadResolver overloads;
+    private final ConstantEvaluator constants;
     private final Map<FileContext, List<Context.TowerElement>> importingScopes = new HashMap<>();
     private final Map<ClassSymbol, ClassContexts> classContexts = new HashMap<>();
     /** The direct subclasses of the sealed classes of the sources; computed on first use. */
@@ -81,6 +83,8 @@ public final class Checker {
         this.stages = new ResolutionStages(ts, resolver.types(), arguments, sam, mapped,
                 new VisibilityChecker(resolver));
         this.overloads = new OverloadResolver(ts, memberScopes, stages);
+        this.constants = new ConstantEvaluator(p -> p.source() instanceof Decl.Property d && d.initializer() != null
+                ? initializer(p, d) : null);
         resolver.setBodyTyper(this::inferredType);
     }
 
@@ -116,6 +120,10 @@ public final class Checker {
         return overloads;
     }
 
+    ConstantEvaluator constants() {
+        return constants;
+    }
+
     // ==== All declarations ====
 
     /** @param failures the first error of each declaration that could not be checked */
@@ -147,6 +155,13 @@ public final class Checker {
                 check(c);
             } catch (RuntimeException e) {
                 errors.add(new Failure(c, e));
+            }
+        }
+        for (FileContext file : resolver.files()) {
+            try {
+                checkFileAnnotations(file);
+            } catch (RuntimeException e) {
+                errors.add(new Failure(null, e));
             }
         }
         for (KotlinClassSymbol cls : classes) {
@@ -203,12 +218,17 @@ public final class Checker {
         return false;
     }
 
-    /** Checks the bodies of a declaration. */
+    /** Checks the bodies of a declaration, and its annotations. */
     public void check(CallableSymbol symbol) {
+        checkAnnotations(symbol);
         switch (symbol) {
             case FunctionSymbol f when f.source() instanceof Decl.Function d && d.body() != null -> function(f, d);
             case PropertySymbol p when p.source() instanceof Decl.Property d -> {
-                if (d.initializer() != null) initializer(p, d);
+                if (d.initializer() != null && p.has(Modifier.CONST)) {
+                    constValue(p);
+                } else if (d.initializer() != null) {
+                    initializer(p, d);
+                }
                 if (d.delegate() != null) delegate(p, d);
                 if (d.getter() != null && d.getter().body() != null) accessor(p, d, d.getter());
                 if (d.setter() != null && d.setter().body() != null) accessor(p, d, d.setter());
@@ -216,6 +236,110 @@ public final class Checker {
             default -> {
             }
         }
+    }
+
+    /** The value of a const val, whose initializer must be constant. */
+    public ConstantValue constValue(PropertySymbol p) {
+        Decl.Property d = (Decl.Property) p.source();
+        return memo(p, () -> {
+            TExpr initializer = initializer(p, d);
+            try {
+                return constants.evaluate(initializer);
+            } catch (ConstantEvaluator.NotConstant e) {
+                throw error(p, e.expr.pos(), "A const val's initializer must be constant: " + e.failure.message);
+            }
+        });
+    }
+
+    // ==== Annotations ====
+
+    /** An annotation, checked once, in the context of what it annotates. */
+    ConstantValue.Annotation checkedAnnotation(Annotation a, BodyChecker checker, Context ctx) {
+        return memo(a, () -> checker.annotation(a, ctx));
+    }
+
+    /** The checked annotation; it must have been checked already. */
+    public ConstantValue.Annotation checkedAnnotation(Annotation a) {
+        return memo(a, () -> {
+            throw new IllegalStateException("Annotation not checked: " + a);
+        });
+    }
+
+    /**
+     * Checks the annotations of a function or property, and of its
+     * parameters and accessors, in its context, as FIR's
+     * FirAnnotationArgumentsTransformer.
+     */
+    private void checkAnnotations(CallableSymbol symbol) {
+        Resolver.DeclarationContext dc = resolver.context(symbol);
+        if (dc == null) return;
+        List<Annotation> annotations = new ArrayList<>();
+        switch (symbol.source()) {
+            case Decl.Function d -> {
+                annotations.addAll(d.modifiers().annotations());
+                for (Decl.Param p : d.params()) annotations.addAll(p.modifiers().annotations());
+            }
+            case Decl.Property d -> {
+                annotations.addAll(d.modifiers().annotations());
+                for (Decl.Accessor a : Arrays.asList(d.getter(), d.setter())) {
+                    if (a == null) continue;
+                    annotations.addAll(a.modifiers().annotations());
+                    if (a.param() != null) annotations.addAll(a.param().modifiers().annotations());
+                }
+                if (d.backingField() != null) annotations.addAll(d.backingField().modifiers().annotations());
+            }
+            case null, default -> {
+            }
+        }
+        if (annotations.isEmpty()) return;
+        BodyChecker checker = checker(symbol, dc);
+        Context ctx = context(symbol, dc);
+        inLocalFlow(symbol, () -> {
+            for (Annotation a : annotations) checkedAnnotation(a, checker, ctx);
+            return null;
+        });
+    }
+
+    /**
+     * Checks the annotations of a class, in the context it is declared in;
+     * of its constructors and their parameters and of its enum entries, in
+     * its header.
+     */
+    private void checkClassAnnotations(KotlinClassSymbol cls) {
+        Decl.Class d = cls.decl();
+        LocalOrigin origin = localOrigin(cls);
+        BodyChecker checker = checker(origin, cls.file());
+        inLocalFlow(origin, () -> {
+            if (!d.modifiers().annotations().isEmpty()) {
+                Context outer = new Context(cls.file(), cls.outer() != null ? cls.outer().bodyScope(cls.isInner())
+                        : origin != null ? origin.context().typeScope() : cls.file().scope(),
+                        origin != null ? origin.context().locals() : List.of(), outerElements(cls), null, null,
+                        cls.containingClass());
+                for (Annotation a : d.modifiers().annotations()) checkedAnnotation(a, checker, outer);
+            }
+            Context header = classContext(cls, true);
+            List<Annotation> annotations = new ArrayList<>();
+            if (d.primaryConstructor() != null) {
+                annotations.addAll(d.primaryConstructor().modifiers().annotations());
+                for (Decl.Param p : d.primaryConstructor().params()) annotations.addAll(p.modifiers().annotations());
+            }
+            for (Decl member : d.members()) {
+                if (!(member instanceof Decl.SecondaryConstructor c)) continue;
+                annotations.addAll(c.modifiers().annotations());
+                for (Decl.Param p : c.params()) annotations.addAll(p.modifiers().annotations());
+            }
+            for (Decl.EnumEntry e : d.enumEntries()) annotations.addAll(e.modifiers().annotations());
+            for (Annotation a : annotations) checkedAnnotation(a, checker, header);
+            return null;
+        });
+    }
+
+    /** Checks the annotations of a file, in its importing scopes. */
+    private void checkFileAnnotations(FileContext file) {
+        if (file.file().annotations().isEmpty()) return;
+        BodyChecker checker = new BodyChecker(this, file.file().source());
+        Context ctx = new Context(file, file.scope(), List.of(), importing(file), null, null, null);
+        for (Annotation a : file.file().annotations()) checkedAnnotation(a, checker, ctx);
     }
 
     /** The checked body of a function with one. */
@@ -505,6 +629,7 @@ public final class Checker {
      * for an object, which has no constructor, the call of its superclass's.
      */
     public void checkClass(KotlinClassSymbol cls) {
+        checkClassAnnotations(cls);
         for (FunctionSymbol k : cls.members().constructors()) checkedConstructor(k);
         if (cls.isObject()) checkedSuperCall(cls);
         for (Decl member : cls.decl().members()) {
@@ -734,15 +859,7 @@ public final class Checker {
     private ClassContexts classContexts(ClassSymbol cls) {
         ClassContexts cached = classContexts.get(cls);
         if (cached != null) return cached;
-        List<Context.TowerElement> base;
-        if (cls.outer() == null) {
-            LocalOrigin origin = localOrigins.get(cls);
-            base = origin != null ? origin.context().elements() : importing(((KotlinClassSymbol) cls).file());
-        } else {
-            ClassContexts outer = classContexts(cls.outer());
-            base = cls.isInner() ? outer.regular()
-                    : cls.has(Modifier.COMPANION) ? outer.forCompanionObject() : outer.forNestedClasses();
-        }
+        List<Context.TowerElement> base = outerElements(cls);
         // Superclasses' statics and companions, the nearest innermost.
         List<Context.TowerElement> supers = new ArrayList<>();
         for (ClassSymbol sup : superclasses(cls)) {
@@ -774,6 +891,17 @@ public final class Checker {
                 List.copyOf(staticsAndCompanion));
         classContexts.put(cls, result);
         return result;
+    }
+
+    /** The tower a class is declared in: of the outer class, the body a local class is in, or the file. */
+    private List<Context.TowerElement> outerElements(ClassSymbol cls) {
+        if (cls.outer() == null) {
+            LocalOrigin origin = localOrigins.get(cls);
+            return origin != null ? origin.context().elements() : importing(((KotlinClassSymbol) cls).file());
+        }
+        ClassContexts outer = classContexts(cls.outer());
+        return cls.isInner() ? outer.regular()
+                : cls.has(Modifier.COMPANION) ? outer.forCompanionObject() : outer.forNestedClasses();
     }
 
     private Context.ImplicitReceiver receiver(ClassSymbol cls, String label) {

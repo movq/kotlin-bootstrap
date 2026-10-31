@@ -13,10 +13,13 @@ import java.util.stream.Stream;
 
 import kotlinbootstrap.Frontend;
 import kotlinbootstrap.Stdlib;
+import kotlinbootstrap.ast.Annotation;
 import kotlinbootstrap.ast.Decl;
+import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.check.CheckedDelegate;
 import kotlinbootstrap.check.CheckedFunction;
 import kotlinbootstrap.check.Checker;
+import kotlinbootstrap.check.ConstantValue;
 import kotlinbootstrap.check.TExpr;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.KotlinClassSymbol;
@@ -25,6 +28,7 @@ import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.MemberScope;
 import kotlinbootstrap.symbols.PropertySymbol;
+import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeRenderer;
 
@@ -89,7 +93,17 @@ public final class CheckGoldenTests {
             for (FunctionSymbol f : functions) {
                 if (f.source() != decl) continue;
                 out.append("fun ").append(f.name()).append('\n');
+                annotations(() -> checker.check(f), annotationsOf((Decl.Function) decl), 1, out);
                 outline(() -> checker.checkedFunction(f), 1, out);
+            }
+            for (PropertySymbol p : properties) {
+                if (p.source() != decl || !p.has(Modifier.CONST)) continue;
+                out.append("const val ").append(p.name()).append(" = ");
+                try {
+                    out.append(constant(checker.constValue(p))).append('\n');
+                } catch (RuntimeException e) {
+                    out.append("error: ").append(e.getMessage()).append('\n');
+                }
             }
             for (PropertySymbol p : properties) {
                 if (p.source() != decl || !(decl instanceof Decl.Property d) || d.delegate() == null) continue;
@@ -113,6 +127,12 @@ public final class CheckGoldenTests {
         KotlinClassSymbol cls = (KotlinClassSymbol) c;
         String indent = "  ".repeat(depth);
         out.append(indent).append("class ").append(cls.name() != null ? cls.name() : "<anonymous>").append('\n');
+        List<Annotation> classAnnotations = new ArrayList<>(cls.decl().modifiers().annotations());
+        if (cls.decl().primaryConstructor() != null) {
+            classAnnotations.addAll(cls.decl().primaryConstructor().modifiers().annotations());
+            for (Decl.Param p : cls.decl().primaryConstructor().params()) classAnnotations.addAll(p.modifiers().annotations());
+        }
+        annotations(() -> checker.checkClass(cls), classAnnotations, depth + 1, out);
         for (FunctionSymbol k : cls.members().constructors()) {
             out.append(indent).append("  constructor")
                     .append(k.source() instanceof Decl.SecondaryConstructor ? "\n" : " (primary)\n");
@@ -141,6 +161,7 @@ public final class CheckGoldenTests {
             for (FunctionSymbol f : cls.members().functions(d.name())) {
                 if (f.source() != d) continue;
                 out.append(indent).append("  fun ").append(f.name()).append('\n');
+                annotations(() -> checker.check(f), annotationsOf(d), depth + 2, out);
                 outline(() -> checker.checkedFunction(f), depth + 2, out);
             }
         }
@@ -149,6 +170,47 @@ public final class CheckGoldenTests {
                 classOutline(nested, depth + 1, out);
             }
         }
+    }
+
+    private static List<Annotation> annotationsOf(Decl.Function d) {
+        List<Annotation> result = new ArrayList<>(d.modifiers().annotations());
+        for (Decl.Param p : d.params()) result.addAll(p.modifiers().annotations());
+        return result;
+    }
+
+    /** The checked annotations of a declaration, once checked, or the error checking it. */
+    private void annotations(Runnable check, List<Annotation> annotations, int depth, StringBuilder out) {
+        if (annotations.isEmpty()) return;
+        try {
+            check.run();
+            for (Annotation a : annotations) {
+                out.append("  ".repeat(depth)).append("annotation ").append(constant(checker.checkedAnnotation(a)))
+                        .append('\n');
+            }
+        } catch (RuntimeException e) {
+            out.append("  ".repeat(depth)).append("error: ").append(e.getMessage()).append('\n');
+        }
+    }
+
+    private static String constant(ConstantValue value) {
+        return switch (value) {
+            case ConstantValue.Primitive p when p.value() instanceof String s -> '"' + s + '"';
+            case ConstantValue.Primitive p when p.value() instanceof Character c -> "'" + c + "'";
+            case ConstantValue.Primitive p -> p.value() + ": " + type(p.type());
+            case ConstantValue.EnumEntry e -> e.entry().toString();
+            case ConstantValue.ClassLiteral c -> type(c.classType()) + "::class";
+            case ConstantValue.Array a -> {
+                StringJoiner j = new StringJoiner(", ", "[", "]");
+                for (ConstantValue e : a.elements()) j.add(constant(e));
+                yield j.toString();
+            }
+            case ConstantValue.Annotation a -> {
+                StringJoiner j = new StringJoiner(", ", "(", ")");
+                List<ValueParamSymbol> params = a.constructor().signature().params();
+                a.args().forEach((i, v) -> j.add(params.get(i).name() + " = " + constant(v)));
+                yield type(a.type()) + j;
+            }
+        };
     }
 
     /** The outline of what a check gives, or its error. */
