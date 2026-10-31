@@ -300,6 +300,11 @@ final class MemberScopes {
 
     // ==== Members of classes ====
 
+    /** The constructors of a class, with those a builtin gets from its JDK class. */
+    List<FunctionSymbol> constructors(ClassSymbol cls) {
+        return mapped.constructors(cls);
+    }
+
     /** The declared and inherited instance members named so, substituted in terms of the class's type parameters. */
     List<Member> classMembers(ClassSymbol cls, String name, boolean functions) {
         Map<String, List<Member>> byName = (functions ? this.functions : this.properties)

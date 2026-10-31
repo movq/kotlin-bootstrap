@@ -39,3 +39,9 @@ fun renamed
   error: Unresolved reference intValue
 fun hiddenOverride
   error: No applicable sort
+class Quiet
+  constructor (primary)
+    delegate kotlin.Throwable.<init>
+class Plain
+  constructor (primary)
+    delegate kotlin.Throwable.<init>

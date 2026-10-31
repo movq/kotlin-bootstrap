@@ -23,6 +23,7 @@ import kotlinbootstrap.symbols.Visibility;
 import kotlinbootstrap.types.FunctionTypes;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.Substitution;
+import kotlinbootstrap.types.TypeArg;
 
 /**
  * The members of the JDK class a Kotlin builtin is on the JVM that the
@@ -31,7 +32,7 @@ import kotlinbootstrap.types.Substitution;
  * has {@code stream}. Which are visible, hidden or dropped is decided by
  * JvmBuiltInsSignatures; those the builtin declares itself, under the
  * same or another name, are left out. The mapped functions are copies
- * with the builtin as owner. Mapped constructors are not modelled.
+ * with the builtin as owner, as are the few mapped constructors.
  */
 final class JvmMappedScope {
     /** As FIR's JDKMemberStatus. */
@@ -39,6 +40,7 @@ final class JvmMappedScope {
 
     private final SymbolTable table;
     private final Map<ClassSymbol, Map<String, List<FunctionSymbol>>> functions = new HashMap<>();
+    private final Map<ClassSymbol, List<FunctionSymbol>> constructors = new HashMap<>();
     /** The status of each mapped function. */
     private final Map<FunctionSymbol, Status> statuses = new HashMap<>();
     /** For a Java function, the status of the first mapped function it overrides that is not visible; null if none. */
@@ -110,6 +112,36 @@ final class JvmMappedScope {
         return result;
     }
 
+    /**
+     * The constructors of a Kotlin class: the visible ones of its Java
+     * class that it does not declare, then its own, as FIR's
+     * processDeclaredConstructors: {@code Throwable(message, cause,
+     * enableSuppression, writableStackTrace)}.
+     */
+    List<FunctionSymbol> constructors(ClassSymbol kotlinClass) {
+        return constructors.computeIfAbsent(kotlinClass, k -> {
+            List<FunctionSymbol> declared = kotlinClass.members().constructors();
+            ClassSymbol javaClass = javaClass(kotlinClass);
+            if (javaClass == null) return declared;
+            String prefix = JvmDescriptors.internalName(javaClass.id());
+            Set<String> declaredSignatures = new HashSet<>();
+            for (FunctionSymbol f : declared) declaredSignatures.add(JvmDescriptors.descriptor(f));
+            List<FunctionSymbol> result = new ArrayList<>();
+            for (FunctionSymbol f : javaClass.members().constructors()) {
+                if (f.visibility() != Visibility.PUBLIC && f.visibility() != Visibility.PROTECTED) continue;
+                String descriptor = JvmDescriptors.descriptor(f);
+                if (!VISIBLE_CONSTRUCTOR_SIGNATURES.contains(prefix + "." + descriptor)
+                        || declaredSignatures.contains(descriptor)) {
+                    continue;
+                }
+                result.add(mappedFunction(f, javaClass, kotlinClass));
+            }
+            if (result.isEmpty()) return declared;
+            result.addAll(declared);
+            return List.copyOf(result);
+        });
+    }
+
     /** {@code getMessage} of Throwable is the property {@code message}, {@code size} of Collection the property {@code size}. */
     private static boolean isOverrideOfBuiltinPropertyGetter(FunctionSymbol f, ClassSymbol kotlinClass) {
         if (!f.signature().params().isEmpty()) return false;
@@ -142,12 +174,15 @@ final class JvmMappedScope {
         }
     }
 
-    /** A copy of a Java function with the Kotlin class as owner and its type parameters for the Java class's. */
+    /**
+     * A copy of a Java function or constructor with the Kotlin class as
+     * owner and its type parameters for the Java class's.
+     */
     private static FunctionSymbol mappedFunction(FunctionSymbol f, ClassSymbol javaClass, ClassSymbol kotlinClass) {
         Substitution substitution = Substitution.ofTypes(javaClass.typeParams(), kotlinClass.typeParams().stream()
                 .map(tp -> (KType) new KType.TypeParamType(tp, false)).toList());
         return new FunctionSymbol(f.name(), f.origin(), kotlinClass, f.visibility(), f.modality(), f.modifiers(), false,
-                f.source(), f::typeParams,
+                f.source(), f.isConstructor() ? kotlinClass::typeParams : f::typeParams,
                 () -> {
                     List<ValueParamSymbol> params = new ArrayList<>();
                     for (ValueParamSymbol p : f.signature().params()) {
@@ -156,7 +191,10 @@ final class JvmMappedScope {
                     }
                     return new CallableSymbol.Signature(null, List.of(), params);
                 },
-                () -> substitution.apply(f.returnType()));
+                () -> f.isConstructor()
+                        ? new KType.ClassType(kotlinClass, kotlinClass.typeParams().stream()
+                                .map(tp -> TypeArg.of(new KType.TypeParamType(tp, false))).toList(), false)
+                        : substitution.apply(f.returnType()));
     }
 
     // ==== Hidden members ====
@@ -272,6 +310,9 @@ final class JvmMappedScope {
             "replace(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
             "computeIfAbsent(Ljava/lang/Object;Ljava/util/function/Function;)Ljava/lang/Object;",
             "compute(Ljava/lang/Object;Ljava/util/function/BiFunction;)Ljava/lang/Object;");
+
+    private static final Set<String> VISIBLE_CONSTRUCTOR_SIGNATURES = signatures(
+            "java/lang/Throwable", "<init>(Ljava/lang/String;Ljava/lang/Throwable;ZZ)V");
 
     private static final Set<String> MUTABLE_METHOD_SIGNATURES = signatures(
             "java/util/Collection", "removeIf(Ljava/util/function/Predicate;)Z",

@@ -663,7 +663,7 @@ final class CallResolver {
             CallInfo info = level.info();
             switch (level.level()) {
                 case ConstructorsLevel k -> {
-                    for (FunctionSymbol constructor : k.cls().members().constructors()) {
+                    for (FunctionSymbol constructor : scopes.constructors(k.cls())) {
                         Candidate c = candidate(task, level, constructor, k.dispatch(), null, Substitution.EMPTY);
                         c.builder = w -> buildDelegatingCall(w, c);
                         if (k.cls().isInner() && k.dispatch() == null) {
@@ -751,13 +751,13 @@ final class CallResolver {
             }
             switch (found) {
                 case ClassSymbol cls -> {
-                    for (FunctionSymbol k : cls.members().constructors()) {
+                    for (FunctionSymbol k : scopes.constructors(cls)) {
                         consume(task, group, candidate(task, level, k, null, null, Substitution.EMPTY));
                     }
                 }
                 case TypeAliasSymbol alias when Types.lowerBound(alias.expansion()) instanceof KType.ClassType expanded -> {
                     Substitution toExpansion = Substitution.of(expanded.symbol().typeParams(), expanded.args());
-                    for (FunctionSymbol k : expanded.symbol().members().constructors()) {
+                    for (FunctionSymbol k : scopes.constructors(expanded.symbol())) {
                         Candidate c = candidate(task, level, k, null, null, toExpansion);
                         c.typeParams = alias.typeParams();
                         c.typeAlias = alias;

@@ -13,3 +13,7 @@ fun hiddenUsesExtension(s: String) { val a = s.isBlank() }
 fun readOnlyHasNoRemoveIf(l: List<Int>) { l.removeIf { true } }
 fun renamed(n: Number) { n.intValue() }
 fun hiddenOverride(a: ArrayList<Int>) { a.sort(null) }
+
+// Throwable's protected four-argument constructor, mapped from java.lang.Throwable.
+class Quiet(message: String) : Throwable(message, null, false, false)
+class Plain(message: String) : Throwable(message)
