@@ -1,0 +1,6 @@
+class Items
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  fun add
+    call kotlin.collections.MutableList.add: kotlin.Boolean
+      get check.same2.Items.items: kotlin.collections.List<kotlin.Byte>

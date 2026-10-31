@@ -3,6 +3,7 @@ package kotlinbootstrap.resolve;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,7 +52,7 @@ public final class Resolver {
     private final SymbolTable table;
     private final TypeResolver types;
     private final List<FileContext> files = new ArrayList<>();
-    private final Map<Object, Symbol> expectedDeclarations = new HashMap<>();
+    private final Map<Object, Symbol> expectedDeclarations = new IdentityHashMap<>();
     private final Map<String, ClassifierSymbol> builtinClassifiers = new HashMap<>();
     private final Map<CallableSymbol, DeclarationContext> contexts = new HashMap<>();
     private BodyTyper bodyTyper;

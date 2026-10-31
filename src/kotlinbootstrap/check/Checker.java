@@ -3,6 +3,7 @@ package kotlinbootstrap.check;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -48,9 +49,13 @@ public final class Checker {
     private final TypeSystem ts;
     private final ArgumentChecker arguments;
     private final SyntheticCalls synthetic;
-    /** Checked bodies by AST node: a {@link CheckedFunction} or, for an initializer, a {@link TExpr}. */
-    private final Map<Object, Object> results = new HashMap<>();
-    private final Map<Object, RuntimeException> failures = new HashMap<>();
+    /**
+     * Checked bodies by AST node: a {@link CheckedFunction} or, for an
+     * initializer, a {@link TExpr}. By identity, as equal nodes may be in
+     * different files.
+     */
+    private final Map<Object, Object> results = new IdentityHashMap<>();
+    private final Map<Object, RuntimeException> failures = new IdentityHashMap<>();
     private final MemberScopes memberScopes;
     private final SamResolver sam;
     private final ResolutionStages stages;
