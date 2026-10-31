@@ -180,7 +180,7 @@ final class ArgumentChecker {
             return argumentType;
         }
         KType.ClassType chosen = null;
-        for (KType.ClassType bound : collectUpperBounds(argumentType)) {
+        for (KType.ClassType bound : collectUpperBounds(Types.lowerBound(argumentType))) {
             if (ts.asSupertype(bound, expectedClass.symbol()) == null) continue;
             if (chosen != null) return argumentType;
             chosen = bound;

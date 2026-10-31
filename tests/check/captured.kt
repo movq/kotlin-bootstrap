@@ -107,3 +107,8 @@ interface NodeHolder<S : Node> {
 fun nodeChildren(h: NodeHolder<*>) = h.node()?.children
 
 fun <T : Any> notNullReceiver(t: T?) = t?.let { it }
+
+// A flexible type parameter is captured from the bounds of its lower bound, not null.
+interface Sym<T> { val ok: Boolean }
+fun Sym<*>.isOk(): Boolean = ok
+fun <S : Sym<*>> flexibleReceiver(set: MutableSet<S>) { set.removeIf { s -> s.isOk() } }

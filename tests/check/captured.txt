@@ -82,3 +82,11 @@ fun nodeChildren
 fun notNullReceiver
   call kotlin.let<T, T>: T
     lambda: (T) -> T
+class Sym
+fun isOk
+  get check.captured.Sym.ok: kotlin.Boolean
+fun flexibleReceiver
+  call kotlin.collections.MutableCollection.removeIf: kotlin.Boolean
+    sam: java.util.function.Predicate<in S!>!
+      lambda: (S!) -> kotlin.Boolean
+        call check.captured.isOk: kotlin.Boolean
