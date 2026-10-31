@@ -29,6 +29,17 @@ public final class Overrides {
         return result;
     }
 
+    /** Whether a parameter has a default value, declared or in a function the function overrides. */
+    public static boolean hasDefaultValue(FunctionSymbol f, int index) {
+        if (f.signature().params().get(index).hasDefault()) return true;
+        for (CallableSymbol o : overridden(f)) {
+            if (o instanceof FunctionSymbol of && index < of.signature().params().size() && hasDefaultValue(of, index)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static void collect(CallableSymbol member, ClassSymbol cls, Substitution subst,
                                 List<CallableSymbol> result, Set<ClassSymbol> seen) {
         for (KType t : cls.supertypes()) {
@@ -95,6 +106,8 @@ public final class Overrides {
             }
         }
         for (int i = 0; i < sa.params().size(); i++) {
+            // A vararg parameter has an array type.
+            if (sa.params().get(i).isVararg() != sb.params().get(i).isVararg()) return false;
             if (!sameType(aSubst.apply(sa.params().get(i).type()),
                     substitute(sb.params().get(i).type(), bSubst, fnSubst))) {
                 return false;

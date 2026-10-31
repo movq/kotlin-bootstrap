@@ -417,8 +417,9 @@ public final class JavaSourceClasses implements ClassFinder {
                     List<String> path = List.of(m.toString().split("\\."));
                     ClassifierSymbol first = scope.findClassifier(path.getFirst());
                     if (first == null) yield table.findQualifiedClassifier(path);
+                    // In Java, member classes are inherited.
                     for (String name : path.subList(1, path.size())) {
-                        first = first == null ? null : SymbolTable.nestedClassifier(first, name);
+                        first = first instanceof ClassSymbol cls ? SymbolTable.findInheritedClassifier(cls, name) : null;
                     }
                     yield first;
                 }

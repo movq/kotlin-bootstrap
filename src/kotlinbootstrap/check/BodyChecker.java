@@ -948,14 +948,15 @@ final class BodyChecker {
 
     /**
      * Applies the action to the read of the variable a name or member
-     * access refers to; for {@code a?.b}, inside the safe call.
+     * access refers to; for {@code a?.b}, inside the safe call. Another
+     * expression is no variable, but may be the receiver of {@code +=}.
      */
     private TExpr onVariable(Expr target, Context ctx, Mode mode, Function<TExpr, TExpr> action) {
         return switch (target) {
             case Expr.Name n -> action.apply(name(n, ctx, mode));
             case Expr.Member m -> onReceiver(m.pos(), receiver(m.receiver(), ctx), m.safe(), r -> action.apply(
                     completer.completeCall(resolved(variable(m.pos(), m.name(), r), ctx), mode)));
-            default -> throw error(target.pos(), "Unsupported assignment target");
+            default -> action.apply(expr(target, ctx, mode));
         };
     }
 

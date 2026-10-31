@@ -36,7 +36,8 @@ import kotlinbootstrap.types.Variance;
  * parameters of their classes substituted by the receiver's arguments.
  * Members are the original symbols, not substituted copies. Where several
  * supertypes have a member with the same signature, as for kotlinc's
- * intersection overrides, the first is kept.
+ * intersection overrides, the one with the most specific return type is
+ * kept, else the first.
  */
 final class MemberScopes {
     /** A member, with the substitution from the type parameters of its class (and outer classes) for the receiver. */
@@ -108,6 +109,8 @@ final class MemberScopes {
         FunctionSymbol f = (FunctionSymbol) getter.symbol();
         if (!f.typeParams().isEmpty() || !f.signature().params().isEmpty() || f.isStatic()) return null;
         if (!hasJavaOrigin(f)) return null;
+        // A getter whose type is being inferred has an error type, which makes no usable property.
+        if (f.isReturnTypeComputing()) return null;
         // void getters are not properties.
         if (f.returnType() instanceof KType.ClassType c && c.symbol().id().fqName().equals("kotlin.Unit")) return null;
         KType type = getter.substitution().apply(f.returnType());
@@ -335,7 +338,9 @@ final class MemberScopes {
 
     /**
      * Adds a member unless one of the others is it or overrides it, removing
-     * those it overrides. Of members with the same signature, the first stays.
+     * those it overrides. Of members with the same signature, the one with
+     * the more specific return type stays, as FIR's selectMostSpecificMember,
+     * else the first.
      */
     private void add(List<Member> members, Member m) {
         for (Member e : members) {
@@ -343,10 +348,21 @@ final class MemberScopes {
         }
         Set<CallableSymbol> overriddenByM = overridden(m.symbol());
         members.removeIf(e -> overriddenByM.contains(e.symbol()));
-        for (Member e : members) {
-            if (Overrides.sameSignature(e.symbol(), e.substitution(), m.symbol(), m.substitution())) return;
+        for (int i = 0; i < members.size(); i++) {
+            Member e = members.get(i);
+            if (Overrides.sameSignature(e.symbol(), e.substitution(), m.symbol(), m.substitution())) {
+                if (hasMoreSpecificReturnType(m, e)) members.set(i, m);
+                return;
+            }
         }
         members.add(m);
+    }
+
+    private boolean hasMoreSpecificReturnType(Member m, Member than) {
+        if (!m.symbol().typeParams().isEmpty() || !than.symbol().typeParams().isEmpty()) return false;
+        KType mine = m.substitution().apply(m.symbol().returnType());
+        KType theirs = than.substitution().apply(than.symbol().returnType());
+        return ts.isSubtype(mine, theirs) && !ts.isSubtype(theirs, mine);
     }
 
     /** All the members a member overrides, directly or not. */

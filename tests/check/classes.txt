@@ -151,3 +151,26 @@ class Collector
   fun add
     call kotlin.collections.MutableList.add: kotlin.Boolean
       get check.classes.Collector.items: kotlin.collections.List<kotlin.String>
+fun checkState
+fun checkState
+fun useCheckState
+  call check.classes.checkState: kotlin.Unit
+fun removeFirst
+  val it: kotlin.collections.MutableIterator<kotlin.String>
+    call kotlin.collections.MutableCollection.iterator: kotlin.collections.MutableIterator<kotlin.String>
+  call kotlin.collections.Iterator.next: kotlin.String
+  call kotlin.collections.MutableIterator.remove: kotlin.Unit
+class WithDefault
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  fun f
+    default x
+class OverridesDefault
+  constructor (primary)
+    delegate check.classes.WithDefault.<init>
+  fun f
+    call kotlin.Int.plus: kotlin.Int
+  fun plusAssign
+  fun g
+    call check.classes.OverridesDefault.plusAssign: kotlin.Unit
+    call check.classes.OverridesDefault.f: kotlin.Int

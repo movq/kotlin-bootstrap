@@ -121,3 +121,34 @@ open class Collector {
         items.add(item)
     }
 }
+
+// A vararg overload is not an override of a non-vararg one.
+fun checkState(value: Boolean, message: String) {}
+fun checkState(value: Boolean, vararg messages: String) {}
+
+fun useCheckState() {
+    checkState(true, "a", "b")
+}
+
+// Among same-signature members, the one with the more specific return type wins.
+fun removeFirst(list: MutableList<String>) {
+    val it = list.iterator()
+    it.next()
+    it.remove()
+}
+
+// A default value is inherited from the overridden function.
+open class WithDefault {
+    open fun f(x: Int = 1): Int = x
+}
+
+class OverridesDefault : WithDefault() {
+    override fun f(x: Int): Int = x + 1
+
+    operator fun plusAssign(other: Int) {}
+
+    fun g(): Int {
+        this += 1
+        return f()
+    }
+}

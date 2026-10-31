@@ -257,7 +257,7 @@ final class ResolutionStages {
         int defaults = 0;
         for (int p = 0; p < params.size(); p++) {
             if (mapped[p]) continue;
-            if (params.get(p).hasDefault()) {
+            if (Overrides.hasDefaultValue(f, p)) {
                 defaults++;
             } else if (!params.get(p).isVararg()) {
                 mappingError(c, "No value passed for parameter " + params.get(p).name());

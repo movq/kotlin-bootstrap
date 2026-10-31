@@ -111,8 +111,8 @@ fun l3
     lambda: kotlin.collections.MutableList<kotlin.collections.List<kotlin.Int>>.() -> kotlin.Unit
       call kotlin.collections.MutableList.add: kotlin.Boolean
         call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
-      val <iterator>: kotlin.collections.Iterator<kotlin.collections.List<kotlin.Int>>
-        call kotlin.collections.List.iterator: kotlin.collections.Iterator<kotlin.collections.List<kotlin.Int>>
+      val <iterator>: kotlin.collections.MutableIterator<kotlin.collections.List<kotlin.Int>>
+        call kotlin.collections.MutableCollection.iterator: kotlin.collections.MutableIterator<kotlin.collections.List<kotlin.Int>>
       call kotlin.collections.Iterator.hasNext: kotlin.Boolean
       val x: kotlin.collections.List<kotlin.Int>
         call kotlin.collections.Iterator.next: kotlin.collections.List<kotlin.Int>
