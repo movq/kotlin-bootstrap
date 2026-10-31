@@ -28,9 +28,12 @@ final class TypeVariableDependencies {
 
     private final Set<TypeVariable> relatedToAllOutputTypes = new HashSet<>();
     private final Set<TypeVariable> relatedToTopLevelType = new HashSet<>();
+    private final Set<TypeVariable> relatedToOuterTypeVariables = new HashSet<>();
 
+    /** @param outerTypeVariables those of the outer system in PCLA; nullable */
     TypeVariableDependencies(Map<TypeVariable, VariableWithConstraints> notFixed,
-                             List<? extends PostponedAtom> postponedArguments, KType topLevelType) {
+                             List<? extends PostponedAtom> postponedArguments, KType topLevelType,
+                             Set<TypeVariable> outerTypeVariables) {
         this.notFixed = notFixed;
         computeConstraintEdges();
         computePostponedArgumentEdges(postponedArguments);
@@ -38,6 +41,13 @@ final class TypeVariableDependencies {
         if (topLevelType != null) {
             forAllMyTypeVariables(topLevelType, v -> addAllRelatedNodes(relatedToTopLevelType, v, true));
         }
+        if (outerTypeVariables != null) {
+            for (TypeVariable v : outerTypeVariables) addAllRelatedNodes(relatedToOuterTypeVariables, v, true);
+        }
+    }
+
+    boolean isRelatedToOuterTypeVariable(TypeVariable variable) {
+        return relatedToOuterTypeVariables.contains(variable);
     }
 
     boolean isVariableRelatedToTopLevelType(TypeVariable variable) {

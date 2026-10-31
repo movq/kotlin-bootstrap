@@ -44,9 +44,10 @@ final class VariableFixationFinder {
         }
     }
 
-    record VariableForFixation(TypeVariable variable, boolean hasProperConstraint) {
+    record VariableForFixation(TypeVariable variable, boolean hasProperConstraint,
+                               boolean hasDependencyOnOuterTypeVariable) {
         boolean isReady() {
-            return hasProperConstraint;
+            return hasProperConstraint && !hasDependencyOnOuterTypeVariable;
         }
     }
 
@@ -62,7 +63,8 @@ final class VariableFixationFinder {
         if (allTypeVariables.isEmpty()) return null;
         // Only partial completion keeps the variables of the return type for the outer call.
         TypeVariableDependencies dependencies = new TypeVariableDependencies(c.notFixedTypeVariables(),
-                postponedArguments, mode.preventFixingTypeVariablesRelatedToReturnType ? topLevelType : null);
+                postponedArguments, mode.preventFixingTypeVariablesRelatedToReturnType ? topLevelType : null,
+                c.outerTypeVariables());
         TypeVariable candidate = null;
         int best = 0;
         for (TypeVariable v : allTypeVariables) {
@@ -73,11 +75,13 @@ final class VariableFixationFinder {
             }
         }
         if ((best & Quality.ALLOWED.mask()) == 0) return null;
-        return new VariableForFixation(candidate, (best & Quality.HAS_PROPER_CONSTRAINTS.mask()) != 0);
+        return new VariableForFixation(candidate, (best & Quality.HAS_PROPER_CONSTRAINTS.mask()) != 0,
+                (best & Quality.HAS_NO_OUTER_TYPE_VARIABLE_DEPENDENCY.mask()) == 0);
     }
 
     boolean typeVariableHasProperConstraint(TypeVariable variable) {
-        int readiness = readiness(variable, new TypeVariableDependencies(c.notFixedTypeVariables(), List.of(), null));
+        int readiness = readiness(variable,
+                new TypeVariableDependencies(c.notFixedTypeVariables(), List.of(), null, c.outerTypeVariables()));
         int mask = Quality.ALLOWED.mask() | Quality.HAS_PROPER_CONSTRAINTS.mask();
         return (readiness & mask) == mask;
     }
@@ -94,7 +98,7 @@ final class VariableFixationFinder {
         int readiness = 0;
         readiness |= bit(Quality.ALLOWED, true);
         readiness |= bit(Quality.HAS_PROPER_CONSTRAINTS, hasProperConstraints);
-        readiness |= bit(Quality.HAS_NO_OUTER_TYPE_VARIABLE_DEPENDENCY, true);
+        readiness |= bit(Quality.HAS_NO_OUTER_TYPE_VARIABLE_DEPENDENCY, !dependencies.isRelatedToOuterTypeVariable(v));
         readiness |= bit(Quality.HAS_CAPTURED_UPPER_BOUND_WITH_SELF_TYPES,
                 allSelfTypeBased && !isReified(v) && hasDirectConstraintToNotFixedVariable(constraints));
         readiness |= bit(Quality.HAS_PROPER_NON_SELF_TYPE_BASED_CONSTRAINT, hasProperConstraints && !allSelfTypeBased);
@@ -151,7 +155,8 @@ final class VariableFixationFinder {
     }
 
     private boolean isNotFixedVariable(KType t) {
-        return c.notFixedTypeVariables().containsKey(InferenceTypes.typeVariable(t));
+        TypeVariable v = InferenceTypes.typeVariable(t);
+        return c.notFixedTypeVariables().containsKey(v) && !c.isCountedAsProperType(v);
     }
 
     private boolean hasDirectConstraintToNotFixedVariable(List<Constraint> constraints) {

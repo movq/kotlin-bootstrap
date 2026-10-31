@@ -15,7 +15,7 @@ import kotlinbootstrap.types.KType;
 public final class CheckedFunction {
     private final CallableSymbol symbol;
     private final String label;
-    private final KType receiverType;
+    private KType receiverType;
     private final List<LocalVariable> contextParams;
     private final List<LocalVariable> params;
     private KType returnType;
@@ -47,6 +47,11 @@ public final class CheckedFunction {
 
     public KType receiverType() {
         return receiverType;
+    }
+
+    /** For a lambda analyzed with PCLA, whose receiver's type has variables substituted on completion. */
+    void setReceiverType(KType receiverType) {
+        this.receiverType = receiverType;
     }
 
     public List<LocalVariable> contextParams() {

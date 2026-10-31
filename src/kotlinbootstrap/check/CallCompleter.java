@@ -51,14 +51,28 @@ final class CallCompleter {
     private TExpr completeCall(Candidate candidate, Mode mode, boolean partialInsteadOfFull) {
         for (PostponedArgument p : candidate.postponedArguments) p.activate();
         KType initialType = candidate.returnType();
+        PclaSession session = checker.inferenceSession();
+        // As FIR's mightBeAnalyzedAndCompletedIndependently: a call expected to have a type of the shared
+        // variables shares them.
+        if (session != null && !candidate.system.usesOuterSystem() && mode instanceof Mode.WithExpectedType w
+                && session.containsNotFixedTypeVariables(w.type())) {
+            candidate.system.integrateIntoOuterSystem(session.currentCommonSystem());
+        }
         addConstraintFromExpectedType(candidate, initialType, mode);
         CompletionMode completionMode = mode.forceFullCompletion() ? CompletionMode.FULL
                 : CompletionModeCalculator.compute(candidate.system, initialType, notAnalyzedPostponedArguments(candidate));
         if (partialInsteadOfFull && completionMode == CompletionMode.FULL) completionMode = CompletionMode.PARTIAL;
+        // In a PCLA lambda, a call that shares its system is completed with the call the lambda is passed to.
+        if (completionMode == CompletionMode.FULL && candidate.system.usesOuterSystem()) {
+            completionMode = CompletionMode.PCLA_POSTPONED_CALL;
+        }
         runCompletion(candidate, completionMode, initialType);
         TExpr result;
-        if (completionMode == CompletionMode.PARTIAL) {
-            result = new TExpr.Unresolved(candidate.pos, initialType, candidate);
+        if (completionMode != CompletionMode.FULL) {
+            KType type = session == null ? initialType
+                    : session.updatedType(initialType, candidate.system, mode instanceof Mode.Receiver);
+            if (session != null) session.processPartiallyResolvedCall(candidate, completionMode);
+            result = new TExpr.Unresolved(candidate.pos, type, candidate);
         } else {
             ConstraintSystem system = candidate.system;
             system.prepareForReading();
@@ -68,6 +82,7 @@ final class CallCompleter {
             }
             result = candidate.builder.apply(new CompletionWriter(ts, system.buildCurrentSubstitutor()));
         }
+        // A postponed call of a PCLA lambda is not seen again.
         checker.dfa().exitCall(candidate, result, completionMode != CompletionMode.PARTIAL);
         // A property read has the type data flow knows; one with fresh variables cannot be stable.
         return result instanceof TExpr.Unresolved ? result : checker.dfa().smartCast(result);
@@ -148,7 +163,7 @@ final class CallCompleter {
             }
 
             @Override
-            public void analyze(PostponedAtom argument) {
+            public void analyze(PostponedAtom argument, boolean withPclaSession) {
                 Candidate candidate = candidates.getLast();
                 for (Candidate c : candidates.reversed()) {
                     if (notAnalyzedPostponedArguments(c).contains(argument)) {
@@ -156,7 +171,12 @@ final class CallCompleter {
                         break;
                     }
                 }
-                checker.analyzePostponed(system, (PostponedArgument) argument, candidate);
+                checker.analyzePostponed(system, (PostponedArgument) argument, candidate, withPclaSession);
+            }
+
+            @Override
+            public boolean isLambda(PostponedAtom argument) {
+                return argument instanceof LambdaAtom;
             }
 
             @Override
@@ -198,6 +218,7 @@ final class CallCompleter {
         if (visited.put(candidate, true) != null) return;
         candidates.visit(candidate);
         for (TExpr argument : candidate.arguments) traverseArgument(argument, candidates, postponed, visited);
+        for (Candidate c : candidate.postponedPclaCalls) traverse(c, candidates, postponed, visited);
     }
 
     private static void traverseArgument(TExpr argument, Visitor<Candidate> candidates,

@@ -2,8 +2,10 @@ package kotlinbootstrap.check;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -54,6 +56,8 @@ final class BodyChecker {
     private String calleeNameForLambda;
     /** Whether checking the arguments of an annotation. */
     private boolean insideAnnotation;
+    /** The PCLA session of the lambda being analyzed, as FIR's inferenceSession; nullable. */
+    private PclaSession inferenceSession;
 
     BodyChecker(Checker owner, SourceFile source) {
         this.owner = owner;
@@ -62,7 +66,7 @@ final class BodyChecker {
         this.dfa = new DataFlowAnalyzer(owner);
         this.completer = new CallCompleter(ts, this);
         this.calls = new CallResolver(owner, completer,
-                new OverloadByLambdaReturnType(owner.overloads(), completer, this), dfa);
+                new OverloadByLambdaReturnType(owner.overloads(), completer, this), dfa, () -> inferenceSession);
     }
 
     CheckException error(int pos, String message) {
@@ -83,6 +87,10 @@ final class BodyChecker {
 
     CallResolver calls() {
         return calls;
+    }
+
+    PclaSession inferenceSession() {
+        return inferenceSession;
     }
 
     CallCompleter completer() {
@@ -515,8 +523,19 @@ final class BodyChecker {
             case Expr.Super s -> superReceiver(s, ctx);
             case Expr.Name n when ctx.findLocal(n.name()) == null -> qualifiedName(n.pos(), n.name(), null, ctx);
             case Expr.Member m when !m.safe() -> qualifiedName(m.pos(), m.name(), receiver(m.receiver(), ctx), ctx);
-            default -> new CallInfo.ValueReceiver(expr(e, ctx, Mode.RECEIVER));
+            default -> new CallInfo.ValueReceiver(semiFixReceiver(expr(e, ctx, Mode.RECEIVER)));
         };
+    }
+
+    /**
+     * In a lambda analyzed with PCLA, a receiver of a variable's type has
+     * the variable semi-fixed, to give it a member scope, as FIR's
+     * updateReturnTypeWithCurrentSubstitutor does for ReceiverResolution.
+     */
+    private TExpr semiFixReceiver(TExpr value) {
+        if (inferenceSession == null || value instanceof TExpr.Unresolved) return value;
+        KType type = inferenceSession.semiFixReceiverType(value.type());
+        return type == value.type() ? value : new TExpr.SmartCast(value.pos(), type, value);
     }
 
     /**
@@ -730,7 +749,7 @@ final class BodyChecker {
         if (mode instanceof Mode.ContextDependent) return argument;
         KType expected = mode instanceof Mode.WithExpectedType w ? w.type() : null;
         KType parameterType = expected != null && !isUnitOrFlexibleUnit(expected) ? expected : ts.any();
-        Candidate candidate = synthetic().acceptCall(r.pos(), parameterType, argument,
+        Candidate candidate = synthetic().acceptCall(inferenceSession, r.pos(), parameterType, argument,
                 w -> w.writeArgument(argument, parameterType));
         if (reference.atom.error() != null) throw error(r.pos(), reference.atom.error());
         return completer.completeCall(candidate, Mode.INDEPENDENT);
@@ -1131,7 +1150,7 @@ final class BodyChecker {
             return new TExpr.If(i.pos(), exhaustive ? then.type() : unit(), condition, then, otherwise);
         }
         List<TExpr> bodies = exhaustive ? List.of(then, otherwise) : List.of(then);
-        Candidate candidate = synthetic().whenCall(i.pos(), bodies, null);
+        Candidate candidate = synthetic().whenCall(inferenceSession, i.pos(), bodies, null);
         candidate.builder = w -> new TExpr.If(i.pos(), exhaustive ? w.callType(candidate, candidate.returnType()) : unit(),
                 condition, w.writeArgument(then, SyntheticCalls.parameterType(candidate, 0)),
                 otherwise == null ? null : w.writeArgument(otherwise, SyntheticCalls.parameterType(candidate, 1)));
@@ -1192,7 +1211,7 @@ final class BodyChecker {
             return new TExpr.When(w.pos(), exhaustive ? bodies.getFirst().type() : unit(), subject,
                     List.of(new TExpr.WhenBranch(conditions.getFirst(), bodies.getFirst())), exhaustive);
         }
-        Candidate candidate = synthetic().whenCall(w.pos(), bodies, null);
+        Candidate candidate = synthetic().whenCall(inferenceSession, w.pos(), bodies, null);
         candidate.builder = wr -> {
             List<TExpr.WhenBranch> branches = new ArrayList<>();
             for (int i = 0; i < bodies.size(); i++) {
@@ -1354,7 +1373,7 @@ final class BodyChecker {
         }
         dfa.join(exits);
         TExpr[] finallyBlock = new TExpr[1];
-        Candidate candidate = synthetic().tryCall(t.pos(), bodies, null);
+        Candidate candidate = synthetic().tryCall(inferenceSession, t.pos(), bodies, null);
         candidate.builder = w -> {
             List<TExpr.CatchClause> catches = new ArrayList<>();
             for (int i = 0; i < params.size(); i++) {
@@ -1485,7 +1504,7 @@ final class BodyChecker {
         if (!Types.contains(right.type(), t -> t instanceof KType.TypeVariableType || t instanceof KType.IntegerLiteral)) {
             result = new TExpr.Equality(pos, bool(), equalityOp, left, right);
         } else {
-            Candidate candidate = synthetic().equalityCall(pos, left, right, null);
+            Candidate candidate = synthetic().equalityCall(inferenceSession, pos, left, right, null);
             candidate.builder = w -> new TExpr.Equality(pos, bool(), equalityOp,
                     w.writeArgument(left, ts.nullableAny()), w.writeArgument(right, ts.nullableAny()));
             result = completer.completeCall(candidate, mode);
@@ -1506,7 +1525,7 @@ final class BodyChecker {
         Mode rhsMode = expected == null ? Mode.DEPENDENT : new Mode.WithExpectedType(expected, last, false, true);
         TExpr rhs = expr(b.right(), ctx, rhsMode);
 
-        Candidate candidate = synthetic().elvisCall(b.pos(), lhs, rhs, null);
+        Candidate candidate = synthetic().elvisCall(inferenceSession, b.pos(), lhs, rhs, null);
         candidate.builder = w -> new TExpr.Elvis(b.pos(), w.callType(candidate, candidate.returnType()),
                 w.writeArgument(lhs, SyntheticCalls.parameterType(candidate, 0)),
                 w.writeArgument(rhs, SyntheticCalls.parameterType(candidate, 1)));
@@ -1545,7 +1564,7 @@ final class BodyChecker {
 
     private TExpr checkNotNull(Expr.Postfix p, Context ctx, Mode mode) {
         TExpr arg = expr(p.expr(), ctx, Mode.DEPENDENT);
-        Candidate candidate = synthetic().checkNotNullCall(p.pos(), arg, null);
+        Candidate candidate = synthetic().checkNotNullCall(inferenceSession, p.pos(), arg, null);
         candidate.builder = w -> new TExpr.NotNull(p.pos(), w.callType(candidate, candidate.returnType()),
                 w.writeArgument(arg, SyntheticCalls.parameterType(candidate, 0)));
         TExpr result = completer.completeCall(candidate, mode);
@@ -1692,7 +1711,7 @@ final class BodyChecker {
         if (mode instanceof Mode.ContextDependent) return argument;
         KType expected = mode instanceof Mode.WithExpectedType w ? adaptExpectedTypeForLambda(w.type(), lambda) : null;
         KType parameterType = expected != null && !isUnitOrFlexibleUnit(expected) ? expected : ts.any();
-        Candidate candidate = synthetic().acceptCall(e.pos(), parameterType, argument,
+        Candidate candidate = synthetic().acceptCall(inferenceSession, e.pos(), parameterType, argument,
                 w -> w.writeArgument(argument, parameterType));
         dfa.enterCallArguments(List.of(e));
         TExpr result = completer.completeCall(candidate, Mode.INDEPENDENT);
@@ -1729,12 +1748,17 @@ final class BodyChecker {
                 true, f.modifiers().has(Modifier.SUSPEND));
     }
 
-    /** Analyzes a lambda or callable reference during the completion of its call. */
-    void analyzePostponed(ConstraintSystem system, PostponedArgument argument, Candidate candidate) {
+    /**
+     * Analyzes a lambda or callable reference during the completion of its call.
+     *
+     * @param withPclaSession whether to analyze the lambda with PCLA
+     */
+    void analyzePostponed(ConstraintSystem system, PostponedArgument argument, Candidate candidate,
+                          boolean withPclaSession) {
         switch (argument) {
-            case LambdaAtom l -> analyzeLambda(system, l, candidate);
+            case LambdaAtom l -> analyzeLambda(system, l, candidate, withPclaSession);
             case LambdaWithTypeVariableAtom l ->
-                    analyzeLambda(system, arguments().transformToResolvedLambda(system, l, null), candidate);
+                    analyzeLambda(system, arguments().transformToResolvedLambda(system, l, null), candidate, false);
             case CallableReferenceAtom r -> processCallableReference(r, candidate);
             default -> throw new IllegalStateException("Unexpected postponed argument " + argument);
         }
@@ -1746,8 +1770,8 @@ final class BodyChecker {
      * arguments for its return type. With the return type not known yet,
      * they are checked as arguments of the call, to be completed with it.
      */
-    private void analyzeLambda(ConstraintSystem system, LambdaAtom atom, Candidate candidate) {
-        applyLambdaResults(system, atom, candidate, analyzeLambdaBody(system, atom));
+    private void analyzeLambda(ConstraintSystem system, LambdaAtom atom, Candidate candidate, boolean withPclaSession) {
+        applyLambdaResults(system, atom, candidate, analyzeLambdaBody(system, atom, candidate, withPclaSession));
     }
 
     /**
@@ -1759,10 +1783,19 @@ final class BodyChecker {
     record LambdaResults(TExpr.Lambda lambda, List<TExpr> returnValues, TExpr last, boolean explicitEmptyReturn) {
     }
 
-    /** Checks the body of a lambda, with the types the system gives it now. */
-    LambdaResults analyzeLambdaBody(ConstraintSystem system, LambdaAtom atom) {
+    /**
+     * Checks the body of a lambda, with the types the system gives it now.
+     * With PCLA, its calls share a system with the call, and its parameters
+     * may have types of variables not fixed.
+     */
+    LambdaResults analyzeLambdaBody(ConstraintSystem system, LambdaAtom atom, Candidate candidate,
+                                    boolean withPclaSession) {
         LambdaExpression lambda = atom.expression;
-        Substitution current = system.buildCurrentSubstitutor();
+        if (inferenceSession != null && atom.receiverType != null) {
+            KType receiverType = Types.lowerBound(atom.receiverType);
+            if (receiverType instanceof KType.TypeVariableType v) inferenceSession.semiFix(v.variable(), system);
+        }
+        Substitution current = currentSubstitutor(system);
         KType receiver = atom.receiverType == null ? null : current.apply(atom.receiverType);
         List<KType> parameters = new ArrayList<>();
         if (atom.coerceFirstParameterToExtensionReceiver) parameters.add(receiver);
@@ -1773,9 +1806,13 @@ final class BodyChecker {
             expectedReturnType = current.apply(atom.returnType);
         } else if (willEventuallyBecomeUnit(system, atom.returnType)) {
             expectedReturnType = unit();
+        } else if (withPclaSession) {
+            // With PCLA, the values returned share the system too, so they are completed as they can be.
+            expectedReturnType = current.apply(atom.returnType);
         } else {
             expectedReturnType = null;
         }
+        boolean pcla = withPclaSession || inferenceSession != null;
 
         // The parameters.
         Context outer = lambda.context;
@@ -1785,7 +1822,7 @@ final class BodyChecker {
         List<Decl.Param> declared = lambda.expr instanceof Expr.AnonymousFunction f ? f.function().params() : List.of();
         int count = lambda.isLambda ? bindings.size() : declared.size();
         if (lambda.isLambda && count == 0 && atom.parameterTypes.size() == 1) {
-            LocalVariable it = new LocalVariable("it", lambdaInputType(lambda, parameters.getFirst(), false),
+            LocalVariable it = new LocalVariable("it", lambdaInputType(lambda, parameters.getFirst(), false, pcla),
                     LocalVariable.Kind.PARAMETER, false, null);
             params.add(it);
             scope.add(it);
@@ -1795,16 +1832,16 @@ final class BodyChecker {
             if (i >= parameters.size()) throw error(pos, "The lambda has more parameters than expected");
             String name = lambda.isLambda && bindings.get(i).destructuring() != null ? "<destruct>"
                     : lambda.isLambda ? bindings.get(i).name() : declared.get(i).name();
-            LocalVariable v = new LocalVariable(name, lambdaInputType(lambda, parameters.get(i), false),
+            LocalVariable v = new LocalVariable(name, lambdaInputType(lambda, parameters.get(i), false, pcla),
                     LocalVariable.Kind.PARAMETER, false, null);
             params.add(v);
             if (!name.equals("_") && !name.equals("<destruct>")) scope.add(v);
         }
-        if (receiver != null) receiver = lambdaInputType(lambda, receiver, true);
+        if (receiver != null) receiver = lambdaInputType(lambda, receiver, true, pcla);
         // The context parameters have no names: they are only context values.
         List<LocalVariable> contextParams = new ArrayList<>();
         for (KType t : atom.contextParameterTypes) {
-            contextParams.add(new LocalVariable("_", lambdaInputType(lambda, current.apply(t), false),
+            contextParams.add(new LocalVariable("_", lambdaInputType(lambda, current.apply(t), false, pcla),
                     LocalVariable.Kind.PARAMETER, false, null));
         }
 
@@ -1823,6 +1860,11 @@ final class BodyChecker {
         TExpr last = null;
         Contract.InvocationKind invocationKind = invocationKind(atom);
         DataFlowAnalyzer.LambdaFrame dataFlow = dfa.enterLambda(lambda.expr, lambda.creation, invocationKind);
+        PclaSession outerSession = inferenceSession;
+        PclaSession session = withPclaSession ? new PclaSession(ts, candidate, system) : null;
+        if (session != null) inferenceSession = session;
+        ConstraintSystem outerCommonSystem = session == null && outerSession != null
+                ? outerSession.enterLambdaCompletion(system) : null;
         try {
             if (lambda.expr instanceof Expr.Lambda l) {
                 List<TExpr> prologue = new ArrayList<>();
@@ -1859,8 +1901,11 @@ final class BodyChecker {
             }
         } finally {
             calleeNameForLambda = outerCallee;
+            inferenceSession = outerSession;
+            if (outerCommonSystem != null) outerSession.exitLambdaCompletion(outerCommonSystem);
             dfa.exitLambda(dataFlow, function, lambda.creation, invocationKind);
         }
+        if (session != null) session.applyResultsToMainCandidate();
         function.setBody(body);
 
         boolean explicitEmptyReturn = frame.returns.contains(null);
@@ -1931,16 +1976,26 @@ final class BodyChecker {
         }
     }
 
+    /** The fixed variables, and with PCLA the semi-fixed ones, replaced by their types. */
+    private Substitution currentSubstitutor(ConstraintSystem system) {
+        Substitution fixed = system.buildCurrentSubstitutor();
+        if (inferenceSession == null || inferenceSession.semiFixedVariables.isEmpty()) return fixed;
+        Map<Object, TypeArg> map = new HashMap<>(fixed.map());
+        inferenceSession.semiFixedVariables.forEach((v, t) -> map.putIfAbsent(v, TypeArg.of(t)));
+        return new Substitution(map);
+    }
+
     private static boolean willEventuallyBecomeUnit(ConstraintSystem system, KType type) {
         return !Types.isMarkedNullable(type) && system.hasUpperOrEqualUnitConstraint(type);
     }
 
     /**
      * The type of a parameter or receiver of a lambda, approximated; it
-     * must not be a variable, as one that could not be inferred before.
+     * must not be a variable, as one that could not be inferred before,
+     * unless analyzed with PCLA, where it is substituted on completion.
      */
-    private KType lambdaInputType(LambdaExpression lambda, KType type, boolean isReceiver) {
-        if (type instanceof KType.TypeVariableType) {
+    private KType lambdaInputType(LambdaExpression lambda, KType type, boolean isReceiver, boolean pcla) {
+        if (type instanceof KType.TypeVariableType v && !(pcla && v.variable().typeParam() != null)) {
             throw error(lambda.pos(), isReceiver ? "Cannot infer the receiver type of the lambda"
                     : "Cannot infer a parameter type of the lambda");
         }

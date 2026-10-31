@@ -61,6 +61,8 @@ final class CompletionWriter {
 
     /** Completes an expression: the uncompleted calls and postponed arguments in it, and the types. */
     TExpr write(TExpr e) {
+        if (e instanceof TExpr.LocalVarDecl d) substituteVariable(d.variable());
+        if (e instanceof TExpr.SafeCall s) substituteVariable(s.subject());
         return switch (e) {
             case TExpr.Unresolved u when u.state() instanceof Candidate c -> c.builder.apply(this);
             case TExpr.Unresolved u when u.state() instanceof PostponedArgument p -> write(p.result());
@@ -152,8 +154,15 @@ final class CompletionWriter {
         function.setReturnType(returnType);
         FunctionTypes.Kind kind = expectedType != null ? FunctionTypes.kind(expectedType)
                 : atom.kind != null ? atom.kind : FunctionTypes.Kind.FUNCTION;
+        for (LocalVariable p : function.contextParams()) substituteVariable(p);
         List<KType> params = new ArrayList<>();
-        for (LocalVariable p : function.params()) params.add(p.type());
+        for (LocalVariable p : function.params()) {
+            substituteVariable(p);
+            params.add(p.type());
+        }
+        if (function.receiverType() != null && containsTypeVariables(function.receiverType())) {
+            function.setReceiverType(substitute(function.receiverType()));
+        }
         List<KType> contextParams = function.contextParams().stream().map(LocalVariable::type).toList();
         KType type = FunctionTypes.create(ts.table(), kind.nonReflect(), contextParams, function.receiverType(), params,
                 returnType);
@@ -177,6 +186,19 @@ final class CompletionWriter {
         boolean isUnit = commonSuperType instanceof KType.ClassType c && !c.nullable()
                 && c.symbol().id().fqName().equals("kotlin.Unit");
         return !isUnit && expectedReturnType != null ? expectedReturnType : commonSuperType;
+    }
+
+    /**
+     * In a lambda analyzed with PCLA, variables may have types of variables
+     * not fixed then, which are substituted once they are, as FIR's
+     * runPCLARelatedTasksForCandidate.
+     */
+    private void substituteVariable(LocalVariable v) {
+        if (containsTypeVariables(v.type())) v.setType(substitute(v.type()));
+    }
+
+    private static boolean containsTypeVariables(KType type) {
+        return type != null && Types.contains(type, t -> t instanceof KType.TypeVariableType);
     }
 
     private KType unit() {

@@ -8,6 +8,7 @@ import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.resolve.TypeResolver;
@@ -45,11 +46,14 @@ final class CallResolver {
     private final CallCompleter completer;
     private final OverloadByLambdaReturnType byLambdaReturnType;
     private final DataFlowAnalyzer dfa;
+    /** The PCLA session of the lambda being analyzed, if any. */
+    private final Supplier<PclaSession> inferenceSession;
 
     private static final Set<String> HIDES_MEMBERS_NAMES = Set.of("forEach", "addSuppressed");
 
     CallResolver(Checker checker, CallCompleter completer, OverloadByLambdaReturnType byLambdaReturnType,
-                 DataFlowAnalyzer dfa) {
+                 DataFlowAnalyzer dfa, Supplier<PclaSession> inferenceSession) {
+        this.inferenceSession = inferenceSession;
         this.ts = checker.ts();
         this.types = checker.resolver().types();
         this.scopes = checker.memberScopes();
@@ -808,14 +812,21 @@ final class CallResolver {
                             Substitution memberSubstitution) {
             CallInfo info = level.info();
             ConstraintSystem system = new ConstraintSystem(ts);
-            // A reference's candidates each have a copy of the containing call's system, as FIR's createForCallableReferences.
-            if (reference != null) system.addOtherSystem(reference.baseSystem());
-            if (baseSystem != null) system.addOtherSystem(baseSystem);
-            for (CallInfo.Argument a : info.arguments()) ArgumentChecker.addSubsystemFromArgument(system, a.value());
             Candidate c = new Candidate(symbol, info.pos(), system, info, info.argumentValues());
             c.reference = reference;
             c.dispatchReceiver = dispatch;
             c.extensionReceiver = extension;
+            // In a PCLA lambda, a call that cannot be completed on its own starts with the shared system.
+            PclaSession session = inferenceSession.get();
+            if (session != null && (reference == null || !reference.baseSystem().usesOuterSystem())) {
+                ConstraintSystem shared = session.baseSystemForCandidate(c);
+                if (shared != null) system.setBaseSystem(shared);
+            }
+            // A reference's candidates each have a copy of the containing call's system,
+            // as FIR's createForCallableReferences.
+            if (reference != null) addBaseSystem(system, reference.baseSystem());
+            if (baseSystem != null) addBaseSystem(system, baseSystem);
+            for (CallInfo.Argument a : info.arguments()) ArgumentChecker.addSubsystemFromArgument(system, a.value());
             c.explicitReceiverKind = level.kind();
             c.memberSubstitution = memberSubstitution;
             c.invokeReceiver = task.invokeReceiver;
@@ -826,6 +837,14 @@ final class CallResolver {
                 c.addDiagnostic(Applicability.K2_NOT_FUNCTION_AS_OPERATOR, symbol + " is not a function");
             }
             return c;
+        }
+    }
+
+    private static void addBaseSystem(ConstraintSystem system, ConstraintSystem base) {
+        if (system.allTypeVariables().isEmpty() && !system.usesOuterSystem()) {
+            system.setBaseSystem(base);
+        } else {
+            system.addOtherSystem(base);
         }
     }
 

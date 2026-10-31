@@ -84,7 +84,7 @@ final class OverloadByLambdaReturnType {
         for (Map.Entry<Candidate, LambdaAtom> e : lambdas.entrySet()) {
             Candidate candidate = e.getKey();
             activate(candidate);
-            if (results == null) results = checker.analyzeLambdaBody(candidate.system, e.getValue());
+            if (results == null) results = checker.analyzeLambdaBody(candidate.system, e.getValue(), candidate, false);
             checker.applyLambdaResults(candidate.system, e.getValue(), candidate, results);
         }
 

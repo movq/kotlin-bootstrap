@@ -90,42 +90,49 @@ final class SyntheticCalls {
 
     // ==== Calls ====
 
-    Candidate whenCall(int pos, List<TExpr> branches, Function<CompletionWriter, TExpr> builder) {
-        return call(whenFunction, pos, branches, builder);
+    Candidate whenCall(PclaSession session, int pos, List<TExpr> branches, Function<CompletionWriter, TExpr> builder) {
+        return call(session, whenFunction, pos, branches, builder);
     }
 
-    Candidate tryCall(int pos, List<TExpr> branches, Function<CompletionWriter, TExpr> builder) {
-        return call(tryFunction, pos, branches, builder);
+    Candidate tryCall(PclaSession session, int pos, List<TExpr> branches, Function<CompletionWriter, TExpr> builder) {
+        return call(session, tryFunction, pos, branches, builder);
     }
 
-    Candidate checkNotNullCall(int pos, TExpr arg, Function<CompletionWriter, TExpr> builder) {
-        return call(checkNotNullFunction, pos, List.of(arg), builder);
+    Candidate checkNotNullCall(PclaSession session, int pos, TExpr arg, Function<CompletionWriter, TExpr> builder) {
+        return call(session, checkNotNullFunction, pos, List.of(arg), builder);
     }
 
-    Candidate elvisCall(int pos, TExpr lhs, TExpr rhs, Function<CompletionWriter, TExpr> builder) {
-        return call(elvisFunction, pos, List.of(lhs, rhs), builder);
+    Candidate elvisCall(PclaSession session, int pos, TExpr lhs, TExpr rhs, Function<CompletionWriter, TExpr> builder) {
+        return call(session, elvisFunction, pos, List.of(lhs, rhs), builder);
     }
 
     /** For {@code a == b} whose right side's type is not known yet, e.g. an integer literal. */
-    Candidate equalityCall(int pos, TExpr left, TExpr right, Function<CompletionWriter, TExpr> builder) {
-        return call(equalityFunction, pos, List.of(left, right), builder);
+    Candidate equalityCall(PclaSession session, int pos, TExpr left, TExpr right,
+                           Function<CompletionWriter, TExpr> builder) {
+        return call(session, equalityFunction, pos, List.of(left, right), builder);
     }
 
     /** A call of {@code fun accept(p: type): Unit}, for a lambda or callable reference not passed to a call. */
-    Candidate acceptCall(int pos, KType type, TExpr arg, Function<CompletionWriter, TExpr> builder) {
+    Candidate acceptCall(PclaSession session, int pos, KType type, TExpr arg,
+                         Function<CompletionWriter, TExpr> builder) {
         FunctionSymbol accept = new FunctionSymbol(ACCEPT, Origin.SYNTHETIC, null, Visibility.PUBLIC, Modality.FINAL,
                 Set.of(), false, null, List::of,
                 () -> new CallableSymbol.Signature(null, List.of(), List.of(param("reference", type, false))),
                 () -> ts.classType("kotlin.Unit"));
-        return call(accept, pos, List.of(arg), builder);
+        return call(session, accept, pos, List.of(arg), builder);
     }
 
-    /** The candidate for a synthetic call, with the constraints from its arguments. */
-    private Candidate call(FunctionSymbol function, int pos, List<TExpr> args,
+    /**
+     * The candidate for a synthetic call, with the constraints from its
+     * arguments; in a PCLA lambda, with the shared system if it needs it.
+     */
+    private Candidate call(PclaSession session, FunctionSymbol function, int pos, List<TExpr> args,
                            Function<CompletionWriter, TExpr> builder) {
         ConstraintSystem system = new ConstraintSystem(ts);
-        for (TExpr arg : args) ArgumentChecker.addSubsystemFromArgument(system, arg);
         Candidate candidate = new Candidate(function, pos, system, null, args);
+        ConstraintSystem shared = session == null ? null : session.baseSystemForCandidate(candidate);
+        if (shared != null) system.setBaseSystem(shared);
+        for (TExpr arg : args) ArgumentChecker.addSubsystemFromArgument(system, arg);
         candidate.builder = builder;
         candidate.createFreshVariables();
         List<ValueParamSymbol> params = function.signature().params();

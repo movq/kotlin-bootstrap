@@ -25,7 +25,18 @@ public final class ConstraintSystemCompleter {
         List<? extends PostponedAtom> postponedArguments();
 
         /** Analyzes the argument, adding constraints for its output type to the system. */
-        void analyze(PostponedAtom argument);
+        default void analyze(PostponedAtom argument) {
+            analyze(argument, false);
+        }
+
+        /**
+         * @param withPclaSession whether to analyze the lambda with PCLA:
+         *                        with its calls sharing the system
+         */
+        void analyze(PostponedAtom argument, boolean withPclaSession);
+
+        /** Whether the argument is a lambda whose input types are those of an analysis with PCLA. */
+        boolean isLambda(PostponedAtom argument);
 
         /**
          * Replaces a lambda expected to have the type of a variable by one
@@ -79,7 +90,8 @@ public final class ConstraintSystemCompleter {
                 if (a instanceof PostponedAtomWithRevisableExpectedType r) withRevisableType.add(r);
             }
             TypeVariableDependencies dependencies =
-                    new TypeVariableDependencies(c.notFixedTypeVariables(), postponedArguments, topLevelType);
+                    new TypeVariableDependencies(c.notFixedTypeVariables(), postponedArguments, topLevelType,
+                            c.outerTypeVariables());
 
             // Stage 2: build function types for arguments expected to have the type of a variable.
             if (inputTypes.collectParameterTypesAndBuildNewExpectedTypes(withRevisableType, mode, dependencies,
@@ -87,7 +99,7 @@ public final class ConstraintSystemCompleter {
                 continue;
             }
 
-            if (mode.allLambdasShouldBeAnalyzed()) {
+            if (mode.allLambdasShouldBeAnalyzed) {
                 // Stage 3: fix variables for the parameter types of postponed arguments.
                 for (PostponedAtom argument : postponedArguments) {
                     VariableFixationFinder.VariableForFixation next = inputTypes.findNextReadyVariableForParameterType(
@@ -115,7 +127,8 @@ public final class ConstraintSystemCompleter {
             // Stage 6: fix the next ready variable.
             if (variableForFixation != null && fixVariableIfReady(c, variableForFixation)) continue;
 
-            // Stage 7, builder inference, is not supported yet.
+            // Stage 7: analyze lambdas with not fixed variables in their input types with PCLA.
+            if (tryToCompleteWithPcla(c, mode, postponedArguments, context)) continue;
 
             // Stage 9: "not enough information" for the variables without proper constraints.
             if (mode.fixNotInferredTypeVariablesToErrorType) {
@@ -123,13 +136,34 @@ public final class ConstraintSystemCompleter {
             }
 
             // Stage 10: analyze the remaining postponed arguments, even without their input types.
-            if (mode.allLambdasShouldBeAnalyzed() && !postponedArguments.isEmpty()) {
+            if (mode.allLambdasShouldBeAnalyzed && !postponedArguments.isEmpty()) {
                 context.analyze(postponedArguments.getFirst());
                 continue;
             }
 
             break;
         }
+    }
+
+    /**
+     * Analyzes the lambdas whose input types have variables not fixed with
+     * PCLA, as FIR's tryToCompleteWithPCLA: whether any was.
+     */
+    private static boolean tryToCompleteWithPcla(ConstraintSystem c, CompletionMode mode,
+                                                 List<PostponedAtom> postponedArguments, Context context) {
+        if (!mode.allLambdasShouldBeAnalyzed) return false;
+        boolean anyAnalyzed = false;
+        for (PostponedAtom argument : postponedArguments) {
+            if (!context.isLambda(argument)) continue;
+            boolean notFixedInputTypes = argument.inputTypes().stream().anyMatch(t -> InferenceTypes.contains(t, x -> {
+                TypeVariable v = InferenceTypes.typeVariable(x);
+                return v != null && !c.fixedTypeVariables().containsKey(v);
+            }));
+            if (!notFixedInputTypes) continue;
+            context.analyze(argument, true);
+            anyAnalyzed = true;
+        }
+        return anyAnalyzed;
     }
 
     private static List<PostponedAtom> notAnalyzed(List<? extends PostponedAtom> arguments) {

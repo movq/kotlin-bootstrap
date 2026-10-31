@@ -78,6 +78,8 @@ final class Candidate {
     Supplier<List<List<TExpr>>> implicitValues = List::of;
     /** Lambdas and callable references among the arguments, analyzed during completion. */
     final List<PostponedArgument> postponedArguments = new ArrayList<>();
+    /** The calls in its lambdas analyzed with PCLA, completed with it, as FIR's postponedPCLACalls. */
+    final List<Candidate> postponedPclaCalls = new ArrayList<>();
     /** How many of the resolution stages have been run. */
     int passedStages;
     /** What is wrong with the candidate, if anything. */

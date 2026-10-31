@@ -1,0 +1,148 @@
+fun r
+fun spread
+  call check.pcla.r: kotlin.Unit
+    call kotlin.collections.toTypedArray<kotlin.String>: kotlin.Array<kotlin.String>
+      call kotlin.collections.buildList<kotlin.String>: kotlin.collections.List<kotlin.String>
+        lambda: kotlin.collections.MutableList<kotlin.String>.() -> kotlin.Unit
+          call kotlin.collections.MutableList.add: kotlin.Boolean
+          call kotlin.collections.MutableList.add: kotlin.Boolean
+fun loop
+  val x: kotlin.collections.List<kotlin.String>
+    call kotlin.collections.buildList<kotlin.String>: kotlin.collections.List<kotlin.String>
+      lambda: kotlin.collections.MutableList<kotlin.String>.() -> kotlin.Unit
+        val <iterator>: kotlin.collections.IntIterator
+          call kotlin.ranges.IntProgression.iterator: kotlin.collections.IntIterator
+            call kotlin.ranges.until: kotlin.ranges.IntRange
+        call kotlin.collections.Iterator.hasNext: kotlin.Boolean
+        val i: kotlin.Int
+          call kotlin.collections.IntIterator.next: kotlin.Int
+        call kotlin.collections.MutableList.add: kotlin.Boolean
+fun local
+  val x: kotlin.collections.List<kotlin.Int>
+    call kotlin.collections.buildList<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      lambda: kotlin.collections.MutableList<kotlin.Int>.() -> kotlin.Unit
+        call kotlin.collections.MutableList.add: kotlin.Boolean
+        val first: kotlin.Int
+          call kotlin.collections.List.get: kotlin.Int
+        call kotlin.collections.MutableList.add: kotlin.Boolean
+          call kotlin.Int.plus: kotlin.Int
+fun nested
+  val x: kotlin.collections.Map<kotlin.String, kotlin.collections.List<kotlin.Int>>
+    call kotlin.collections.buildMap<kotlin.String, kotlin.collections.List<kotlin.Int>>: kotlin.collections.Map<kotlin.String, kotlin.collections.List<kotlin.Int>>
+      lambda: kotlin.collections.MutableMap<kotlin.String, kotlin.collections.List<kotlin.Int>>.() -> kotlin.Unit
+        call kotlin.collections.MutableMap.put: kotlin.collections.List<kotlin.Int>?
+          call kotlin.collections.buildList<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+            lambda: kotlin.collections.MutableList<kotlin.Int>.() -> kotlin.Unit
+              call kotlin.collections.MutableList.add: kotlin.Boolean
+        call kotlin.collections.forEach<kotlin.Int>: kotlin.Unit
+          call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+          lambda: (kotlin.Int) -> kotlin.Unit
+            call kotlin.collections.MutableMap.put: kotlin.collections.List<kotlin.Int>?
+              call kotlin.Int.toString: kotlin.String
+              call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+fun receiver
+  val x: kotlin.collections.List<kotlin.String>
+    call kotlin.collections.buildList<kotlin.String>: kotlin.collections.List<kotlin.String>
+      lambda: kotlin.collections.MutableList<kotlin.String>.() -> kotlin.Unit
+        call kotlin.collections.MutableList.add: kotlin.Boolean
+        call kotlin.let<kotlin.collections.MutableList<kotlin.String>, kotlin.Unit>: kotlin.Unit
+          lambda: (kotlin.collections.MutableList<kotlin.String>) -> kotlin.Unit
+            call kotlin.collections.MutableList.add: kotlin.Boolean
+fun string
+  call kotlin.text.buildString: kotlin.String
+    lambda: java.lang.StringBuilder.() -> kotlin.Unit
+      call java.lang.StringBuilder.append: java.lang.StringBuilder!
+      call kotlin.collections.forEach<kotlin.Int>: kotlin.Unit
+        call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+        lambda: (kotlin.Int) -> kotlin.Unit
+          call java.lang.StringBuilder.append: java.lang.StringBuilder!
+fun set
+  call kotlin.collections.buildSet<kotlin.Int>: kotlin.collections.Set<kotlin.Int>
+    lambda: kotlin.collections.MutableSet<kotlin.Int>.() -> kotlin.Unit
+      call kotlin.collections.MutableSet.add: kotlin.Boolean
+      call kotlin.collections.MutableSet.addAll: kotlin.Boolean
+        call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+fun s1
+  call kotlin.sequences.sequence<kotlin.Int>: kotlin.sequences.Sequence<kotlin.Int>
+    lambda: suspend kotlin.sequences.SequenceScope<kotlin.Int>.() -> kotlin.Unit
+      call kotlin.sequences.SequenceScope.yield: kotlin.Unit
+      call kotlin.sequences.SequenceScope.yieldAll: kotlin.Unit
+        call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+fun s2
+  call kotlin.sequences.sequence<kotlin.String>: kotlin.sequences.Sequence<kotlin.String>
+    lambda: suspend kotlin.sequences.SequenceScope<kotlin.String>.() -> kotlin.Unit
+      val <iterator>: kotlin.collections.IntIterator
+        call kotlin.ranges.IntProgression.iterator: kotlin.collections.IntIterator
+          call kotlin.Int.rangeTo: kotlin.ranges.IntRange
+      call kotlin.collections.Iterator.hasNext: kotlin.Boolean
+      val i: kotlin.Int
+        call kotlin.collections.IntIterator.next: kotlin.Int
+      call kotlin.sequences.SequenceScope.yield: kotlin.Unit
+        call kotlin.Int.toString: kotlin.String
+fun m1
+  call kotlin.collections.buildMap<kotlin.String, kotlin.collections.MutableList<kotlin.Int>>: kotlin.collections.Map<kotlin.String, kotlin.collections.MutableList<kotlin.Int>>
+    lambda: kotlin.collections.MutableMap<kotlin.String, kotlin.collections.MutableList<kotlin.Int>>.() -> kotlin.Unit
+      val <iterator>: kotlin.collections.Iterator<kotlin.String>
+        call kotlin.collections.List.iterator: kotlin.collections.Iterator<kotlin.String>
+      call kotlin.collections.Iterator.hasNext: kotlin.Boolean
+      val k: kotlin.String
+        call kotlin.collections.Iterator.next: kotlin.String
+      call kotlin.collections.MutableList.add: kotlin.Boolean
+        call kotlin.collections.getOrPut<kotlin.String, kotlin.collections.MutableList<kotlin.Int>>: kotlin.collections.MutableList<kotlin.Int>
+          lambda: () -> kotlin.collections.MutableList<kotlin.Int>
+            call kotlin.collections.mutableListOf<kotlin.Int>: kotlin.collections.MutableList<kotlin.Int>
+fun l1
+  call kotlin.collections.buildList<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+    lambda: kotlin.collections.MutableList<kotlin.Int>.() -> kotlin.Unit
+      call kotlin.collections.List.isEmpty: kotlin.Boolean
+      call kotlin.collections.MutableList.add: kotlin.Boolean
+      val n: kotlin.Int
+        get kotlin.collections.List.size: kotlin.Int
+      call kotlin.collections.MutableList.add: kotlin.Boolean
+fun l2
+  call kotlin.collections.buildList<kotlin.String>: kotlin.collections.List<kotlin.String>
+    lambda: kotlin.collections.MutableList<kotlin.String>.() -> kotlin.Unit
+      call kotlin.let<kotlin.collections.List<kotlin.String>, kotlin.Boolean>: kotlin.Boolean
+        lambda: (kotlin.collections.List<kotlin.String>) -> kotlin.Boolean
+          call kotlin.collections.MutableList.addAll: kotlin.Boolean
+      call kotlin.collections.MutableList.add: kotlin.Boolean
+fun l3
+  call kotlin.collections.buildList<kotlin.collections.List<kotlin.Int>>: kotlin.collections.List<kotlin.collections.List<kotlin.Int>>
+    lambda: kotlin.collections.MutableList<kotlin.collections.List<kotlin.Int>>.() -> kotlin.Unit
+      call kotlin.collections.MutableList.add: kotlin.Boolean
+        call kotlin.collections.listOf<kotlin.Int>: kotlin.collections.List<kotlin.Int>
+      val <iterator>: kotlin.collections.Iterator<kotlin.collections.List<kotlin.Int>>
+        call kotlin.collections.List.iterator: kotlin.collections.Iterator<kotlin.collections.List<kotlin.Int>>
+      call kotlin.collections.Iterator.hasNext: kotlin.Boolean
+      val x: kotlin.collections.List<kotlin.Int>
+        call kotlin.collections.Iterator.next: kotlin.collections.List<kotlin.Int>
+      call kotlin.io.println: kotlin.Unit
+        get kotlin.collections.List.size: kotlin.Int
+fun l4
+  call kotlin.collections.buildList<kotlin.Pair<kotlin.String, kotlin.Int>>: kotlin.collections.List<kotlin.Pair<kotlin.String, kotlin.Int>>
+    lambda: kotlin.collections.MutableList<kotlin.Pair<kotlin.String, kotlin.Int>>.() -> kotlin.Unit
+      call kotlin.collections.MutableList.add: kotlin.Boolean
+        call kotlin.to<kotlin.String, kotlin.Int>: kotlin.Pair<kotlin.String, kotlin.Int>
+      call kotlin.collections.sortBy<kotlin.Pair<kotlin.String, kotlin.Int>, kotlin.Int>: kotlin.Unit
+        lambda: (kotlin.Pair<kotlin.String, kotlin.Int>) -> kotlin.Int?
+          get kotlin.Pair.second: kotlin.Int
+fun l5
+  call kotlin.collections.buildList<kotlin.String>: kotlin.collections.List<kotlin.String>
+    lambda: kotlin.collections.MutableList<kotlin.String>.() -> kotlin.Unit
+      call kotlin.collections.MutableList.add: kotlin.Boolean
+      val last: kotlin.String?
+        call kotlin.collections.lastOrNull<kotlin.String>: kotlin.String?
+      call kotlin.collections.MutableList.add: kotlin.Boolean
+        call kotlin.String.plus: kotlin.String
+fun l6
+  call kotlin.collections.buildList<kotlin.String>: kotlin.collections.List<kotlin.String>
+    lambda: kotlin.collections.MutableList<kotlin.String>.() -> kotlin.Unit
+      call kotlin.collections.MutableList.add: kotlin.Boolean
+      call kotlin.collections.forEach<kotlin.String>: kotlin.Unit
+        lambda: (kotlin.String) -> kotlin.Unit
+          call kotlin.io.println: kotlin.Unit
+            get kotlin.String.length: kotlin.Int
+fun i1
+  call kotlin.sequences.iterator<kotlin.String>: kotlin.collections.Iterator<kotlin.String>
+    lambda: suspend kotlin.sequences.SequenceScope<kotlin.String>.() -> kotlin.Unit
+      call kotlin.sequences.SequenceScope.yield: kotlin.Unit

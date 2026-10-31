@@ -180,8 +180,13 @@ public final class TypeSystemGoldenTests {
             }
 
             @Override
-            public void analyze(PostponedAtom argument) {
+            public void analyze(PostponedAtom argument, boolean withPclaSession) {
                 throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean isLambda(PostponedAtom argument) {
+                return false;
             }
 
             @Override

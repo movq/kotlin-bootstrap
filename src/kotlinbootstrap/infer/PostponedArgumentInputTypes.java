@@ -355,6 +355,8 @@ final class PostponedArgumentInputTypes {
         if (argument instanceof LambdaWithTypeVariableAsExpectedType) return null;
         List<TypeVariable> related = new ArrayList<>();
         for (KType t : argument.inputTypes()) collectDeeplyRelatedTypeVariables(t, dependencies, related);
+        Set<TypeVariable> outer = c.outerTypeVariables();
+        if (outer != null) related.removeIf(outer::contains);
         return finder.findFirstVariableForFixation(related, postponedArguments, mode, topLevelType);
     }
 

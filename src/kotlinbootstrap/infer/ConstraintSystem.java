@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import kotlinbootstrap.types.CapturedTypeConstructor;
 import kotlinbootstrap.types.KType;
@@ -53,6 +54,13 @@ public final class ConstraintSystem {
     /** Function types built for postponed arguments, by a variable of the call's type and the path to them in it. */
     private final Map<TypeVariable, Map<List<PostponedArgumentInputTypes.PathStep>, KType>> builtFunctionTypesByTopLevelVariable =
             new HashMap<>();
+
+    /** Whether the system started as a copy of a PCLA lambda's shared system, as kotlinc's usesOuterCs. */
+    private boolean usesOuterSystem;
+    /** How many of the first variables are those of the outer system. */
+    private int outerSystemVariablesPrefixSize;
+    /** Variables taken as proper types for now, as kotlinc's typeVariablesThatAreCountedAsProperTypes; nullable. */
+    private Set<TypeVariable> typeVariablesCountedAsProperTypes;
 
     private boolean inTransaction;
     private final List<TypeVariable> typeVariablesTransaction = new ArrayList<>();
@@ -102,6 +110,25 @@ public final class ConstraintSystem {
     /** From now on, fork points are resolved as soon as they appear. */
     public void startCompletion() {
         atCompletionState = true;
+    }
+
+    /** Whether the system uses the shared system of a lambda analyzed with PCLA. */
+    public boolean usesOuterSystem() {
+        return usesOuterSystem;
+    }
+
+    /**
+     * The variables of the outer system, as kotlinc's outerTypeVariables:
+     * those of the calls a PCLA lambda's calls share; null if none.
+     */
+    public Set<TypeVariable> outerTypeVariables() {
+        if (outerSystemVariablesPrefixSize == 0) return null;
+        Set<TypeVariable> result = new LinkedHashSet<>();
+        for (TypeVariable v : allTypeVariables) {
+            if (result.size() == outerSystemVariablesPrefixSize) break;
+            result.add(v);
+        }
+        return result;
     }
 
     // ==== Building ====
@@ -170,6 +197,36 @@ public final class ConstraintSystem {
         builtFunctionTypesByExpectedType.putAll(other.builtFunctionTypesByExpectedType);
         builtFunctionTypesByTopLevelVariable.putAll(other.builtFunctionTypesByTopLevelVariable);
         hasContradictionInForkPointsCache = null;
+    }
+
+    /**
+     * Starts this empty system as a copy of an outer one, all of whose
+     * variables are outer variables, as kotlinc's addOuterSystem.
+     */
+    public void addOuterSystem(ConstraintSystem outer) {
+        usesOuterSystem = true;
+        outerSystemVariablesPrefixSize = outer.allTypeVariables.size();
+        addOtherSystem(outer);
+    }
+
+    /** Starts this empty system as a copy of another, with its outer variables, as kotlinc's setBaseSystem. */
+    public void setBaseSystem(ConstraintSystem base) {
+        usesOuterSystem = base.usesOuterSystem;
+        outerSystemVariablesPrefixSize = base.outerSystemVariablesPrefixSize;
+        addOtherSystem(base);
+    }
+
+    /**
+     * Makes this system, of a call that was to be completed on its own,
+     * start with the shared system of a PCLA lambda after all.
+     */
+    public void integrateIntoOuterSystem(ConstraintSystem shared) {
+        ConstraintSystem own = new ConstraintSystem(ts);
+        own.addOtherSystem(this);
+        replaceContentWith(shared);
+        usesOuterSystem = shared.usesOuterSystem;
+        outerSystemVariablesPrefixSize = shared.outerSystemVariablesPrefixSize;
+        addOtherSystem(own);
     }
 
     /**
@@ -338,8 +395,29 @@ public final class ConstraintSystem {
                     && captured.constructor().status() == CapturedTypeConstructor.Status.FROM_EXPRESSION
                     ? captured.constructor().projection().type() : t;
             if (toCheck == null) return false;
-            return allTypeVariables.contains(InferenceTypes.typeVariable(toCheck));
+            TypeVariable v = InferenceTypes.typeVariable(toCheck);
+            return allTypeVariables.contains(v)
+                    && (typeVariablesCountedAsProperTypes == null || !typeVariablesCountedAsProperTypes.contains(v));
         });
+    }
+
+    /** Whether the variable is taken as a proper type for now. */
+    boolean isCountedAsProperType(TypeVariable v) {
+        return typeVariablesCountedAsProperTypes != null && typeVariablesCountedAsProperTypes.contains(v);
+    }
+
+    /**
+     * Runs the operation with the variables taken as proper types (though
+     * not at the top level), as kotlinc's withTypeVariablesThatAreCountedAsProperTypes.
+     */
+    public <T> T withTypeVariablesCountedAsProperTypes(Set<TypeVariable> variables, Supplier<T> operation) {
+        Set<TypeVariable> before = typeVariablesCountedAsProperTypes;
+        typeVariablesCountedAsProperTypes = variables;
+        try {
+            return operation.get();
+        } finally {
+            typeVariablesCountedAsProperTypes = before;
+        }
     }
 
     public boolean isTypeVariable(KType type) {
@@ -363,12 +441,35 @@ public final class ConstraintSystem {
 
     /** Fixes the variable to the type: no longer a variable, it equals the type in all constraints. */
     public void fixVariable(TypeVariable variable, KType resultType, ConstraintPosition position) {
+        Set<TypeVariable> outer = outerTypeVariables();
+        if (outer != null && outer.contains(variable)) {
+            throw new IllegalStateException("Outer variable " + variable + " is not fixed in a nested call");
+        }
         injector.addInitialEqualityConstraint(this, variable.type(), resultType, position);
         if (notFixed.remove(variable) == null) throw new IllegalStateException(variable + " is being fixed a second time");
         for (VariableWithConstraints other : notFixed.values()) {
             other.removeConstraints(c -> InferenceTypes.containsTypeVariable(c.type(), variable));
         }
         fixed.put(variable, resultType);
+    }
+
+    /**
+     * The type a variable would be fixed to now, with all variables not
+     * fixed taken as proper types, made equal to it without fixing it, as
+     * FIR's semiFixCurrentResultIfTypeVariableAndReturnBinding in PCLA;
+     * null if there is no proper constraint to give it.
+     */
+    public KType semiFixVariable(TypeVariable variable) {
+        VariableWithConstraints v = notFixed.get(variable);
+        if (v == null) return null;
+        KType resultType = withTypeVariablesCountedAsProperTypes(Set.copyOf(notFixed.keySet()), () -> {
+            if (!new VariableFixationFinder(this).typeVariableHasProperConstraint(variable)) return null;
+            return resultTypeResolver.findResultType(this, v, ResultTypeResolver.Direction.UNKNOWN);
+        });
+        if (resultType == null) return null;
+        addEqualityConstraint(variable.type(), resultType,
+                new ConstraintPosition(ConstraintPosition.Kind.SEMI_FIX_VARIABLE, variable));
+        return resultType;
     }
 
     /** Replaces the fixed variables by their types. */

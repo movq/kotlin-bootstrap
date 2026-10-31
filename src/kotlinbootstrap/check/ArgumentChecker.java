@@ -46,10 +46,14 @@ final class ArgumentChecker {
         };
     }
 
-    /** Adds the system of the argument's uncompleted call, if any; returns whether there was one. */
+    /**
+     * Adds the system of the argument's uncompleted call, if any; returns
+     * whether there was one. A call in a PCLA lambda that uses the shared
+     * system has added to it already.
+     */
     static boolean addSubsystemFromArgument(ConstraintSystem system, TExpr argument) {
         Candidate sub = subCandidate(argument);
-        if (sub != null) system.addOtherSystem(sub.system);
+        if (sub != null && !sub.system.usesOuterSystem()) system.addOtherSystem(sub.system);
         return sub != null;
     }
 
