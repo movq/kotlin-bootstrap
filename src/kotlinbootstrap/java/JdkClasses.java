@@ -122,6 +122,7 @@ public final class JdkClasses implements ClassFinder {
             case DECLARED -> declaredType((DeclaredType) t);
             case ARRAY -> arrayType((ArrayType) t);
             case TYPEVAR -> JavaTypes.typeParamType(typeParam((TypeParameterElement) ((TypeVariable) t).asElement()));
+            case ERROR -> errorType((DeclaredType) t);
             default -> throw new IllegalStateException("Unexpected Java type " + t + " (" + t.getKind() + ")");
         };
     }
@@ -138,6 +139,22 @@ public final class JdkClasses implements ClassFinder {
             if (!((TypeElement) d.asElement()).getNestingKind().isNested() || isStatic(d.asElement())) break;
         }
         return types.classType(symbol((TypeElement) t.asElement()), args);
+    }
+
+    /**
+     * A class javac could not load, as one of the Kotlin sources, like
+     * {@code kotlin.jvm.functions.Function1} in a Kotlin-compiled class.
+     */
+    private KType errorType(DeclaredType t) {
+        ClassId id = classId((TypeElement) t.asElement());
+        if (id.packageName().equals("kotlin.jvm.functions") && id.relativeName().matches("Function\\d+")) {
+            id = new ClassId("kotlin", id.relativeName());
+        }
+        ClassSymbol cls = table.findClass(id);
+        if (cls == null) throw new IllegalStateException("Unexpected Java type " + t + " (" + t.getKind() + ")");
+        List<TypeArg> args = new ArrayList<>();
+        for (TypeMirror a : t.getTypeArguments()) args.add(typeArg(a));
+        return types.classType(cls, args);
     }
 
     private KType arrayType(ArrayType t) {
