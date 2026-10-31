@@ -194,3 +194,12 @@ data class Pair2 private constructor(val first: Int, val second: String) {
     constructor() : this(1, "")
     fun withFirst(x: Int): Pair2 = copy(first = x)
 }
+
+// Functions differing only in the bounds of their type parameters are overloads.
+interface Named { val name: String }
+interface Numbered { val number: Int }
+class Describer {
+    private fun <D> D.describe(): String where D : Named = name
+    private fun <D> D.describe(): String where D : Numbered = number.toString()
+    fun both(x: Named, y: Numbered) = x.describe() + y.describe()
+}

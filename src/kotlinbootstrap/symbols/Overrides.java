@@ -88,6 +88,9 @@ public final class Overrides {
         List<TypeArg> oursAsArgs = new ArrayList<>();
         for (TypeParamSymbol tp : ours) oursAsArgs.add(TypeArg.of(new KType.TypeParamType(tp, false)));
         Substitution fnSubst = Substitution.of(theirs, oursAsArgs);
+        for (int i = 0; i < ours.size(); i++) {
+            if (!sameBounds(ours.get(i), aSubst, theirs.get(i), bSubst, fnSubst)) return false;
+        }
 
         CallableSymbol.Signature sa = a.signature();
         CallableSymbol.Signature sb = b.signature();
@@ -114,6 +117,18 @@ public final class Overrides {
             }
         }
         return true;
+    }
+
+    /**
+     * Whether type parameters have the same bounds, in any order, as FIR's
+     * isEqualBound: functions differing only in them are overloads.
+     */
+    private static boolean sameBounds(TypeParamSymbol a, Substitution aSubst, TypeParamSymbol b, Substitution bSubst,
+                                      Substitution fnSubst) {
+        List<KType> ours = a.bounds().stream().map(aSubst::apply).toList();
+        List<KType> theirs = b.bounds().stream().map(t -> substitute(t, bSubst, fnSubst)).toList();
+        return ours.stream().allMatch(t -> theirs.stream().anyMatch(u -> sameType(t, u)))
+                && theirs.stream().allMatch(t -> ours.stream().anyMatch(u -> sameType(t, u)));
     }
 
     private static KType substitute(KType type, Substitution classSubst, Substitution fnSubst) {

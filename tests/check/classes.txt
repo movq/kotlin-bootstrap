@@ -214,3 +214,17 @@ class Pair2
     delegate kotlin.Any.<init>
   fun withFirst
     call check.classes.Pair2.copy: check.classes.Pair2
+class Named
+class Numbered
+class Describer
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  fun describe
+    get check.classes.Named.name: kotlin.String
+  fun describe
+    call kotlin.Int.toString: kotlin.String
+      get check.classes.Numbered.number: kotlin.Int
+  fun both
+    call kotlin.String.plus: kotlin.String
+      call check.classes.Describer.describe<check.classes.Named>: kotlin.String
+      call check.classes.Describer.describe<check.classes.Numbered>: kotlin.String
