@@ -15,6 +15,7 @@ import kotlinbootstrap.ast.Expr;
 import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.ast.NamedType;
 import kotlinbootstrap.ast.Node;
+import kotlinbootstrap.ast.TypeRef;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.KotlinClassSymbol;
 import kotlinbootstrap.resolve.ResolveException;
@@ -590,13 +591,35 @@ public final class Checker {
                 classContext(cls, true).withLocalScope(primaryConstructorScope(cls)), Mode.expecting(cls.supertype(e))));
     }
 
-    /** The call of the enum class's constructor an entry makes, in the header of the class, as FIR's withEnumEntry. */
+    /**
+     * The call of the enum class's constructor an entry makes, in the header
+     * of the class, as FIR's withEnumEntry; for an entry with a body, the
+     * object literal {@code object : E(args) { body }} it is in FIR.
+     */
     public TExpr checkedEnumEntry(KotlinClassSymbol cls, Decl.EnumEntry e) {
         return inClass(cls, e, checker -> {
             Context ctx = classContext(cls, true);
-            return checker.delegatingConstructorCall(e.pos(), resolver.types().defaultType(cls),
-                    e.args(), ctx, ctx);
+            if (e.body() == null) {
+                return checker.delegatingConstructorCall(e.pos(), resolver.types().defaultType(cls),
+                        e.args(), ctx, ctx);
+            }
+            Decl.Class object = enumEntryClass(cls, e);
+            ClassSymbol entryClass = localClass(object, checker, ctx, null);
+            return new TExpr.ObjectLiteral(e.pos(), resolver.types().defaultType(entryClass), entryClass);
         });
+    }
+
+    /** The class of an enum entry with a body: an object literal with the enum class as supertype. */
+    private static Decl.Class enumEntryClass(KotlinClassSymbol cls, Decl.EnumEntry e) {
+        List<TypeRef.Segment> path = new ArrayList<>();
+        for (String s : cls.id().packageName().split("\\.")) {
+            if (!s.isEmpty()) path.add(new TypeRef.Segment(s, List.of()));
+        }
+        for (String s : cls.id().relativeName().split("\\.")) path.add(new TypeRef.Segment(s, List.of()));
+        Decl.SuperTypeEntry supertype = new Decl.SuperTypeEntry(e.pos(), new TypeRef.Simple(e.pos(), path),
+                e.args(), null);
+        return new Decl.Class(e.pos(), e.modifiers(), Decl.ClassKind.OBJECT, null, List.of(), null,
+                List.of(supertype), List.of(), List.of(), e.body());
     }
 
     /**

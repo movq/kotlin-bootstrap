@@ -49,6 +49,19 @@ enum class Color(val rgb: Int) {
     constructor() : this(0)
 }
 
+// Entries with bodies are object literals with the enum class as supertype.
+enum class Op(val symbol: String) {
+    PLUS("+") {
+        override fun apply(a: Int, b: Int) = a + b
+    },
+    TIMES("*") {
+        val unit = 1
+        override fun apply(a: Int, b: Int): Int = g(symbol) * a * b * unit
+    };
+
+    abstract fun apply(a: Int, b: Int): Int
+}
+
 object Singleton : Base<Long>(1L, 2)
 
 open class Outer(val n: Int) {

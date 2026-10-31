@@ -56,6 +56,25 @@ class Color
     delegate check.classes.Color.<init>
   entry BLUE
     delegate check.classes.Color.<init>
+class Op
+  constructor (primary)
+  entry PLUS
+    class <anonymous>
+      super
+        delegate check.classes.Op.<init>
+      fun apply
+        call kotlin.Int.plus: kotlin.Int
+  entry TIMES
+    class <anonymous>
+      super
+        delegate check.classes.Op.<init>
+      fun apply
+        call kotlin.Int.times: kotlin.Int
+          call kotlin.Int.times: kotlin.Int
+            call kotlin.Int.times: kotlin.Int
+              call check.classes.g: kotlin.Int
+                get check.classes.Op.symbol: kotlin.String
+          get check.classes.<anonymous>.unit: kotlin.Int
 class Singleton
   super
     delegate check.classes.Base.<init><kotlin.Long>
