@@ -252,16 +252,31 @@ public final class Resolver {
         return c.name() != null ? c.name() : "Companion";
     }
 
-    /** Registers a top-level non-expect classifier, replacing an expected one. */
+    /**
+     * Registers a top-level non-expect classifier, replacing an expected one.
+     * Sources of several modules may each have a non-public one of the same
+     * name, which is not a redeclaration: a public one is kept, else the first.
+     */
     private void addClassifier(ClassId id, ClassifierSymbol c, FileContext file, Node decl) {
         ClassifierSymbol existing = table.addKotlinClassifier(id, c);
         if (existing != null) {
             boolean existingIsExpected = existing instanceof KotlinClassSymbol k && k.has(Modifier.EXPECT);
             if (!existingIsExpected) {
-                throw new ResolveException(file.file().source(), decl.pos(), "Redeclaration of " + id);
+                if (isPublic(existing) && isPublic(c)) {
+                    throw new ResolveException(file.file().source(), decl.pos(), "Redeclaration of " + id);
+                }
+                if (isPublic(existing) || !isPublic(c)) return;
             }
         }
         table.replaceKotlinClassifier(id, c);
+    }
+
+    private static boolean isPublic(ClassifierSymbol c) {
+        return switch (c) {
+            case ClassSymbol cls -> cls.visibility() == Visibility.PUBLIC;
+            case TypeAliasSymbol alias -> alias.visibility() == Visibility.PUBLIC;
+            default -> true;
+        };
     }
 
     // ==== Qualified names ====

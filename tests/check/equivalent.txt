@@ -2,3 +2,5 @@ fun twice
   call kotlin.Int.times: kotlin.Int
 fun callTwice
   call check.equivalent.twice: kotlin.Int
+fun sum
+  call kotlin.collections.sum: kotlin.Int
