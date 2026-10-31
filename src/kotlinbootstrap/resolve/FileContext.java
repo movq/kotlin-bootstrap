@@ -50,13 +50,15 @@ public final class FileContext {
 
     private Scope buildScope(Resolver resolver) {
         SymbolTable table = resolver.table();
-        Map<String, List<String>> explicit = new HashMap<>();
+        // A name may be imported several times, e.g. a function and a class of the same name.
+        Map<String, List<List<String>>> explicit = new HashMap<>();
         List<List<String>> stars = new ArrayList<>();
         for (KtFile.Import imp : file.imports()) {
             if (imp.allUnder()) {
                 stars.add(imp.path());
             } else {
-                explicit.putIfAbsent(imp.alias() != null ? imp.alias() : imp.path().getLast(), imp.path());
+                explicit.computeIfAbsent(imp.alias() != null ? imp.alias() : imp.path().getLast(),
+                        k -> new ArrayList<>()).add(imp.path());
             }
         }
         // Cached, including misses, since most lookups fall through several levels.
@@ -69,8 +71,13 @@ public final class FileContext {
         Scope builtinLevel = Scope.of(resolver::builtinClassifier, starLevel);
         Scope packageLevel = Scope.of(name -> table.findClassifier(new ClassId(packageName, name)), builtinLevel);
         Scope explicitLevel = Scope.of(name -> {
-            List<String> path = explicit.get(name);
-            return path == null ? null : resolver.findQualifiedClassifier(path);
+            List<List<String>> paths = explicit.get(name);
+            if (paths == null) return null;
+            for (List<String> path : paths) {
+                ClassifierSymbol c = resolver.findQualifiedClassifier(path);
+                if (c != null) return c;
+            }
+            return null;
         }, packageLevel);
         return Scope.of(name -> {
             if (!cache.containsKey(name)) cache.put(name, explicitLevel.findClassifier(name));

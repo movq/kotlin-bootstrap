@@ -1,5 +1,7 @@
 package kotlinbootstrap.java;
 
+import java.io.File;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -47,9 +49,9 @@ import kotlinbootstrap.types.TypeArg;
 import kotlinbootstrap.types.Variance;
 
 /**
- * Classes of the JDK, read through javac's symbol tables. With a release
- * option, javac reads the API of that Java release (from ct.sym) rather
- * than of the running JDK.
+ * Classes of the JDK, and of jars on the class path, read through javac's
+ * symbol tables. With a release option, javac reads the API of that Java
+ * release (from ct.sym) rather than of the running JDK.
  */
 public final class JdkClasses implements ClassFinder {
     private final SymbolTable table;
@@ -57,13 +59,20 @@ public final class JdkClasses implements ClassFinder {
     private final Elements elements;
     private final Map<TypeParameterElement, TypeParamSymbol> typeParams = new HashMap<>();
 
-    /** @param release the Java release whose API to use, e.g. "8" */
-    public JdkClasses(SymbolTable table, String release) {
+    /**
+     * @param release   the Java release whose API to use, e.g. "8"
+     * @param classPath jars of compiled classes
+     */
+    public JdkClasses(SymbolTable table, String release, List<Path> classPath) {
         this.table = table;
         this.types = new JavaTypes(table);
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        JavacTask task = (JavacTask) compiler.getTask(null, null, null,
-                List.of("--release", release, "-proc:none", "-Xlint:-options"), null, List.of());
+        List<String> options = new ArrayList<>(List.of("--release", release, "-proc:none", "-Xlint:-options"));
+        if (!classPath.isEmpty()) {
+            options.add("--class-path");
+            options.add(String.join(File.pathSeparator, classPath.stream().map(Path::toString).toList()));
+        }
+        JavacTask task = (JavacTask) compiler.getTask(null, null, null, options, null, List.of());
         this.elements = task.getElements();
     }
 

@@ -230,6 +230,9 @@ public final class Checker {
                     initializer(p, d);
                 }
                 if (d.delegate() != null) delegate(p, d);
+                if (d.backingField() != null && d.backingField().initializer() != null) {
+                    backingFieldInitializer(p, d.backingField());
+                }
                 if (d.getter() != null && d.getter().body() != null) accessor(p, d, d.getter());
                 if (d.setter() != null && d.setter().body() != null) accessor(p, d, d.setter());
             }
@@ -463,6 +466,34 @@ public final class Checker {
         }));
     }
 
+    /**
+     * The initializer of an explicit backing field, {@code field = ...},
+     * as a property's, with the field's type expected, or else the property's.
+     */
+    private TExpr backingFieldInitializer(PropertySymbol p, Decl.BackingField f) {
+        return memo(f.initializer(), () -> inLocalFlow(p, () -> {
+            Resolver.DeclarationContext dc = resolver.context(p);
+            BodyChecker checker = checker(p, dc);
+            Context ctx = context(p, dc);
+            Mode mode = Mode.expecting(f.type() != null ? checker.resolveType(f.type(), ctx) : p.returnType());
+            LocalScope scope = dc.cls() != null && p.owner() == dc.cls() ? primaryConstructorScope(dc.cls())
+                    : new LocalScope();
+            return checker.expr(f.initializer(), ctx.withLocalScope(scope), mode);
+        }));
+    }
+
+    /** The type of a property's explicit backing field: declared, or else its initializer's; null if none. */
+    KType backingFieldType(PropertySymbol p) {
+        if (!(p.source() instanceof Decl.Property d) || d.backingField() == null) return null;
+        Decl.BackingField f = d.backingField();
+        return memo(f, () -> {
+            Resolver.DeclarationContext dc = resolver.context(p);
+            if (f.type() != null) return checker(p, dc).resolveType(f.type(), context(p, dc));
+            if (f.initializer() == null) throw error(p, f.pos(), "An explicit backing field needs a type or initializer");
+            return approximateDeclarationType(backingFieldInitializer(p, f).type(), p);
+        });
+    }
+
     private CheckedDelegate delegate(PropertySymbol p, Decl.Property d) {
         return memo(d.delegate(), () -> inLocalFlow(p, () -> {
             Resolver.DeclarationContext dc = resolver.context(p);
@@ -503,7 +534,8 @@ public final class Checker {
             KType propertyType = typeKnown || !accessor.isGetter() ? p.returnType() : null;
             List<LocalVariable> params = new ArrayList<>();
             LocalScope scope = new LocalScope();
-            if (propertyType != null) scope.add(LocalVariable.backingField(p, propertyType));
+            KType fieldType = d.backingField() != null ? backingFieldType(p) : propertyType;
+            if (fieldType != null) scope.add(LocalVariable.backingField(p, fieldType));
             if (!accessor.isGetter()) {
                 Decl.Param param = accessor.param();
                 KType type = param.type() != null ? checker.resolveType(param.type(), context(p, dc)) : propertyType;

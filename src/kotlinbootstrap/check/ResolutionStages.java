@@ -6,8 +6,10 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 
+import kotlinbootstrap.ast.Decl;
 import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.infer.ConstraintPosition;
+import kotlinbootstrap.resolve.Resolver;
 import kotlinbootstrap.resolve.TypeResolver;
 import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassKind;
@@ -18,6 +20,7 @@ import kotlinbootstrap.symbols.Origin;
 import kotlinbootstrap.symbols.Overrides;
 import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
+import kotlinbootstrap.symbols.Visibility;
 import kotlinbootstrap.types.FunctionTypes;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeArg;
@@ -116,6 +119,10 @@ final class ResolutionStages {
         }
         if (!visibility.isVisible(c.symbol, ctx, receiver)) {
             c.addDiagnostic(Applicability.K2_VISIBILITY_ERROR, c.symbol + " is not visible");
+        }
+        if (c.symbol instanceof PropertySymbol p && p.source() instanceof Decl.Property d && d.backingField() != null) {
+            Visibility field = Resolver.visibility(d.backingField().modifiers(), Visibility.PRIVATE);
+            c.explicitBackingFieldVisible = visibility.isVisible(p, field, ctx, receiver);
         }
     }
 

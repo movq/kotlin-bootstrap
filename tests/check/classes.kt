@@ -111,3 +111,13 @@ fun localUnstable(p: Any?) {
 private enum class State { BEGINNING, MIDDLE }
 
 private fun nextState(s: State): State = if (s == State.BEGINNING) State.MIDDLE else State.BEGINNING
+
+// Where its explicit backing field is visible, a property reads as the field.
+open class Collector {
+    val items: List<String>
+        field = mutableListOf()
+
+    fun add(item: String) {
+        items.add(item)
+    }
+}

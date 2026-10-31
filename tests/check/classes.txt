@@ -145,3 +145,9 @@ fun nextState
   get check.classes.State.BEGINNING: check.classes.State
   get check.classes.State.MIDDLE: check.classes.State
   get check.classes.State.BEGINNING: check.classes.State
+class Collector
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  fun add
+    call kotlin.collections.MutableList.add: kotlin.Boolean
+      get check.classes.Collector.items: kotlin.collections.List<kotlin.String>

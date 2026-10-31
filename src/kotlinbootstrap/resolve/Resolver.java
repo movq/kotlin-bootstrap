@@ -424,7 +424,7 @@ public final class Resolver {
     }
 
     /** The declared visibility, or the default. */
-    static Visibility visibility(Modifiers m, Visibility defaultVisibility) {
+    public static Visibility visibility(Modifiers m, Visibility defaultVisibility) {
         if (m.has(Modifier.PRIVATE)) return Visibility.PRIVATE;
         if (m.has(Modifier.PROTECTED)) return Visibility.PROTECTED;
         if (m.has(Modifier.INTERNAL)) return Visibility.INTERNAL;

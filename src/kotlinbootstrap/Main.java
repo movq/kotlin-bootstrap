@@ -23,8 +23,8 @@ import kotlinbootstrap.syntax.SyntaxError;
 public final class Main {
     private static final String USAGE = """
             usage: kbc parse <file.kt>...
-                   kbc resolve [--jdk-release N] [--dump] <file.kt, file.java or directory>...
-                   kbc check [--jdk-release N] [--errors] <file.kt, file.java or directory>...""";
+                   kbc resolve [--jdk-release N] [--dump] <file.kt, file.java, file.jar or directory>...
+                   kbc check [--jdk-release N] [--errors] <file.kt, file.java, file.jar or directory>...""";
 
     private Main() {
     }

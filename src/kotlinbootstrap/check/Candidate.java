@@ -93,6 +93,8 @@ final class Candidate {
     TExpr.ReferenceAdaptation adaptation;
     /** The arguments converted to SAM types, by identity; null if none. */
     Map<TExpr, SamResolver.SamConversion> samConversions;
+    /** For a property with an explicit backing field the call can see, read as the field, as FIR's hasVisibleBackingField. */
+    boolean explicitBackingFieldVisible;
     /** Builds the call's checked form once completed. */
     Function<CompletionWriter, TExpr> builder;
 

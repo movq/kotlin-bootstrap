@@ -23,14 +23,16 @@ public final class Frontend {
     /**
      * Parses the sources and enters their declarations.
      *
-     * @param paths      .kt and .java files, and directories to search for them
+     * @param paths      .kt and .java files, and directories to search for them; .jar files of compiled Java
+     *                   classes to compile against
      * @param jdkRelease the Java release whose API to compile against, e.g. "8"
      */
     public static Resolver load(List<Path> paths, String jdkRelease) throws IOException {
         SymbolTable table = new SymbolTable();
         Resolver resolver = new Resolver(table);
         table.addFinder(new JavaSourceClasses(table, sourceFiles(paths, ".java")));
-        table.addFinder(new JdkClasses(table, jdkRelease));
+        List<Path> classPath = paths.stream().filter(p -> p.toString().endsWith(".jar")).toList();
+        table.addFinder(new JdkClasses(table, jdkRelease, classPath));
         resolver.enter(parseAll(sourceFiles(paths, ".kt")));
         return resolver;
     }
