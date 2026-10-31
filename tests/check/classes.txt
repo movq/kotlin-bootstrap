@@ -199,3 +199,11 @@ class ListRecorder
   fun record
   fun recordTwice
     call check.classes.ListRecorder.record: kotlin.Unit
+class Counted
+  fun count
+class CountedString
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  fun count
+    call kotlin.Int.plus: kotlin.Int
+      call check.classes.Counted.count: kotlin.Int

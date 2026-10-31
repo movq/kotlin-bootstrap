@@ -184,3 +184,7 @@ class ListRecorder : Recorder {
         record(results)
     }
 }
+
+// super<T> may leave out the type arguments of a generic supertype.
+interface Counted<F> { fun count(): Int = 1 }
+class CountedString : Counted<String> { override fun count(): Int = super<Counted>.count() + 1 }

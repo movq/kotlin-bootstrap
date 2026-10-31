@@ -597,7 +597,8 @@ final class BodyChecker {
             List<KType> supertypes = cls.supertypes();
             KType supertype;
             if (s.qualifier() != null) {
-                KType written = resolveType(s.qualifier(), ctx);
+                // As FIR's super<T>: the type arguments of a generic supertype may be left out.
+                KType written = owner.resolver().types().resolveAllowingBare(s.qualifier(), ctx.typeScope(), ctx.file());
                 supertype = supertypes.stream()
                         .filter(t -> t instanceof KType.ClassType c && written instanceof KType.ClassType w
                                 && c.symbol() == w.symbol())
