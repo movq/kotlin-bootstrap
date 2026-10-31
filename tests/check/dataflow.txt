@@ -1,0 +1,26 @@
+class S
+  constructor (primary)
+    default d
+    delegate kotlin.Any.<init>
+fun take
+fun safeCallArgument
+  call kotlin.collections.plus<kotlin.Comparable<*> & java.io.Serializable>: kotlin.collections.List<kotlin.Comparable<*> & java.io.Serializable>
+    get kotlin.collections.List.size: kotlin.Int
+fun safeCallLambda
+  call kotlin.let<kotlin.collections.List<kotlin.String>, kotlin.Unit>: kotlin.Unit
+    lambda: (kotlin.collections.List<kotlin.String>) -> kotlin.Unit
+      call check.dataflow.take<kotlin.String>: kotlin.Unit
+        lambda: (kotlin.String) -> kotlin.Unit
+fun implicitReceiverProperty
+  call kotlin.with<check.dataflow.S, kotlin.Unit?>: kotlin.Unit?
+    lambda: check.dataflow.S.() -> kotlin.Unit?
+      get check.dataflow.S.d: kotlin.collections.List<kotlin.String>?
+      call kotlin.let<kotlin.collections.List<kotlin.String>, kotlin.Unit>: kotlin.Unit
+        lambda: (kotlin.collections.List<kotlin.String>) -> kotlin.Unit
+          call check.dataflow.take<kotlin.String>: kotlin.Unit
+            get check.dataflow.S.d: kotlin.collections.List<kotlin.String>?
+            lambda: (kotlin.String) -> kotlin.Unit
+fun condition
+  call kotlin.run<kotlin.Int>: kotlin.Int
+    lambda: () -> kotlin.Int
+      get kotlin.collections.List.size: kotlin.Int

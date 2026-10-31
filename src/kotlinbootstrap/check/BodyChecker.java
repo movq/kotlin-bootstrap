@@ -328,9 +328,12 @@ final class BodyChecker {
                     mode);
             case Expr.Member m -> {
                 CallInfo.Receiver receiver = receiver(m.receiver(), ctx);
-                List<CallInfo.Argument> args = arguments(m.name(), c.args(), c.lambdas(), ctx, modes);
-                yield onReceiver(m.pos(), receiver, m.safe(), r -> completer.completeCall(
-                        resolved(function(c.pos(), m.name(), r, args, typeArgs, TExpr.CallOrigin.PLAIN), ctx), mode));
+                // The arguments are evaluated after a safe call's receiver is known not null.
+                yield onReceiver(m.pos(), receiver, m.safe(), r -> {
+                    List<CallInfo.Argument> args = arguments(m.name(), c.args(), c.lambdas(), ctx, modes);
+                    return completer.completeCall(
+                            resolved(function(c.pos(), m.name(), r, args, typeArgs, TExpr.CallOrigin.PLAIN), ctx), mode);
+                });
             }
             default -> {
                 // (f)(x): the invoke of a value.
