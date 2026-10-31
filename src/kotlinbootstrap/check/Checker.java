@@ -66,7 +66,7 @@ public final class Checker {
     private final Map<ClassSymbol, ClassContexts> classContexts = new HashMap<>();
     /** The direct subclasses of the sealed classes of the sources; computed on first use. */
     private Map<ClassSymbol, List<ClassSymbol>> sealedInheritors;
-    private final Map<FunctionSymbol, Contract> contracts = new HashMap<>();
+    private final Map<CallableSymbol, Contract> contracts = new HashMap<>();
     /** Where the local classes and functions were declared, by symbol. */
     private final Map<Symbol, LocalOrigin> localOrigins = new HashMap<>();
 
@@ -207,18 +207,20 @@ public final class Checker {
         return sealedInheritors.getOrDefault(sealed, List.of());
     }
 
-    /** The contract a function declares; {@link Contract#NONE} if none. */
-    Contract contract(FunctionSymbol f) {
-        if (!(f.source() instanceof Decl.Function d)) return Contract.NONE;
+    /** The contract a function or property getter declares; {@link Contract#NONE} if none. */
+    Contract contract(CallableSymbol f) {
+        if (!(f.source() instanceof Decl.Function || f.source() instanceof Decl.Property)) return Contract.NONE;
         return contracts.computeIfAbsent(f, k -> {
             Resolver.DeclarationContext dc = resolver.context(f);
             if (dc == null) return Contract.NONE;
-            // Types with the function's type parameters would need the call's type arguments.
-            return Contract.of(d, ref -> {
+            // Types with the declaration's type parameters would need the call's type arguments.
+            Function<TypeRef, KType> resolveType = ref -> {
                 KType t = resolver.types().resolve(ref, dc.scope(), dc.file());
                 return Types.contains(t, c -> c instanceof KType.TypeParamType p && f.typeParams().contains(p.symbol()))
                         ? null : t;
-            });
+            };
+            return f.source() instanceof Decl.Function d ? Contract.of(d, resolveType)
+                    : Contract.of((Decl.Property) f.source(), resolveType);
         });
     }
 

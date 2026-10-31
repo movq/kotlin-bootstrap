@@ -31,3 +31,13 @@ fun countUntilPositive(xs: List<List<Int>>): Int {
     }
     return n
 }
+
+// A property getter's contract smart casts after the property is read.
+sealed class Mode { class Typed(val type: String) : Mode(); object Untyped : Mode() }
+@OptIn(kotlin.contracts.ExperimentalContracts::class)
+val Mode.isTyped: Boolean
+    get() {
+        kotlin.contracts.contract { returns(true) implies (this@isTyped is Mode.Typed) }
+        return this is Mode.Typed
+    }
+fun typeLength(m: Mode) = if (m.isTyped) m.type.length else 0

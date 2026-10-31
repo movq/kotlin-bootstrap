@@ -20,6 +20,7 @@ import kotlinbootstrap.dfa.RealVariable;
 import kotlinbootstrap.dfa.SyntheticVariable;
 import kotlinbootstrap.dfa.TypeStatement;
 import kotlinbootstrap.dfa.VariableStorage;
+import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.Modality;
@@ -1007,6 +1008,8 @@ final class DataFlowAnalyzer {
             } else {
                 processContract(candidate, f, result);
             }
+        } else if (candidate.symbol instanceof PropertySymbol p) {
+            processContract(candidate, p, result);
         }
         if (candidate.explicitBackingFieldVisible) processBackingFieldAccess((PropertySymbol) candidate.symbol, result);
         if (ts.isNothing(result.type())) dead = true;
@@ -1046,11 +1049,12 @@ final class DataFlowAnalyzer {
     }
 
     /** As FIR's processConditionalContract, for the effects returns(...) implies (...). */
-    private void processContract(Candidate c, FunctionSymbol f, TExpr call) {
+    private void processContract(Candidate c, CallableSymbol f, TExpr call) {
         Contract contract = checker.contract(f);
         if (contract.returns().isEmpty()) return;
         // The receiver, then the arguments by parameter.
-        DataFlowVariable[] arguments = new DataFlowVariable[f.signature().params().size() + 1];
+        DataFlowVariable[] arguments = new DataFlowVariable[
+                (f instanceof FunctionSymbol function ? function.signature().params().size() : 0) + 1];
         TExpr receiver = c.extensionReceiver != null ? c.extensionReceiver : c.dispatchReceiver;
         boolean any = false;
         if (receiver != null) {

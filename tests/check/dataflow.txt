@@ -37,3 +37,16 @@ fun countUntilPositive
       call kotlin.Int.compareTo: kotlin.Int
   val <unary>: kotlin.Int
   call kotlin.Int.inc: kotlin.Int
+class Mode
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  class Typed
+    constructor (primary)
+      delegate check.dataflow.Mode.<init>
+  class Untyped
+    super
+      delegate check.dataflow.Mode.<init>
+fun typeLength
+  get check.dataflow.isTyped: kotlin.Boolean
+  get kotlin.String.length: kotlin.Int
+    get check.dataflow.Mode.Typed.type: kotlin.String

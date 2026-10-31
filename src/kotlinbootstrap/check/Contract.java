@@ -13,8 +13,9 @@ import kotlinbootstrap.ast.TypeRef;
 import kotlinbootstrap.types.KType;
 
 /**
- * The contract of a function, as FIR's ConeEffectDeclarations: what its
- * returning implies about its arguments, and how it calls its lambdas.
+ * The contract of a function or property getter, as FIR's
+ * ConeEffectDeclarations: what its returning implies about its arguments,
+ * and how it calls its lambdas.
  * Arguments are by index: -1 is the receiver, then the value parameters.
  *
  * @param returns      the {@code returns(...) implies (...)} effects
@@ -72,18 +73,40 @@ record Contract(List<Returns> returns, Map<Integer, InvocationKind> callsInPlace
      * that are not understood are left out.
      */
     static Contract of(Decl.Function f, Function<TypeRef, KType> resolveType) {
-        List<Expr> effects = f.contract();
-        if (effects.isEmpty() && f.body() instanceof Expr.Block b && !b.statements().isEmpty()
-                && b.statements().getFirst() instanceof Expr.Call c && c.callee() instanceof Expr.Name n
-                && n.name().equals("contract") && c.args().isEmpty() && c.lambdas().size() == 1
+        List<Expr> effects = f.contract().isEmpty() ? contractCall(f.body()) : f.contract();
+        return of(effects, new Parser(f.receiver() != null, f.name(), f.params(), resolveType));
+    }
+
+    /** The contract of a property's getter, as the {@code contract { ... }} call its body begins with. */
+    static Contract of(Decl.Property p, Function<TypeRef, KType> resolveType) {
+        if (p.getter() == null) return NONE;
+        return of(contractCall(p.getter().body()), new Parser(p.receiver() != null, p.name(), List.of(), resolveType));
+    }
+
+    /** The effects in the {@code contract { ... }} call a body begins with; none if it does not. */
+    private static List<Expr> contractCall(Expr body) {
+        List<Expr> effects = new ArrayList<>();
+        if (body instanceof Expr.Block b && !b.statements().isEmpty()
+                && b.statements().getFirst() instanceof Expr.Call c && isContract(c.callee())
+                && c.args().isEmpty() && c.lambdas().size() == 1
                 && c.lambdas().getFirst() instanceof Expr.Lambda l) {
-            effects = new ArrayList<>();
             for (Stmt s : l.body()) {
                 if (s instanceof Expr e) effects.add(e);
             }
         }
+        return effects;
+    }
+
+    /** {@code contract} or {@code kotlin.contracts.contract}. */
+    private static boolean isContract(Expr callee) {
+        return callee instanceof Expr.Name n ? n.name().equals("contract")
+                : callee instanceof Expr.Member m && !m.safe() && m.name().equals("contract")
+                && m.receiver() instanceof Expr.Member p && p.name().equals("contracts")
+                && p.receiver() instanceof Expr.Name k && k.name().equals("kotlin");
+    }
+
+    private static Contract of(List<Expr> effects, Parser p) {
         if (effects.isEmpty()) return NONE;
-        Parser p = new Parser(f, resolveType);
         List<Returns> returns = new ArrayList<>();
         Map<Integer, InvocationKind> callsInPlace = new HashMap<>();
         for (Expr e : effects) {
@@ -108,7 +131,12 @@ record Contract(List<Returns> returns, Map<Integer, InvocationKind> callsInPlace
         return new Contract(List.copyOf(returns), Map.copyOf(callsInPlace));
     }
 
-    private record Parser(Decl.Function function, Function<TypeRef, KType> resolveType) {
+    /**
+     * @param hasReceiver whether {@code this} is the declaration's extension receiver
+     * @param name        the declaration's name, a label of {@code this}
+     */
+    private record Parser(boolean hasReceiver, String name, List<Decl.Param> params,
+                          Function<TypeRef, KType> resolveType) {
         ReturnValue returnValue(Expr e) {
             if (!(e instanceof Expr.Call c) || !(c.callee() instanceof Expr.Name n)) return null;
             if (n.name().equals("returnsNotNull") && c.args().isEmpty()) return ReturnValue.NOT_NULL;
@@ -158,13 +186,12 @@ record Contract(List<Returns> returns, Map<Integer, InvocationKind> callsInPlace
                 case Expr.Paren p -> {
                     return argument(p.expr());
                 }
-                case Expr.This t when function.receiver() != null
-                        && (t.label() == null || t.label().equals(function.name())) -> {
+                case Expr.This t when hasReceiver && (t.label() == null || t.label().equals(name)) -> {
                     return -1;
                 }
                 case Expr.Name n -> {
-                    for (int i = 0; i < function.params().size(); i++) {
-                        if (function.params().get(i).name().equals(n.name())) return i;
+                    for (int i = 0; i < params.size(); i++) {
+                        if (params.get(i).name().equals(n.name())) return i;
                     }
                     return null;
                 }
