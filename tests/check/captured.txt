@@ -74,3 +74,11 @@ fun loopIncrement
   call kotlin.Int.compareTo: kotlin.Int
   val <unary>: kotlin.Int
   call kotlin.Int.inc: kotlin.Int
+class Node
+class NodeHolder
+fun nodeChildren
+  call check.captured.NodeHolder.node: Captured(*)?
+  get check.captured.Node.children: kotlin.collections.List<check.captured.Node>
+fun notNullReceiver
+  call kotlin.let<T, T>: T
+    lambda: (T) -> T

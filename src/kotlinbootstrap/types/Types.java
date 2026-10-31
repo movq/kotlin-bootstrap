@@ -28,11 +28,12 @@ public final class Types {
      */
     public static KType makeDefinitelyNotNull(KType t) {
         return switch (t) {
-            case KType.TypeParamType p -> canBeNull(p) ? new KType.DefinitelyNotNull(p.withNullable(false)) : p;
+            case KType.TypeParamType p -> canBeNull(p.withNullable(false))
+                    ? new KType.DefinitelyNotNull(p.withNullable(false)) : p.withNullable(false);
             case KType.TypeVariableType v -> !isSubtypeOfAny(v.withNullable(false))
-                    ? new KType.DefinitelyNotNull(v.withNullable(false)) : v;
+                    ? new KType.DefinitelyNotNull(v.withNullable(false)) : v.withNullable(false);
             case KType.Captured c -> !isSubtypeOfAny(c.withNullable(false))
-                    ? new KType.DefinitelyNotNull(c.withNullable(false)) : c;
+                    ? new KType.DefinitelyNotNull(c.withNullable(false)) : c.withNullable(false);
             case KType.DefinitelyNotNull d -> d;
             case KType.Flexible f -> makeDefinitelyNotNull(f.lower()) instanceof KType.DefinitelyNotNull d
                     ? d : f.withNullable(false);

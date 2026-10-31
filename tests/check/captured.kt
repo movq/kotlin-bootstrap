@@ -94,3 +94,16 @@ fun loopIncrement(p: Int?) {
         while (i < 10) i++
     }
 }
+
+// A safe call's receiver is not null: Captured(*), not Captured(*)?; T, not T & Any.
+interface Node {
+    val children: List<Node>
+}
+
+interface NodeHolder<S : Node> {
+    fun node(): S?
+}
+
+fun nodeChildren(h: NodeHolder<*>) = h.node()?.children
+
+fun <T : Any> notNullReceiver(t: T?) = t?.let { it }
