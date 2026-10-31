@@ -89,6 +89,10 @@ final class ResolutionStages {
         };
         while (candidate.passedStages < stages.size()) {
             stages.get(candidate.passedStages++).check(candidate, ctx);
+            // A contradiction is an error of applicability INAPPLICABLE, as FIR's NewConstraintError.
+            if (candidate.system.hasContradiction() && candidate.applicability().isSuccess()) {
+                candidate.addDiagnostic(Applicability.INAPPLICABLE, "Inapplicable: " + candidate.system.errors());
+            }
             if (stopOnFirstError && !candidate.isSuccessful()) break;
         }
         return candidate.applicability();

@@ -187,3 +187,15 @@ class MapCollector
         get check.classes.MapCollector.byName: kotlin.collections.Map<kotlin.String, kotlin.collections.List<kotlin.Int>>
         lambda: () -> kotlin.collections.MutableList<kotlin.Int>
           call kotlin.collections.mutableListOf<kotlin.Int>: kotlin.collections.MutableList<kotlin.Int>
+fun nullsLastMap
+  call kotlin.collections.sortedMapOf<K?, V>: java.util.SortedMap<K?, V>
+    call kotlin.comparisons.nullsLast<K>: java.util.Comparator<K?>
+      call kotlin.comparisons.compareByDescending<K>: java.util.Comparator<K>
+        lambda: (K) -> kotlin.Comparable<*>?
+class Recorder
+class ListRecorder
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  fun record
+  fun recordTwice
+    call check.classes.ListRecorder.record: kotlin.Unit

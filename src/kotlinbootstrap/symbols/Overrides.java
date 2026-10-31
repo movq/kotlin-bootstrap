@@ -143,7 +143,8 @@ public final class Overrides {
     /**
      * Raw Java types have no arguments; they match any arguments. A
      * projection that repeats the parameter's declared variance is the
-     * same as none: {@code Collection<out E>} is {@code Collection<E>}.
+     * same as none: {@code Collection<out E>} is {@code Collection<E>}. A
+     * star is the same as {@code out} the parameter's bound, as they are equal types.
      */
     private static boolean sameArgs(List<TypeParamSymbol> params, List<TypeArg> a, List<TypeArg> b) {
         if (a.isEmpty() || b.isEmpty()) return true;
@@ -151,13 +152,23 @@ public final class Overrides {
         for (int i = 0; i < a.size(); i++) {
             TypeArg x = a.get(i);
             TypeArg y = b.get(i);
-            if (x.isStar() || y.isStar()) {
-                if (x.isStar() != y.isStar()) return false;
+            if (x.isStar() && y.isStar()) {
+                continue;
+            } else if (x.isStar() || y.isStar()) {
+                if (!isOutBound(x.isStar() ? y : x, params.get(i))) return false;
             } else if (effective(x, params.get(i)) != effective(y, params.get(i)) || !sameType(x.type(), y.type())) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static boolean isOutBound(TypeArg arg, TypeParamSymbol param) {
+        if (arg.variance() != Variance.OUT && param.variance() != Variance.OUT) return false;
+        List<KType> bounds = param.bounds();
+        return bounds.size() == 1 ? sameType(arg.type(), bounds.getFirst())
+                : bounds.isEmpty() && arg.type() instanceof KType.ClassType c && c.nullable()
+                        && c.args().isEmpty() && c.symbol().id().fqName().equals("kotlin.Any");
     }
 
     private static Variance effective(TypeArg arg, TypeParamSymbol param) {

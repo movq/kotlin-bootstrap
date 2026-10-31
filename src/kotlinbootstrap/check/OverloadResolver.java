@@ -1,6 +1,7 @@
 package kotlinbootstrap.check;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
@@ -9,11 +10,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 
+import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
+import kotlinbootstrap.symbols.Overrides;
+import kotlinbootstrap.symbols.PackageSymbol;
 import kotlinbootstrap.symbols.TypeAliasSymbol;
 import kotlinbootstrap.symbols.TypeParamSymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
@@ -49,6 +53,8 @@ final class OverloadResolver {
     }
 
     private Set<Candidate> chooseMaximallySpecific(Set<Candidate> candidates, boolean discriminateGenerics) {
+        if (candidates.size() == 1) return candidates;
+        candidates = filterOutEquivalentCalls(candidates);
         if (candidates.size() == 1) return candidates;
         Candidate first = candidates.iterator().next();
         Set<Candidate> fixed = first.isSuccessful() && first.invokeReceiver != null
@@ -125,6 +131,43 @@ final class OverloadResolver {
             if (c.invokeReceiver == receiver) result.add(c);
         }
         return result;
+    }
+
+    // ==== Equivalent calls ====
+
+    /**
+     * Keeps one of equivalent top-level candidates, as FIR's
+     * ConeEquivalentCallConflictResolver: the same declaration in several
+     * modules. Within a module they would be redeclarations, so any are
+     * taken to be from different modules. An actual is kept over an expect.
+     */
+    private static Set<Candidate> filterOutEquivalentCalls(Set<Candidate> candidates) {
+        Set<Candidate> result = new LinkedHashSet<>();
+        outer:
+        for (Candidate me : candidates) {
+            if (me.symbol instanceof CallableSymbol s && s.owner() instanceof PackageSymbol) {
+                for (Iterator<Candidate> it = result.iterator(); it.hasNext(); ) {
+                    Candidate other = it.next();
+                    if (!areEquivalentTopLevelCallables(me, other)) continue;
+                    CallableSymbol o = (CallableSymbol) other.symbol;
+                    if (o.has(Modifier.EXPECT) && !s.has(Modifier.EXPECT)) {
+                        it.remove();
+                    } else {
+                        continue outer;
+                    }
+                }
+            }
+            result.add(me);
+        }
+        return result;
+    }
+
+    private static boolean areEquivalentTopLevelCallables(Candidate a, Candidate b) {
+        if (!(a.symbol instanceof CallableSymbol s) || !(b.symbol instanceof CallableSymbol o) || s == o) return false;
+        if (!(o.owner() instanceof PackageSymbol p) || !p.equals(s.owner()) || !s.name().equals(o.name())) return false;
+        if (!Arrays.equals(a.argumentMapping, b.argumentMapping)) return false;
+        return Overrides.sameSignature(s, Substitution.EMPTY, o, Substitution.EMPTY)
+                && Overrides.sameSignature(o, Substitution.EMPTY, s, Substitution.EMPTY);
     }
 
     // ==== Overrides ====

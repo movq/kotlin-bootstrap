@@ -167,3 +167,20 @@ class MapCollector : MapHolder() {
         byName.getOrPut(name) { mutableListOf() }.add(1)
     }
 }
+
+// An explicit type argument against the bound makes a candidate inapplicable, not ambiguous.
+fun <K : Comparable<K>, V> nullsLastMap(): java.util.SortedMap<K?, V> =
+    sortedMapOf<K?, V>(nullsLast(compareByDescending { it }))
+
+// A star projection is the same as out the bound in an override's parameters.
+interface Recorder {
+    fun record(results: MutableList<*>)
+}
+
+class ListRecorder : Recorder {
+    override fun record(results: MutableList<out Any?>) {}
+
+    fun recordTwice(results: MutableList<String>) {
+        record(results)
+    }
+}
