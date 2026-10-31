@@ -1,0 +1,31 @@
+class Box
+  constructor (primary)
+    delegate kotlin.Any.<init>
+fun takeIntOrNull
+fun get
+  call check.safeindex.takeIntOrNull: kotlin.Int?
+    call kotlin.collections.List.get: kotlin.Int
+      get check.safeindex.Box.list: kotlin.collections.MutableList<kotlin.Int>
+fun getMap
+  call check.safeindex.takeIntOrNull: kotlin.Int?
+    call kotlin.collections.Map.get: kotlin.Int?
+      get check.safeindex.Box.map: kotlin.collections.Map<kotlin.String, kotlin.Int>
+fun set
+  call kotlin.collections.MutableList.set: kotlin.Int
+    get check.safeindex.Box.list: kotlin.collections.MutableList<kotlin.Int>
+fun augmented
+  val <array>: kotlin.collections.MutableList<kotlin.Int>
+    get check.safeindex.Box.list: kotlin.collections.MutableList<kotlin.Int>
+  val <index0>: kotlin.Int
+  call kotlin.collections.MutableList.set: kotlin.Int
+    call kotlin.Int.plus: kotlin.Int
+      call kotlin.collections.List.get: kotlin.Int
+fun increment
+  call check.safeindex.takeIntOrNull: kotlin.Int?
+    val <array>: kotlin.collections.MutableList<kotlin.Int>
+      get check.safeindex.Box.list: kotlin.collections.MutableList<kotlin.Int>
+    val <index0>: kotlin.Int
+    val <unary>: kotlin.Int
+      call kotlin.collections.List.get: kotlin.Int
+    call kotlin.collections.MutableList.set: kotlin.Int
+      call kotlin.Int.inc: kotlin.Int

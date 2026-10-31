@@ -117,8 +117,8 @@ final class BodyChecker {
             case Expr.Call c -> call(c, ctx, mode);
             case Expr.InfixCall i -> operatorCall(i.pos(), i.name(), receiver(i.left(), ctx),
                     List.of(i.right()), TExpr.CallOrigin.INFIX, ctx, mode);
-            case Expr.Index i -> operatorCall(i.pos(), "get", receiver(i.receiver(), ctx), i.indices(),
-                    TExpr.CallOrigin.OPERATOR, ctx, mode);
+            case Expr.Index i -> onIndexed(i.receiver(), ctx, r -> operatorCall(i.pos(), "get", r, i.indices(),
+                    TExpr.CallOrigin.OPERATOR, ctx, mode));
             case Expr.Prefix p when p.op() == Expr.PrefixOp.INC || p.op() == Expr.PrefixOp.DEC ->
                     incrementOrDecrement(p.pos(), p.expr(), p.op() == Expr.PrefixOp.INC, true, ctx);
             case Expr.Prefix p -> prefix(p, ctx, mode);
@@ -520,6 +520,17 @@ final class BodyChecker {
         return safeCall;
     }
 
+    /**
+     * Applies the operation to the receiver of an index; if that is a safe
+     * call {@code a?.b}, not in parentheses, inside it, as FIR's
+     * pullUpSafeCallIfNecessary: {@code a?.b[i]} is {@code a?.(b[i])}.
+     */
+    private TExpr onIndexed(Expr receiver, Context ctx, Function<CallInfo.Receiver, TExpr> operation) {
+        if (!(receiver instanceof Expr.Member m && m.safe())) return operation.apply(receiver(receiver, ctx));
+        return onReceiver(m.pos(), receiver(m.receiver(), ctx), true, r -> operation.apply(new CallInfo.ValueReceiver(
+                completer.completeCall(resolved(variable(m.pos(), m.name(), r), ctx), Mode.RECEIVER))));
+    }
+
     /** The receiver of a member access or call: a value, {@code super}, or a class or package as a qualifier. */
     private CallInfo.Receiver receiver(Expr e, Context ctx) {
         return switch (e) {
@@ -913,7 +924,8 @@ final class BodyChecker {
                 default -> "rem";
             };
             dfa.enterCallArguments(lambdaArguments(List.of(a.value())));
-            TExpr result = target instanceof Expr.Index i ? indexedAugmentedAssign(a.pos(), i, operator, a.value(), ctx)
+            TExpr result = target instanceof Expr.Index i ? onIndexed(i.receiver(), ctx,
+                    r -> indexedAugmentedAssign(a.pos(), r, i.indices(), operator, a.value(), ctx))
                     : onVariable(target, ctx, Mode.RECEIVER, left -> augmentedAssign(a.pos(), left, operator,
                             expr(a.value(), ctx, Mode.DEPENDENT), ctx));
             dfa.exitFunctionCall(true);
@@ -922,8 +934,8 @@ final class BodyChecker {
         if (target instanceof Expr.Index i) {
             List<Expr> args = new ArrayList<>(i.indices());
             args.add(a.value());
-            return operatorCall(a.pos(), "set", receiver(i.receiver(), ctx), args, TExpr.CallOrigin.OPERATOR, ctx,
-                    Mode.INDEPENDENT);
+            return onIndexed(i.receiver(), ctx, r -> operatorCall(a.pos(), "set", r, args, TExpr.CallOrigin.OPERATOR,
+                    ctx, Mode.INDEPENDENT));
         }
         return onVariable(target, ctx, Mode.INDEPENDENT,
                 v -> assignment(a.pos(), v, expr(a.value(), ctx, Mode.expecting(withoutSmartCast(v).type()))));
@@ -1018,10 +1030,10 @@ final class BodyChecker {
      * and {@code i} in temporaries, {@code a.set(i, a.get(i).plus(b))};
      * ambiguous if both resolve.
      */
-    private TExpr indexedAugmentedAssign(int pos, Expr.Index target, String operator, Expr value, Context ctx) {
-        CallInfo.Receiver array = receiver(target.receiver(), ctx);
+    private TExpr indexedAugmentedAssign(int pos, CallInfo.Receiver array, List<Expr> indexExprs, String operator,
+                                         Expr value, Context ctx) {
         List<TExpr> indices = new ArrayList<>();
-        for (Expr e : target.indices()) indices.add(expr(e, ctx, Mode.INDEPENDENT));
+        for (Expr e : indexExprs) indices.add(expr(e, ctx, Mode.INDEPENDENT));
         TExpr get = completer.completeCall(resolved(operator(pos, "get", array, indices), ctx), Mode.INDEPENDENT);
         TExpr right = expr(value, ctx, Mode.DEPENDENT);
         CallInfo assignInfo = operator(pos, operator + "Assign", new CallInfo.ValueReceiver(get), List.of(right));
@@ -1057,7 +1069,9 @@ final class BodyChecker {
     private TExpr incrementOrDecrement(int pos, Expr operand, boolean increment, boolean prefix, Context ctx) {
         String name = increment ? "inc" : "dec";
         Expr target = assignable(operand);
-        if (target instanceof Expr.Index i) return indexedIncrementOrDecrement(pos, i, name, prefix, ctx);
+        if (target instanceof Expr.Index i) {
+            return onIndexed(i.receiver(), ctx, r -> indexedIncrementOrDecrement(pos, r, i.indices(), name, prefix, ctx));
+        }
         return onVariable(target, ctx, Mode.INDEPENDENT, read -> {
             List<TExpr> statements = new ArrayList<>();
             TExpr variable = withReceiverTemporaries(read, statements);
@@ -1074,15 +1088,15 @@ final class BodyChecker {
     }
 
     /** {@code a[i]++} is {@code a.set(i, a.get(i).inc())} with {@code a}, {@code i} and the old value in temporaries. */
-    private TExpr indexedIncrementOrDecrement(int pos, Expr.Index target, String name, boolean prefix, Context ctx) {
+    private TExpr indexedIncrementOrDecrement(int pos, CallInfo.Receiver array, List<Expr> indexExprs, String name,
+                                              boolean prefix, Context ctx) {
         List<TExpr> statements = new ArrayList<>();
-        CallInfo.Receiver array = receiver(target.receiver(), ctx);
         if (array instanceof CallInfo.ValueReceiver v) {
             array = new CallInfo.ValueReceiver(temporaryFor("<array>", v.value(), statements));
         }
         List<TExpr> indices = new ArrayList<>();
-        for (int k = 0; k < target.indices().size(); k++) {
-            indices.add(temporaryFor("<index" + k + ">", expr(target.indices().get(k), ctx, Mode.INDEPENDENT),
+        for (int k = 0; k < indexExprs.size(); k++) {
+            indices.add(temporaryFor("<index" + k + ">", expr(indexExprs.get(k), ctx, Mode.INDEPENDENT),
                     statements));
         }
         TExpr get = completer.completeCall(resolved(operator(pos, "get", array, indices), ctx), Mode.INDEPENDENT);
