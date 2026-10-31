@@ -3,12 +3,18 @@ public final class test.scopes.Map : kotlin.Any {
     public constructor()
 }
 public final fun g(m: test.scopes.Map): kotlin.Unit
-public abstract interface test.scopes.Container : kotlin.Any {
+public open class test.scopes.Container : kotlin.Any {
+    public constructor()
     public final class test.scopes.Container.Item : kotlin.Any {
         public constructor()
     }
 }
-public final class test.scopes.Impl : test.scopes.Container {
+public abstract interface test.scopes.Holder : kotlin.Any {
+    public final class test.scopes.Holder.Item : kotlin.Any {
+        public constructor()
+    }
+}
+public final class test.scopes.Impl : test.scopes.Container, test.scopes.Holder {
     public constructor()
     public final fun item(): test.scopes.Container.Item
     public final companion object test.scopes.Impl.Companion : test.scopes.Container {
@@ -20,6 +26,6 @@ public final class test.scopes.Shadow<T : kotlin.Any?> : kotlin.Any {
     public final fun <T : kotlin.Any?> f(t: T): T
     public final class test.scopes.Shadow.NotInner : kotlin.Any {
         public constructor()
-        error 31:18: Unresolved type T
+        error 34:18: Unresolved type T
     }
 }

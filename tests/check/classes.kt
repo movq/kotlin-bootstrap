@@ -99,3 +99,9 @@ fun localUnstable(p: Any?) {
     }
     x = 1
 }
+
+// State is also an invisible type alias of kotlin.sequences, a default import, which resolves
+// as a value; as a qualifier the enum, without a companion object, still wins.
+private enum class State { BEGINNING, MIDDLE }
+
+private fun nextState(s: State): State = if (s == State.BEGINNING) State.MIDDLE else State.BEGINNING

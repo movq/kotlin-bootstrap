@@ -124,3 +124,13 @@ fun localUnstable
       default s
         call check.classes.g: kotlin.Long
       delegate kotlin.Any.<init>
+class State
+  constructor (primary)
+  entry BEGINNING
+    delegate check.classes.State.<init>
+  entry MIDDLE
+    delegate check.classes.State.<init>
+fun nextState
+  get check.classes.State.BEGINNING: check.classes.State
+  get check.classes.State.MIDDLE: check.classes.State
+  get check.classes.State.BEGINNING: check.classes.State

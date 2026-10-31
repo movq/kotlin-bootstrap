@@ -12,13 +12,16 @@ class Map
 // Same package beats default imports.
 fun g(m: Map) {}
 
-interface Container {
+open class Container {
     class Item
 }
-class Impl : Container {
-    // Nested classes of supertypes are visible in the body.
+interface Holder {
+    class Item
+}
+class Impl : Container(), Holder {
+    // Nested classes of superclasses are visible in the body, those of interfaces are not.
     fun item(): Item = TODO()
-    companion object : Container {
+    companion object : Container() {
         fun item2(): Item = TODO()
     }
 }

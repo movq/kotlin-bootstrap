@@ -530,6 +530,14 @@ final class BodyChecker {
         for (Candidate c : result.candidates()) {
             if (c.applicability().compareTo(best) > 0) best = c.applicability();
         }
+        // As FIR's resolveRootPartOfQualifier: a name resolved to classes only, or not at all, is
+        // retried as a classifier, which beats an object of a farther scope or an invisible one
+        if (receiver == null && (!result.success()
+                || result.candidates().stream().allMatch(c -> c.symbol instanceof ClassifierSymbol))
+                && ctx.findClassifier(name) instanceof ClassifierSymbol root && !(root instanceof TypeParamSymbol)
+                && result.candidates().stream().noneMatch(c -> c.symbol == root)) {
+            return new CallInfo.Qualifier(pos, null, root, List.of(), null);
+        }
         for (Candidate c : result.candidates()) {
             if (c.symbol instanceof ClassifierSymbol classifier && c.applicability() == best
                     && (result.success() || best == Applicability.K2_NO_COMPANION_OBJECT)) {

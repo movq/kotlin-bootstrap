@@ -2,6 +2,7 @@ package kotlinbootstrap.resolve;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -154,7 +155,7 @@ public final class KotlinClassSymbol extends ClassSymbol {
     /**
      * The scope inside the class body: the class's type parameters (unless
      * for a nested class), then nested classes of the class, its companion
-     * and its supertypes, then the outer scope.
+     * and its superclasses, then the outer scope.
      */
     public Scope bodyScope(boolean withTypeParams) {
         if (bodyScope == null) {
@@ -169,15 +170,22 @@ public final class KotlinClassSymbol extends ClassSymbol {
         if (c != null) return c;
         ClassSymbol companion = companion();
         if (companion != null) {
-            c = SymbolTable.findInheritedClassifier(companion, name);
+            c = companion.members().classifier(name);
             if (c != null) return c;
         }
-        if (supertypesInProgress()) return null;
-        for (KType t : supertypes()) {
-            if (t instanceof KType.ClassType ct) {
-                c = SymbolTable.findInheritedClassifier(ct.symbol(), name);
-                if (c != null) return c;
+        // As FIR's lookupSuperTypes(lookupInterfaces = false): only superclasses, not interfaces
+        Set<ClassSymbol> seen = new HashSet<>();
+        for (ClassSymbol cls = this; cls != null && seen.add(cls) && !cls.supertypesInProgress(); ) {
+            ClassSymbol superclass = null;
+            for (KType t : cls.supertypes()) {
+                if (t instanceof KType.ClassType ct && ct.symbol().kind() != ClassKind.INTERFACE) {
+                    superclass = ct.symbol();
+                    c = superclass.members().classifier(name);
+                    if (c != null) return c;
+                    break;
+                }
             }
+            cls = superclass;
         }
         return null;
     }
