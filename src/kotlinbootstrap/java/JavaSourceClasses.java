@@ -245,7 +245,25 @@ public final class JavaSourceClasses implements ClassFinder {
                         this::typeParams, () -> CallableSymbol.Signature.NONE, this::defaultType));
             }
             if (kind() == ClassKind.ANNOTATION_CLASS) scope.add(annotationConstructor());
+            if (kind() == ClassKind.ENUM_CLASS) addEnumMembers(scope);
             return scope;
+        }
+
+        /** The static values, valueOf and entries of an enum, as FIR's FirJavaFacade builds them. */
+        private void addEnumMembers(MemberScope scope) {
+            KType self = new KType.ClassType(this, List.of(), false);
+            scope.add(new FunctionSymbol("values", Origin.SYNTHETIC, this, Visibility.PUBLIC, Modality.FINAL, Set.of(),
+                    true, tree, List::of, () -> CallableSymbol.Signature.NONE,
+                    () -> new KType.ClassType(table.requireClass("kotlin.Array"), List.of(TypeArg.of(self)), false)));
+            scope.add(new FunctionSymbol("valueOf", Origin.SYNTHETIC, this, Visibility.PUBLIC, Modality.FINAL, Set.of(),
+                    true, tree, List::of,
+                    () -> new CallableSymbol.Signature(null, List.of(),
+                            List.of(new ValueParamSymbol("value", types.primitive("String"), false, Set.of(), null))),
+                    () -> self));
+            scope.add(new PropertySymbol("entries", Origin.SYNTHETIC, this, Visibility.PUBLIC, Modality.FINAL,
+                    Set.of(), true, tree, false, false, false, null, List::of, () -> CallableSymbol.Signature.NONE,
+                    () -> new KType.ClassType(table.requireClass("kotlin.enums.EnumEntries"), List.of(TypeArg.of(self)),
+                            false)));
         }
 
         /**
