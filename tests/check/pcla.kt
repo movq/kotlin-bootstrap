@@ -116,3 +116,19 @@ class Slot<T> { var value: T? = null }
 fun <T> fill(f: (Slot<T>) -> Unit): T = TODO()
 var stringSlot: Slot<String>? = null
 fun assignedSlot() = fill { stringSlot = it }
+
+// A lambda stored in a PCLA lambda has its own type, and an if without else in it is of Unit.
+fun processEach(xs: List<String>, ys: List<String>) = buildMap {
+    for (k in 1..2) {
+        val process = { d: String ->
+            if (d.isNotEmpty()) {
+                put(d, k)
+            }
+        }
+        xs.forEach(process)
+        ys.forEach(process)
+    }
+}
+fun takeInt(x: Int) = x
+fun <T> collect(f: MutableList<T>.() -> Unit): T = TODO()
+fun storedLength() = collect { add(1); val length = { d: String -> d.length }; takeInt(length("")) }

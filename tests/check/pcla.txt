@@ -174,3 +174,30 @@ fun fill
 fun assignedSlot
   call check.pcla.fill<kotlin.String>: kotlin.String
     lambda: (check.pcla.Slot<kotlin.String>) -> kotlin.Unit
+fun processEach
+  call kotlin.collections.buildMap<kotlin.String, kotlin.Int>: kotlin.collections.Map<kotlin.String, kotlin.Int>
+    lambda: kotlin.collections.MutableMap<kotlin.String, kotlin.Int>.() -> kotlin.Unit
+      val <iterator>: kotlin.collections.IntIterator
+        call kotlin.ranges.IntProgression.iterator: kotlin.collections.IntIterator
+          call kotlin.Int.rangeTo: kotlin.ranges.IntRange
+      call kotlin.collections.Iterator.hasNext: kotlin.Boolean
+      val k: kotlin.Int
+        call kotlin.collections.IntIterator.next: kotlin.Int
+      val process: (kotlin.String) -> kotlin.Unit
+        lambda: (kotlin.String) -> kotlin.Unit
+          call kotlin.text.isNotEmpty: kotlin.Boolean
+          call kotlin.collections.MutableMap.put: kotlin.Int?
+      call kotlin.collections.forEach<kotlin.String>: kotlin.Unit
+      call kotlin.collections.forEach<kotlin.String>: kotlin.Unit
+fun takeInt
+fun collect
+  call kotlin.TODO: kotlin.Nothing
+fun storedLength
+  call check.pcla.collect<kotlin.Int>: kotlin.Int
+    lambda: kotlin.collections.MutableList<kotlin.Int>.() -> kotlin.Unit
+      call kotlin.collections.MutableList.add: kotlin.Boolean
+      val length: (kotlin.String) -> kotlin.Int
+        lambda: (kotlin.String) -> kotlin.Int
+          get kotlin.String.length: kotlin.Int
+      call check.pcla.takeInt: kotlin.Int
+        call kotlin.Function1.invoke: kotlin.Int

@@ -1184,7 +1184,10 @@ final class BodyChecker {
         candidate.builder = w -> new TExpr.If(i.pos(), exhaustive ? w.callType(candidate, candidate.returnType()) : unit(),
                 condition, w.writeArgument(then, SyntheticCalls.parameterType(candidate, 0)),
                 otherwise == null ? null : w.writeArgument(otherwise, SyntheticCalls.parameterType(candidate, 1)));
-        return completer.completeCall(candidate, exhaustive ? mode : Mode.INDEPENDENT);
+        TExpr result = completer.completeCall(candidate, exhaustive ? mode : Mode.INDEPENDENT);
+        // Postponed in a PCLA lambda, an if without else is still of Unit, as FIR's non-exhaustive when.
+        if (!exhaustive && result instanceof TExpr.Unresolved u) return new TExpr.Unresolved(u.pos(), unit(), u.state());
+        return result;
     }
 
     /**
@@ -1251,7 +1254,9 @@ final class BodyChecker {
             KType type = exhaustive ? wr.callType(candidate, candidate.returnType()) : unit();
             return new TExpr.When(w.pos(), type, finalSubject, branches, exhaustive);
         };
-        return completer.completeCall(candidate, exhaustive ? mode : Mode.INDEPENDENT);
+        TExpr result = completer.completeCall(candidate, exhaustive ? mode : Mode.INDEPENDENT);
+        if (!exhaustive && result instanceof TExpr.Unresolved u) return new TExpr.Unresolved(u.pos(), unit(), u.state());
+        return result;
     }
 
     /** The condition of a when entry as a Boolean expression; null for else. */
@@ -1746,6 +1751,15 @@ final class BodyChecker {
         dfa.enterCallArguments(List.of(e));
         TExpr result = completer.completeCall(candidate, Mode.INDEPENDENT);
         dfa.exitFunctionCall(true);
+        // Postponed in a PCLA lambda, it is the lambda, analyzed, as in FIR, not the synthetic call.
+        if (result instanceof TExpr.Unresolved u && u.state() == candidate) {
+            for (PostponedArgument p : candidate.postponedArguments) {
+                if (p.analyzed() && p.result() instanceof TExpr.Lambda analyzed) {
+                    KType type = inferenceSession.updatedType(analyzed.type(), candidate.system, false);
+                    return new TExpr.Unresolved(result.pos(), type, candidate);
+                }
+            }
+        }
         return result;
     }
 
