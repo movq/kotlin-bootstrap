@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Prints the source directories of the closure of a Kotlin repo module's project dependencies.
 
+Each module's directories come after its name-based destructuring setting: modules built for Gradle
+compatibility, by an older compiler, are built without the newer language features.
+
 Usage: modules.py [--modules | --why] ROOT_PROJECT... (run from ~/src/kotlin), e.g. modules.py :compiler:cli-jvm
 Test configurations are skipped; so are the stdlib, which the probe adds itself, and EXCLUDED.
 """
@@ -38,6 +41,11 @@ def dependencies(directory):
     return result
 
 
+def gradle_compatible(directory):
+    path = os.path.join(directory, "build.gradle.kts")
+    return os.path.exists(path) and "configureKotlinCompileTasksGradleCompatibility()" in open(path).read()
+
+
 def source_dirs(directory):
     result = []
     main = os.path.join(directory, "src", "main")
@@ -72,7 +80,10 @@ def main(args):
         elif list_modules:
             print(project)
         else:
-            for d in source_dirs(project_dir(project, dirs)):
+            directory = project_dir(project, dirs)
+            mode = "only-syntax" if gradle_compatible(directory) else "complete"
+            print("-Xname-based-destructuring=" + mode)
+            for d in source_dirs(directory):
                 print(d)
 
 

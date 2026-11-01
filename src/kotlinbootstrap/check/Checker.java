@@ -32,6 +32,7 @@ import kotlinbootstrap.symbols.Modality;
 import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.Symbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
+import kotlinbootstrap.syntax.SourceFile;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeApproximator;
 import kotlinbootstrap.types.TypeSystem;
@@ -62,7 +63,7 @@ public final class Checker {
     private final OverloadResolver overloads;
     private final ConstantEvaluator constants;
     private final Map<FileContext, List<Context.TowerElement>> importingScopes = new HashMap<>();
-    private final LanguageSettings settings;
+    private final Function<SourceFile, LanguageSettings> settings;
     private final Map<ClassSymbol, ClassContexts> classContexts = new HashMap<>();
     /** The direct subclasses of the sealed classes of the sources; computed on first use. */
     private Map<ClassSymbol, List<ClassSymbol>> sealedInheritors;
@@ -83,6 +84,11 @@ public final class Checker {
     }
 
     public Checker(Resolver resolver, LanguageSettings settings) {
+        this(resolver, file -> settings);
+    }
+
+    /** @param settings the settings of each source file, as of the module it is in */
+    public Checker(Resolver resolver, Function<SourceFile, LanguageSettings> settings) {
         this.resolver = resolver;
         this.settings = settings;
         this.ts = new TypeSystem(resolver.table());
@@ -103,8 +109,8 @@ public final class Checker {
         return ts;
     }
 
-    LanguageSettings settings() {
-        return settings;
+    LanguageSettings settings(FileContext file) {
+        return settings.apply(file.file().source());
     }
 
     Resolver resolver() {

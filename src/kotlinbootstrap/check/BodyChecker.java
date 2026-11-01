@@ -877,7 +877,7 @@ final class BodyChecker {
      */
     private void destructure(Decl.Destructuring d, LocalVariable source, Context ctx, List<TExpr> out) {
         boolean fullForm = !d.entries().isEmpty() && d.entries().getFirst().valOrVar() != Decl.ValOrVar.NONE;
-        boolean byName = !d.squareBrackets() && (fullForm || owner.settings().nameBasedDestructuringShortForm());
+        boolean byName = !d.squareBrackets() && (fullForm || owner.settings(ctx.file()).nameBasedDestructuringShortForm());
         for (int i = 0; i < d.entries().size(); i++) {
             Decl.DestructuringEntry e = d.entries().get(i);
             if (e.name().equals("_") && (!byName || e.sourceName() == null)) continue;

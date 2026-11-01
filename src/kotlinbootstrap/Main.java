@@ -25,8 +25,8 @@ public final class Main {
     private static final String USAGE = """
             usage: kbc parse <file.kt>...
                    kbc resolve [--jdk-release N] [--dump] <file.kt, file.java, file.jar or directory>...
-                   kbc check [--jdk-release N] [--errors] [-Xname-based-destructuring=complete]
-                             <file.kt, file.java, file.jar or directory>...""";
+                   kbc check [--jdk-release N] [--errors]
+                             [-Xname-based-destructuring={complete|only-syntax}] <file.kt, file.java, file.jar or directory>...""";
 
     private Main() {
     }
@@ -98,22 +98,32 @@ public final class Main {
     private static void check(List<String> args) throws IOException {
         String release = "8";
         boolean printErrors = false;
-        boolean nameBasedDestructuring = false;
+        // A language setting applies to the paths after it, as the modules they are in are built.
+        LanguageSettings settings = LanguageSettings.DEFAULT;
         List<Path> paths = new ArrayList<>();
+        Map<Path, LanguageSettings> pathSettings = new HashMap<>();
         for (int i = 0; i < args.size(); i++) {
             if (args.get(i).equals("--jdk-release") && i + 1 < args.size()) {
                 release = args.get(++i);
             } else if (args.get(i).equals("--errors")) {
                 printErrors = true;
-            } else if (args.get(i).equals("-Xname-based-destructuring=complete")) {
-                nameBasedDestructuring = true;
+            } else if (args.get(i).startsWith("-Xname-based-destructuring=")) {
+                settings = new LanguageSettings(args.get(i).endsWith("=complete"));
+            } else if (args.get(i).startsWith("-X")) {
+                // Other features, like context parameters, are always on.
             } else {
                 paths.add(Path.of(args.get(i)));
+                pathSettings.put(Path.of(args.get(i)), settings);
             }
+        }
+        Map<String, LanguageSettings> fileSettings = new HashMap<>();
+        for (Map.Entry<Path, LanguageSettings> e : pathSettings.entrySet()) {
+            for (Path f : Frontend.sourceFiles(List.of(e.getKey()), ".kt")) fileSettings.put(f.toString(), e.getValue());
         }
         Checker.Report report;
         try {
-            report = new Checker(Frontend.load(paths, release), new LanguageSettings(nameBasedDestructuring)).checkAll();
+            report = new Checker(Frontend.load(paths, release),
+                    file -> fileSettings.getOrDefault(file.path(), LanguageSettings.DEFAULT)).checkAll();
         } catch (SyntaxError | ResolveException e) {
             System.err.println(e);
             System.exit(1);
