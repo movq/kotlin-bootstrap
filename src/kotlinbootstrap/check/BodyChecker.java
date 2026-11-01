@@ -516,7 +516,9 @@ final class BodyChecker {
                              Function<CallInfo.Receiver, TExpr> selector) {
         if (!safe) return selector.apply(receiver);
         if (!(receiver instanceof CallInfo.ValueReceiver v)) throw error(pos, "A safe call needs a value as receiver");
-        LocalVariable subject = temporary("<safe>", Types.makeDefinitelyNotNull(v.value().type()));
+        // A receiver smart cast to null has the type before, as FIR's propagateTypeFromOriginalReceiver.
+        KType receiverType = v.value() instanceof TExpr.SmartCast s ? s.scopeType() : v.value().type();
+        LocalVariable subject = temporary("<safe>", Types.makeDefinitelyNotNull(receiverType));
         DataFlowAnalyzer.State before = dfa.enterSafeCall(subject, v.value());
         TExpr result = selector.apply(new CallInfo.ValueReceiver(new TExpr.LocalGet(pos, subject.type(), subject)));
         KType type = TExprs.isStatement(result) ? result.type() : Types.makeNullable(result.type());
@@ -1148,7 +1150,7 @@ final class BodyChecker {
         if (needsTemporary(extension)) extension = temporaryFor("<receiver>", extension, statements);
         TExpr read = new TExpr.PropertyGet(g.pos(), g.type(), g.property(), g.typeArgs(), dispatch, extension,
                 g.contextArgs(), g.superCall());
-        return variable instanceof TExpr.SmartCast s ? new TExpr.SmartCast(s.pos(), s.type(), read) : read;
+        return variable instanceof TExpr.SmartCast s ? new TExpr.SmartCast(s.pos(), s.type(), read, s.typeWithoutNullableNothing()) : read;
     }
 
     private static boolean needsTemporary(TExpr receiver) {

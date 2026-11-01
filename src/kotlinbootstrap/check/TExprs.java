@@ -55,7 +55,8 @@ final class TExprs {
                     t.apply(c.target()), c.negated());
             case TExpr.Cast c -> new TExpr.Cast(c.pos(), t.apply(c.type()), f.apply(c.expr()), t.apply(c.target()),
                     c.safe());
-            case TExpr.SmartCast s -> new TExpr.SmartCast(s.pos(), t.apply(s.type()), f.apply(s.expr()));
+            case TExpr.SmartCast s -> new TExpr.SmartCast(s.pos(), t.apply(s.type()), f.apply(s.expr()),
+                    s.typeWithoutNullableNothing() == null ? null : t.apply(s.typeWithoutNullableNothing()));
             case TExpr.SamConversion s -> new TExpr.SamConversion(s.pos(), t.apply(s.type()), f.apply(s.expr()));
             case TExpr.SuspendConversion s -> new TExpr.SuspendConversion(s.pos(), t.apply(s.type()), f.apply(s.expr()));
             case TExpr.Block b -> new TExpr.Block(b.pos(), t.apply(b.type()), all(b.statements(), f));

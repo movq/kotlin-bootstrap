@@ -711,7 +711,7 @@ final class CallResolver {
 
         void processMembers(Task task, Level level, TowerGroup group, MemberLevel m) {
             CallInfo info = level.info();
-            KType type = m.dispatch().type();
+            KType type = m.dispatch() instanceof TExpr.SmartCast s ? s.scopeType() : m.dispatch().type();
             if (info.kind() != CallInfo.Kind.VARIABLE) {
                 // Constructors of inner classes, as members.
                 List<MemberScopes.Inner> inner = scopes.innerClasses(type, info.name());

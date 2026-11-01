@@ -90,3 +90,9 @@ fun lastLeafWeight
       call check.dataflow.Leaf.<init>: check.dataflow.Leaf
       call check.dataflow.Node.<init>: check.dataflow.Node
   call check.dataflow.Leaf.weight: kotlin.Int
+fun takeNullableString
+fun nullAfterThrow
+  call java.lang.AssertionError.<init>: java.lang.AssertionError
+  call check.dataflow.takeNullableString: kotlin.Unit
+  call kotlin.toString: kotlin.String
+  call kotlin.Int.plus: kotlin.Int

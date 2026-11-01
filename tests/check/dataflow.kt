@@ -60,3 +60,12 @@ fun lastLeafWeight(xs: List<Int>): Int {
     xs.each { last = if (it > 0) Leaf() else Node() }
     return if (last is Leaf) last.weight() else 0
 }
+
+// x == null smart casts x to Nothing?, keeping its members for calls and safe calls.
+fun takeNullableString(s: String?) {}
+fun nullAfterThrow(x: Int?): Int? {
+    if (x != null) throw AssertionError()
+    takeNullableString(x)
+    x.toString()
+    return x?.plus(1)
+}

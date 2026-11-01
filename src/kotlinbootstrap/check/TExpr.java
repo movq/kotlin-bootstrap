@@ -184,8 +184,21 @@ public sealed interface TExpr {
 
     // ==== Implicit conversions ====
 
-    /** An expression known by data flow to have a more specific type than its own. */
-    record SmartCast(int pos, KType type, TExpr expr) implements TExpr {
+    /**
+     * An expression known by data flow to have a more specific type than its own.
+     *
+     * @param typeWithoutNullableNothing for a smart cast to Nothing?, the type members are looked up in, as FIR's
+     *                                   smartcastTypeWithoutNullableNothing; otherwise null
+     */
+    record SmartCast(int pos, KType type, TExpr expr, KType typeWithoutNullableNothing) implements TExpr {
+        SmartCast(int pos, KType type, TExpr expr) {
+            this(pos, type, expr, null);
+        }
+
+        /** The type whose members the expression has as a receiver. */
+        KType scopeType() {
+            return typeWithoutNullableNothing != null ? typeWithoutNullableNothing : type;
+        }
     }
 
     /** A function value converted to a Java functional (SAM) interface or a Kotlin {@code fun interface}. */

@@ -155,9 +155,12 @@ final class DataFlowAnalyzer {
         List<KType> types = new ArrayList<>(s.upperTypes());
         types.add(e.type());
         KType type = ts.intersect(types);
-        // TODO: smart casts to Nothing?, which kotlinc makes, resolving members as if without it
-        if (type.equals(e.type()) || isKindOfNothing(type)) return e;
-        return new TExpr.SmartCast(e.pos(), type, e);
+        if (type.equals(e.type())) return e;
+        // A smart cast to Nothing?, as by x == null, keeps the members of the other types.
+        List<KType> nonNothing = types.stream().filter(t -> !isKindOfNothing(t)).toList();
+        KType withoutNullableNothing = isKindOfNothing(type) && !isKindOfNothing(e.type()) && !nonNothing.isEmpty()
+                ? ts.intersect(nonNothing) : null;
+        return new TExpr.SmartCast(e.pos(), type, e, withoutNullableNothing);
     }
 
     private boolean isKindOfNothing(KType t) {
