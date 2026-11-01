@@ -29,6 +29,7 @@ import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.Symbol;
 import kotlinbootstrap.symbols.Visibility;
 import kotlinbootstrap.types.KType;
+import kotlinbootstrap.types.Substitution;
 import kotlinbootstrap.types.TypeSystem;
 import kotlinbootstrap.types.Types;
 
@@ -1068,6 +1069,14 @@ final class DataFlowAnalyzer {
             any |= arguments[param + 1] != null;
         }
         if (!any) return;
+        // The callee's type parameters stand for the call's type arguments, as in FIR's processConditionalContract.
+        List<KType> typeArgs = switch (call) {
+            case TExpr.Call fc -> fc.typeArgs();
+            case TExpr.PropertyGet g -> g.typeArgs();
+            default -> null;
+        };
+        Substitution typeArguments = typeArgs != null && typeArgs.size() == f.typeParams().size()
+                ? Substitution.ofTypes(f.typeParams(), typeArgs) : c.substitutor;
         for (Contract.Returns r : contract.returns()) {
             Operation operation = switch (r.value()) {
                 case ANY -> null;
@@ -1076,7 +1085,7 @@ final class DataFlowAnalyzer {
                 case NULL -> Operation.EQ_NULL;
                 case NOT_NULL -> Operation.NOT_EQ_NULL;
             };
-            Map<DataFlowVariable, TypeStatement> statements = approve(r.condition(), false, arguments, operation == null);
+            Map<DataFlowVariable, TypeStatement> statements = approve(r.condition(), false, arguments, typeArguments, operation == null);
             if (statements == null) continue;
             if (operation == null) {
                 addAll(statements);
@@ -1089,10 +1098,11 @@ final class DataFlowAnalyzer {
 
     /** The type statements a contract's condition implies, as FIR's approveContractStatement; null if it cannot hold. */
     private Map<DataFlowVariable, TypeStatement> approve(Contract.Condition condition, boolean inverted,
-                                                         DataFlowVariable[] arguments, boolean removeApproved) {
+                                                         DataFlowVariable[] arguments, Substitution typeArguments,
+                                                         boolean removeApproved) {
         return switch (condition) {
             case Contract.Condition.Constant c -> inverted == c.value() ? null : Map.of();
-            case Contract.Condition.Not n -> approve(n.condition(), !inverted, arguments, removeApproved);
+            case Contract.Condition.Not n -> approve(n.condition(), !inverted, arguments, typeArguments, removeApproved);
             case Contract.Condition.IsNull n -> {
                 DataFlowVariable v = arguments[n.arg() + 1];
                 yield v == null ? Map.of() : approve(inverted == n.negated() ? OperationStatement.eqNull(v)
@@ -1106,7 +1116,7 @@ final class DataFlowAnalyzer {
                 DataFlowVariable v = arguments[i.arg() + 1];
                 if (v == null) yield Map.of();
                 boolean isType = inverted == i.negated();
-                KType type = i.type();
+                KType type = typeArguments.apply(i.type());
                 if (isClass(type, ts.anyClass(), false)) {
                     yield approve(isType ? OperationStatement.notEqNull(v) : OperationStatement.eqNull(v), removeApproved);
                 }
@@ -1122,8 +1132,8 @@ final class DataFlowAnalyzer {
                         Map.of(v, isType ? TypeStatement.typeEq(v, type) : TypeStatement.typeNotEq(v, type)));
             }
             case Contract.Condition.Logical l -> {
-                Map<DataFlowVariable, TypeStatement> a = approve(l.left(), inverted, arguments, removeApproved);
-                Map<DataFlowVariable, TypeStatement> b = approve(l.right(), inverted, arguments, removeApproved);
+                Map<DataFlowVariable, TypeStatement> a = approve(l.left(), inverted, arguments, typeArguments, removeApproved);
+                Map<DataFlowVariable, TypeStatement> b = approve(l.right(), inverted, arguments, typeArguments, removeApproved);
                 boolean isAnd = inverted != l.and();
                 if (a == null) yield isAnd ? null : b;
                 if (b == null) yield isAnd ? null : a;

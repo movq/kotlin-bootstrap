@@ -42,6 +42,15 @@ val Mode.isTyped: Boolean
     }
 fun typeLength(m: Mode) = if (m.isTyped) m.type.length else 0
 
+// A contract's type is of the call's type arguments.
+sealed class Result<D : Any> { class Some<D : Any>(val value: D) : Result<D>(); class None<D : Any> : Result<D>() }
+@OptIn(kotlin.contracts.ExperimentalContracts::class)
+fun <D : Any> Result<D>.isSome(): Boolean {
+    kotlin.contracts.contract { returns(true) implies (this@isSome is Result.Some<D>) }
+    return this is Result.Some
+}
+fun <D : Any> Result<D>.valueOrNull(): D? = if (isSome()) value else null
+
 // An inline function calls its lambda in place: a smart cast after it is stable.
 open class Node
 class Leaf : Node() { fun weight() = 1 }
