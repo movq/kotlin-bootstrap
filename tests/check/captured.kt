@@ -112,3 +112,10 @@ fun <T : Any> notNullReceiver(t: T?) = t?.let { it }
 interface Sym<T> { val ok: Boolean }
 fun Sym<*>.isOk(): Boolean = ok
 fun <S : Sym<*>> flexibleReceiver(set: MutableSet<S>) { set.removeIf { s -> s.isOk() } }
+
+// Captured types alone, unlike type variables, have a common supertype.
+abstract class SelfContext<C : SelfContext<C>> { fun replaced(x: Int): C = TODO() }
+fun eitherContext(outer: SelfContext<*>, b: Boolean) {
+    val context = if (b) outer.replaced(1) else outer.replaced(2)
+    context.replaced(3)
+}

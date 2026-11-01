@@ -90,3 +90,13 @@ fun flexibleReceiver
     sam: java.util.function.Predicate<in S!>!
       lambda: (S!) -> kotlin.Boolean
         call check.captured.isOk: kotlin.Boolean
+class SelfContext
+  constructor (primary)
+    delegate kotlin.Any.<init>
+  fun replaced
+    call kotlin.TODO: kotlin.Nothing
+fun eitherContext
+  val context: check.captured.SelfContext<*>
+    call check.captured.SelfContext.replaced: Captured(*)
+    call check.captured.SelfContext.replaced: Captured(*)
+  call check.captured.SelfContext.replaced: Captured(*)

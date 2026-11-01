@@ -270,10 +270,13 @@ final class ResultTypeResolver {
         return t instanceof KType.TypeVariableType v && c.notFixedTypeVariables().containsKey(v.variable());
     }
 
+    /** A not fixed variable or a captured projection of one, as kotlinc's isStubTypeForVariableInSubtypingOrCaptured. */
     private static boolean isNotFixedVariableOrCaptured(ConstraintSystem c, KType t) {
         KType lower = Types.lowerBound(t);
         if (lower instanceof KType.DefinitelyNotNull d) lower = d.inner();
-        return isNotFixedVariable(c, lower) || lower instanceof KType.Captured;
+        return isNotFixedVariable(c, lower) || lower instanceof KType.Captured captured
+                && !captured.constructor().projection().isStar()
+                && isNotFixedVariable(c, Types.lowerBound(captured.constructor().projection().type()));
     }
 
     /** The types of the lower constraints, if one of them is proper. */
