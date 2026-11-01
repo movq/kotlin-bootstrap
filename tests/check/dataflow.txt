@@ -50,3 +50,25 @@ fun typeLength
   get check.dataflow.isTyped: kotlin.Boolean
   get kotlin.String.length: kotlin.Int
     get check.dataflow.Mode.Typed.type: kotlin.String
+class Node
+  constructor (primary)
+    delegate kotlin.Any.<init>
+class Leaf
+  constructor (primary)
+    delegate check.dataflow.Node.<init>
+  fun weight
+fun each
+  val <iterator>: kotlin.collections.Iterator<kotlin.Int>
+    call kotlin.collections.List.iterator: kotlin.collections.Iterator<kotlin.Int>
+  call kotlin.collections.Iterator.hasNext: kotlin.Boolean
+  val x: kotlin.Int
+    call kotlin.collections.Iterator.next: kotlin.Int
+  call kotlin.Function1.invoke: kotlin.Unit
+fun lastLeafWeight
+  val last: check.dataflow.Node?
+  call check.dataflow.each: kotlin.Unit
+    lambda: (kotlin.Int) -> kotlin.Unit
+      call kotlin.Int.compareTo: kotlin.Int
+      call check.dataflow.Leaf.<init>: check.dataflow.Leaf
+      call check.dataflow.Node.<init>: check.dataflow.Node
+  call check.dataflow.Leaf.weight: kotlin.Int

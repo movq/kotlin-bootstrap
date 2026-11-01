@@ -41,3 +41,13 @@ val Mode.isTyped: Boolean
         return this is Mode.Typed
     }
 fun typeLength(m: Mode) = if (m.isTyped) m.type.length else 0
+
+// An inline function calls its lambda in place: a smart cast after it is stable.
+open class Node
+class Leaf : Node() { fun weight() = 1 }
+inline fun List<Int>.each(f: (Int) -> Unit) { for (x in this) f(x) }
+fun lastLeafWeight(xs: List<Int>): Int {
+    var last: Node? = null
+    xs.each { last = if (it > 0) Leaf() else Node() }
+    return if (last is Leaf) last.weight() else 0
+}

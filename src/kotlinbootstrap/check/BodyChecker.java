@@ -1948,14 +1948,26 @@ final class BodyChecker {
                 explicitEmptyReturn);
     }
 
-    /** How the call a lambda is an argument of calls it, by its contract; null if not in place. */
+    /**
+     * How the call a lambda is an argument of calls it, by its contract, as
+     * FIR's replaceLambdaArgumentEffects: an inline function calls its
+     * function parameters in place, unless noinline or crossinline; null if
+     * not in place.
+     */
     private Contract.InvocationKind invocationKind(LambdaAtom atom) {
         Candidate call = atom.containingCandidate;
         if (call == null || call.argumentMapping == null || !(call.symbol instanceof FunctionSymbol f)) return null;
         for (int i = 0; i < call.arguments.size(); i++) {
             if (call.arguments.get(i) instanceof TExpr.Unresolved u && u.state() == atom.expression) {
                 int param = call.argumentMapping[i];
-                return param < 0 ? null : owner.contract(f).callsInPlace().get(param);
+                if (param < 0) return null;
+                Contract.InvocationKind kind = owner.contract(f).callsInPlace().get(param);
+                if (kind != null || !f.has(Modifier.INLINE)) return kind;
+                ValueParamSymbol p = f.signature().params().get(param);
+                FunctionTypes.Kind type = FunctionTypes.kind(p.type());
+                boolean inPlace = type != null && !type.isReflect() && !p.modifiers().contains(Modifier.NOINLINE)
+                        && !p.modifiers().contains(Modifier.CROSSINLINE);
+                return inPlace ? Contract.InvocationKind.UNKNOWN : null;
             }
         }
         return null;
