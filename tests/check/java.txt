@@ -5,3 +5,6 @@ fun javaOverrides
   val b: kotlin.Any
     get check.java.KHolder.accessor: kotlin.Any
   get check.java.AccessorImpl.isDefault: kotlin.Boolean
+fun timeUnitCount
+  get kotlin.collections.List.size: kotlin.Int
+    get java.util.concurrent.TimeUnit.entries: kotlin.enums.EnumEntries<java.util.concurrent.TimeUnit>

@@ -288,7 +288,17 @@ public final class JdkClasses implements ClassFinder {
                 }
             }
             if (element.getKind() == ElementKind.ANNOTATION_TYPE) scope.add(annotationConstructor());
+            if (element.getKind() == ElementKind.ENUM) scope.add(enumEntries());
             return scope;
+        }
+
+        /** The static entries of an enum, as FIR's FirJavaFacade adds them; values and valueOf are in the class file. */
+        private PropertySymbol enumEntries() {
+            KType self = new KType.ClassType(this, List.of(), false);
+            return new PropertySymbol("entries", Origin.SYNTHETIC, this, Visibility.PUBLIC, Modality.FINAL, Set.of(), true,
+                    element, false, false, false, null, List::of, () -> CallableSymbol.Signature.NONE,
+                    () -> new KType.ClassType(table.requireClass("kotlin.enums.EnumEntries"), List.of(TypeArg.of(self)),
+                            false));
         }
 
         /**

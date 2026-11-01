@@ -10,3 +10,6 @@ fun javaOverrides(h: HolderImpl, k: KHolder): Boolean {
     val b = k.accessor
     return a.isDefault
 }
+
+// An enum from a class file has the static entries.
+fun timeUnitCount() = java.util.concurrent.TimeUnit.entries.size
