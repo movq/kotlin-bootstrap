@@ -66,7 +66,8 @@ fun isSome
       call kotlin.contracts.SimpleEffect.implies: kotlin.contracts.ConditionalEffect
         call kotlin.contracts.ContractBuilder.returns: kotlin.contracts.Returns
 fun valueOrNull
-  error: Unresolved reference value
+  call check.dataflow.isSome<D>: kotlin.Boolean
+  get check.dataflow.Result.Some.value: D
 class Node
   constructor (primary)
     delegate kotlin.Any.<init>

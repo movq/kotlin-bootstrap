@@ -36,7 +36,6 @@ import kotlinbootstrap.syntax.SourceFile;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeApproximator;
 import kotlinbootstrap.types.TypeSystem;
-import kotlinbootstrap.types.Types;
 
 /**
  * Checks the bodies of the declarations of the Kotlin sources: function
@@ -219,12 +218,8 @@ public final class Checker {
         return contracts.computeIfAbsent(f, k -> {
             Resolver.DeclarationContext dc = resolver.context(f);
             if (dc == null) return Contract.NONE;
-            // Types with the declaration's type parameters would need the call's type arguments.
-            Function<TypeRef, KType> resolveType = ref -> {
-                KType t = resolver.types().resolve(ref, dc.scope(), dc.file());
-                return Types.contains(t, c -> c instanceof KType.TypeParamType p && f.typeParams().contains(p.symbol()))
-                        ? null : t;
-            };
+            // Types with the declaration's type parameters are substituted with the call's type arguments.
+            Function<TypeRef, KType> resolveType = ref -> resolver.types().resolve(ref, dc.scope(), dc.file());
             return f.source() instanceof Decl.Function d ? Contract.of(d, resolveType)
                     : Contract.of((Decl.Property) f.source(), resolveType);
         });
