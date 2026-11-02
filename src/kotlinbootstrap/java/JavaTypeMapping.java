@@ -2,6 +2,7 @@ package kotlinbootstrap.java;
 
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import kotlinbootstrap.symbols.ClassId;
@@ -48,6 +49,17 @@ public final class JavaTypeMapping {
                 "kotlin.collections.MutableListIterator");
         collection("java.util.Map", "kotlin.collections.Map", "kotlin.collections.MutableMap");
         collection("java.util.Map.Entry", "kotlin.collections.Map.Entry", "kotlin.collections.MutableMap.MutableEntry");
+        for (String c : List.of("Boolean", "Byte", "Char", "Double", "Enum", "Float", "Int", "Long", "Short", "String")) {
+            TO_JAVA.put(id("kotlin." + c + ".Companion"), id("kotlin.jvm.internal." + c + "CompanionObject"));
+        }
+        TO_JAVA.put(id("kotlin.concurrent.atomics.AtomicInt"), id("java.util.concurrent.atomic.AtomicInteger"));
+        TO_JAVA.put(id("kotlin.concurrent.atomics.AtomicLong"), id("java.util.concurrent.atomic.AtomicLong"));
+        TO_JAVA.put(id("kotlin.concurrent.atomics.AtomicBoolean"), id("java.util.concurrent.atomic.AtomicBoolean"));
+        TO_JAVA.put(id("kotlin.concurrent.atomics.AtomicReference"), id("java.util.concurrent.atomic.AtomicReference"));
+        TO_JAVA.put(id("kotlin.concurrent.atomics.AtomicIntArray"), id("java.util.concurrent.atomic.AtomicIntegerArray"));
+        TO_JAVA.put(id("kotlin.concurrent.atomics.AtomicLongArray"), id("java.util.concurrent.atomic.AtomicLongArray"));
+        TO_JAVA.put(id("kotlin.concurrent.atomics.AtomicArray"),
+                id("java.util.concurrent.atomic.AtomicReferenceArray"));
     }
 
     private static void add(String java, String kotlin) {

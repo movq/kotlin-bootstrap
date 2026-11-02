@@ -246,6 +246,21 @@ public final class JdkClasses implements ClassFinder {
         }
 
         @Override
+        public String javaRetention() {
+            if (element.getKind() != ElementKind.ANNOTATION_TYPE) return null;
+            for (var a : element.getAnnotationMirrors()) {
+                if (!((TypeElement) a.getAnnotationType().asElement()).getQualifiedName()
+                        .contentEquals("java.lang.annotation.Retention")) {
+                    continue;
+                }
+                for (var v : a.getElementValues().values()) {
+                    if (v.getValue() instanceof VariableElement e) return e.getSimpleName().toString();
+                }
+            }
+            return "CLASS";
+        }
+
+        @Override
         public List<KType> supertypes() {
             return supertypes.get();
         }

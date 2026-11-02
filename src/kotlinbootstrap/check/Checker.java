@@ -275,6 +275,18 @@ public final class Checker {
 
     // ==== Annotations ====
 
+    /** The default value of an annotation class's parameter, as its AnnotationDefault; null if it has none. */
+    public ConstantValue annotationDefault(FunctionSymbol constructor, int index) {
+        List<TExpr> defaults = checkedConstructor(constructor).defaultValues();
+        TExpr e = index < defaults.size() ? defaults.get(index) : null;
+        if (e == null) return null;
+        try {
+            return constants.evaluate(e);
+        } catch (ConstantEvaluator.NotConstant ex) {
+            return null;
+        }
+    }
+
     /** An annotation, checked once, in the context of what it annotates. */
     ConstantValue.Annotation checkedAnnotation(Annotation a, BodyChecker checker, Context ctx) {
         return memo(a, () -> checker.annotation(a, ctx));

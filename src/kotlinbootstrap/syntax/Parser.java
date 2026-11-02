@@ -1715,7 +1715,7 @@ public final class Parser {
      */
     private Expr parsePostfixExpression() {
         int start = pos();
-        Expr expr = at(COLONCOLON) ? parseDoubleColonSuffix(start, null) : parseAtomicExpression();
+        Expr expr = at(COLONCOLON) ? parseDoubleColonSuffix(start, null, false) : parseAtomicExpression();
 
         while (!interruptedWithNewLine()) {
             if (at(LBRACKET)) {
@@ -1736,16 +1736,16 @@ public final class Parser {
                 advance(); // operation
                 expr = new Expr.Postfix(start, op, expr);
             } else {
-                skipQuestionMarksBeforeDoubleColon();
+                boolean nullable = skipQuestionMarksBeforeDoubleColon();
                 if (!at(COLONCOLON)) break;
-                expr = parseDoubleColonSuffix(start, expr);
+                expr = parseDoubleColonSuffix(start, expr, nullable);
             }
         }
         return expr;
     }
 
     /* "::" (SimpleName | "class") */
-    private Expr parseDoubleColonSuffix(int start, Expr receiver) {
+    private Expr parseDoubleColonSuffix(int start, Expr receiver, boolean nullable) {
         advance(); // COLONCOLON
         if (at(CLASS_KEYWORD)) {
             advance(); // CLASS_KEYWORD
@@ -1756,17 +1756,17 @@ public final class Parser {
         if (at(LPAR) && !newlineBefore()) {
             throw error("This syntax is reserved for future use; to call a reference, enclose it in parentheses");
         }
-        return new Expr.CallableRef(start, receiver, name);
+        return new Expr.CallableRef(start, receiver, name, nullable);
     }
 
-    /* reference: "A?::b" is accepted syntactically (and rejected later); the '?' are dropped. */
-    private void skipQuestionMarksBeforeDoubleColon() {
-        if (!at(QUEST)) return;
+    /* reference: "A?::b", whose receiver type is nullable; whether there were question marks. */
+    private boolean skipQuestionMarksBeforeDoubleColon() {
+        if (!at(QUEST)) return false;
         int k = 1;
         while (lookahead(k) == QUEST) k++;
-        if (lookahead(k) == COLONCOLON) {
-            for (; k > 0; k--) advance();
-        }
+        if (lookahead(k) != COLONCOLON) return false;
+        for (; k > 0; k--) advance();
+        return true;
     }
 
     /*

@@ -1,5 +1,6 @@
 package kotlinbootstrap.jvm;
 
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,16 +32,33 @@ import kotlinbootstrap.syntax.SourceFile;
  */
 final class JvmNames {
     /** Members of builtins whose JVM name differs, as kotlinc's BuiltinSpecialProperties and ...WithDifferentJvmName. */
-    private static final Map<String, String> SPECIAL_PROPERTIES = Map.of(
+    private static final Map<String, String> SPECIAL_PROPERTIES = new HashMap<>(Map.of(
             "kotlin.collections.Collection.size", "size", "kotlin.collections.Map.size", "size",
             "kotlin.CharSequence.length", "length", "kotlin.collections.Map.keys", "keySet",
             "kotlin.collections.Map.values", "values", "kotlin.collections.Map.entries", "entrySet",
-            "kotlin.Enum.name", "name", "kotlin.Enum.ordinal", "ordinal");
-    private static final Map<String, String> SPECIAL_FUNCTIONS = Map.of(
+            "kotlin.Enum.name", "name", "kotlin.Enum.ordinal", "ordinal"));
+    private static final Map<String, String> SPECIAL_FUNCTIONS = new HashMap<>(Map.of(
             "kotlin.Number.toByte", "byteValue", "kotlin.Number.toShort", "shortValue",
             "kotlin.Number.toInt", "intValue", "kotlin.Number.toLong", "longValue",
             "kotlin.Number.toFloat", "floatValue", "kotlin.Number.toDouble", "doubleValue",
-            "kotlin.CharSequence.get", "charAt", "kotlin.collections.MutableList.removeAt", "remove");
+            "kotlin.CharSequence.get", "charAt", "kotlin.collections.MutableList.removeAt", "remove"));
+
+    static {
+        // The atomics of kotlin.concurrent.atomics are java.util.concurrent.atomic's, as kotlinc's JvmBuiltin ones.
+        String atomics = "kotlin.concurrent.atomics.";
+        for (String c : List.of("AtomicInt", "AtomicLong", "AtomicBoolean", "AtomicReference")) {
+            SPECIAL_FUNCTIONS.putAll(Map.of(atomics + c + ".load", "get", atomics + c + ".store", "set",
+                    atomics + c + ".exchange", "getAndSet", atomics + c + ".fetchAndAdd", "getAndAdd",
+                    atomics + c + ".addAndFetch", "addAndGet"));
+        }
+        for (String c : List.of("AtomicIntArray", "AtomicLongArray", "AtomicArray")) {
+            SPECIAL_FUNCTIONS.putAll(Map.of(atomics + c + ".loadAt", "get", atomics + c + ".storeAt", "set",
+                    atomics + c + ".exchangeAt", "getAndSet", atomics + c + ".compareAndSetAt", "compareAndSet",
+                    atomics + c + ".compareAndExchangeAt", "compareAndExchange",
+                    atomics + c + ".fetchAndAddAt", "getAndAdd", atomics + c + ".addAndFetchAt", "addAndGet"));
+            SPECIAL_PROPERTIES.put(atomics + c + ".size", "length");
+        }
+    }
 
     private final Resolver resolver;
     private final Map<CallableSymbol, Optional<String>> specialNames = new IdentityHashMap<>();

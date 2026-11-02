@@ -41,6 +41,8 @@ public final class JvmBackend {
     final Resolver resolver;
     final Checker checker;
     final TypeMapper types;
+    final Signatures signatures;
+    final JvmAnnotations annotations = new JvmAnnotations(this);
     final JvmNames names;
     final Closures closures;
     private final ClassHierarchyResolver hierarchy;
@@ -65,6 +67,7 @@ public final class JvmBackend {
         this.checker = checker;
         this.names = new JvmNames(resolver, moduleName);
         this.types = new TypeMapper(names, resolver);
+        this.signatures = new Signatures(types);
         this.closures = new Closures(cls -> classBodies(cls));
         this.hierarchy = new SourceHierarchy(this).orElse(classPath);
     }
@@ -112,13 +115,20 @@ public final class JvmBackend {
         ClassCodegen g = new ClassCodegen(this, cls, types.internalName(cls));
         g.nestHost = host;
         generators.put(cls, g);
+        for (KotlinClassSymbol nested : nestedClasses(cls)) addClass(nested, host);
+        pending.add(g);
+    }
+
+    /** The classes declared in a class's body. */
+    static List<KotlinClassSymbol> nestedClasses(KotlinClassSymbol cls) {
+        List<KotlinClassSymbol> result = new ArrayList<>();
         for (Decl d : cls.decl().members()) {
             if (d instanceof Decl.Class c && cls.members().classifier(nameOf(c)) instanceof KotlinClassSymbol nested
                     && nested.decl() == c) {
-                addClass(nested, host);
+                result.add(nested);
             }
         }
-        pending.add(g);
+        return result;
     }
 
     private static String nameOf(Decl.Class c) {
@@ -144,15 +154,12 @@ public final class JvmBackend {
         ClassCodegen g = new ClassCodegen(this, cls, name);
         g.nestHost = enclosingClass.nestHost;
         generators.put(cls, g);
-        for (Decl d : cls.decl().members()) {
-            if (d instanceof Decl.Class c && cls.members().classifier(nameOf(c)) instanceof KotlinClassSymbol nested
-                    && nested.decl() == c) {
-                types.setLocalName(nested, name + "$" + nameOf(c));
-                ClassCodegen ng = new ClassCodegen(this, nested, name + "$" + nameOf(c));
-                ng.nestHost = g.nestHost;
-                generators.put(nested, ng);
-                pending.add(ng);
-            }
+        for (KotlinClassSymbol nested : nestedClasses(cls)) {
+            types.setLocalName(nested, name + "$" + nested.name());
+            ClassCodegen ng = new ClassCodegen(this, nested, name + "$" + nested.name());
+            ng.nestHost = g.nestHost;
+            generators.put(nested, ng);
+            pending.add(ng);
         }
         pending.add(g);
         return g;

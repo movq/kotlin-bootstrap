@@ -6,10 +6,23 @@ import java.lang.classfile.ClassTransform;
 import java.lang.classfile.CodeBuilder;
 import java.lang.classfile.Label;
 import java.lang.classfile.TypeKind;
+import java.lang.classfile.Attribute;
+import java.lang.classfile.ClassElement;
+import java.lang.classfile.FieldElement;
+import java.lang.classfile.MethodElement;
+import java.lang.classfile.attribute.AnnotationDefaultAttribute;
 import java.lang.classfile.attribute.CodeAttribute;
+import java.lang.classfile.attribute.InnerClassInfo;
+import java.lang.classfile.attribute.InnerClassesAttribute;
+import java.lang.classfile.constantpool.ClassEntry;
+import java.lang.classfile.constantpool.PoolEntry;
 import java.lang.classfile.attribute.ConstantValueAttribute;
 import java.lang.classfile.instruction.ExceptionCatch;
+import java.lang.classfile.attribute.SignatureAttribute;
 import java.lang.classfile.attribute.SourceFileAttribute;
+import java.lang.classfile.ClassSignature;
+import java.lang.classfile.MethodSignature;
+import java.lang.classfile.Signature;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDesc;
 import java.lang.constant.ConstantDescs;
@@ -22,6 +35,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -77,6 +91,10 @@ final class ClassCodegen {
     String nestHost;
     private final Deque<MethodJob> methods = new ArrayDeque<>();
     private final Set<String> declaredMethods = new HashSet<>();
+    /** The generic signatures of methods, by name and descriptor. */
+    private final Map<String, String> signatures = new HashMap<>();
+    /** The annotation attributes of methods, by name and descriptor. */
+    private final Map<String, List<Attribute<?>>> methodAttributes = new HashMap<>();
     private final Map<String, Integer> syntheticNames = new HashMap<>();
     private final List<String[]> fields = new ArrayList<>();
     private List<CapturedField> captured;
@@ -125,8 +143,51 @@ final class ClassCodegen {
         methods.add(new MethodJob(name, flags, type, function, env, body));
     }
 
+    /** Gives a method queued a generic signature, if it needs one. */
+    private void signature(String name, MethodTypeDesc type, CallableSymbol f, boolean setter) {
+        String signature = backend.signatures.methodSignature(f, type, setter);
+        if (signature != null) signatures.put(name + type.descriptorString(), signature);
+    }
+
+    /**
+     * Gives a method queued its annotations and its parameters'.
+     *
+     * @param params those of the parameters after the first JVM ones, which have none
+     */
+    private void annotate(String name, MethodTypeDesc type, List<ConstantValue.Annotation> annotations,
+                          List<List<ConstantValue.Annotation>> params) {
+        List<Attribute<?>> attributes = new ArrayList<>();
+        backend.annotations.attributes(annotations, List.of(), attributes::add);
+        List<List<ConstantValue.Annotation>> all = new ArrayList<>();
+        for (int i = params.size(); i < type.parameterCount(); i++) all.add(List.of());
+        all.addAll(params);
+        backend.annotations.parameterAttributes(all, attributes::add);
+        if (!attributes.isEmpty()) methodAttributes.put(name + type.descriptorString(), attributes);
+    }
+
+    /** The annotations of a function's parameters, with none for its context parameters and receiver. */
+    private List<List<ConstantValue.Annotation>> paramAnnotations(CallableSymbol f, List<Decl.Param> params,
+                                                                  boolean properties) {
+        List<List<ConstantValue.Annotation>> result = new ArrayList<>();
+        for (int i = 0; i < f.signature().contextParams().size(); i++) result.add(List.of());
+        if (f.signature().receiver() != null) result.add(List.of());
+        for (Decl.Param p : params) {
+            List<kotlinbootstrap.ast.Annotation> as = p.modifiers().annotations();
+            result.add(properties && p.valOrVar() != Decl.ValOrVar.NONE
+                    ? backend.annotations.select(as, "param", List.of("VALUE_PARAMETER", "PROPERTY", "FIELD"),
+                    Set.of("VALUE_PARAMETER"))
+                    : backend.annotations.select(as, "VALUE_PARAMETER"));
+        }
+        return result;
+    }
+
     private void generateMethod(MethodJob job) {
         builder.withMethod(job.name(), job.type(), job.flags(), mb -> {
+            String signature = signatures.get(job.name() + job.type().descriptorString());
+            if (signature != null) mb.with(SignatureAttribute.of(MethodSignature.parseFrom(signature)));
+            for (Attribute<?> a : methodAttributes.getOrDefault(job.name() + job.type().descriptorString(), List.of())) {
+                mb.with((MethodElement) a);
+            }
             if (job.body() == null) return;
             mb.withCode(code -> {
                 boolean isStatic = (job.flags() & ClassFile.ACC_STATIC) != 0;
@@ -166,6 +227,7 @@ final class ClassCodegen {
                 classMembers();
             }
             while (!methods.isEmpty()) generateMethod(methods.removeFirst());
+            innerClasses(cb);
             backend.nests.member(this, cb);
         });
         return hasCatches ? dropEmptyCatches(cf, bytes) : bytes;
@@ -192,11 +254,18 @@ final class ClassCodegen {
     }
 
     private void field(int flags, String name, ClassDesc type, ConstantDesc constant) {
+        field(flags, name, type, constant, null, List.of());
+    }
+
+    private void field(int flags, String name, ClassDesc type, ConstantDesc constant, String signature,
+                       List<Attribute<?>> attributes) {
         for (String[] f : fields) if (f[0].equals(name)) return;
         fields.add(new String[]{name});
         builder.withField(name, type, fb -> {
             fb.withFlags(flags);
             if (constant != null) fb.with(ConstantValueAttribute.of(constant));
+            if (signature != null) fb.with(SignatureAttribute.of(Signature.parseFrom(signature)));
+            for (Attribute<?> a : attributes) fb.with((FieldElement) a);
         });
     }
 
@@ -321,6 +390,62 @@ final class ClassCodegen {
         ClassDesc annotation = ClassDesc.of("java.lang.annotation.Annotation");
         if (cls.kind() == ClassKind.ANNOTATION_CLASS && !interfaces.contains(annotation)) interfaces.add(annotation);
         cb.withInterfaceSymbols(interfaces);
+        String signature = backend.signatures.classSignature(cls, superclass(), interfaces);
+        if (signature != null) cb.with(SignatureAttribute.of(ClassSignature.parseFrom(signature)));
+        List<String> targets = cls.kind() == ClassKind.ANNOTATION_CLASS ? List.of("ANNOTATION_CLASS", "CLASS")
+                : List.of("CLASS");
+        backend.annotations.attributes(backend.annotations.select(cls.decl().modifiers().annotations(), null, targets,
+                        Set.copyOf(targets)),
+                cls.kind() == ClassKind.ANNOTATION_CLASS ? backend.annotations.javaMetaAnnotations(cls) : List.of(),
+                a -> cb.with((ClassElement) a));
+    }
+
+    /**
+     * The InnerClasses attribute, as JVMS 4.7.6: the nested classes this one
+     * refers to or declares, each after the class it is nested in.
+     */
+    private void innerClasses(ClassBuilder cb) {
+        List<String> names = new ArrayList<>();
+        for (PoolEntry e : cb.constantPool()) if (e instanceof ClassEntry c) names.add(c.asInternalName());
+        if (cls != null) {
+            for (KotlinClassSymbol n : JvmBackend.nestedClasses(cls)) names.add(backend.types.internalName(n));
+        }
+        Map<String, InnerClassInfo> entries = new LinkedHashMap<>();
+        for (String name : names) innerClass(backend.types.classByInternalName(name), entries);
+        if (!entries.isEmpty()) cb.with(InnerClassesAttribute.of(List.copyOf(entries.values())));
+    }
+
+    private void innerClass(ClassSymbol c, Map<String, InnerClassInfo> entries) {
+        if (!(c instanceof KotlinClassSymbol k) || k.outer() == null && !k.isLocal()) return;
+        String name = backend.types.internalName(k);
+        if (entries.containsKey(name)) return;
+        boolean member = k.outer() != null && !k.isAnonymous();
+        if (member) innerClass(k.outer(), entries);
+        int flags = innerClassFlags(k);
+        entries.put(name, InnerClassInfo.of(ClassDesc.ofInternalName(name),
+                member ? Optional.of(backend.types.classDesc(k.outer())) : Optional.empty(),
+                k.isAnonymous() ? Optional.empty() : Optional.of(k.name()), flags));
+    }
+
+    /** The flags of a nested class in InnerClasses: as in its header, with its visibility, and static unless inner. */
+    private static int innerClassFlags(KotlinClassSymbol k) {
+        int flags = k.isLocal() ? 0 : visibilityFlags(k.visibility());
+        if (!k.isInner() && !k.isLocal()) flags |= ClassFile.ACC_STATIC;
+        switch (k.kind()) {
+            case INTERFACE -> flags |= ClassFile.ACC_INTERFACE | ClassFile.ACC_ABSTRACT | ClassFile.ACC_STATIC;
+            case ANNOTATION_CLASS -> flags |= ClassFile.ACC_INTERFACE | ClassFile.ACC_ABSTRACT
+                    | ClassFile.ACC_ANNOTATION | ClassFile.ACC_STATIC;
+            case ENUM_CLASS -> flags |= ClassFile.ACC_ENUM | ClassFile.ACC_STATIC
+                    | (k.modality() == Modality.FINAL ? ClassFile.ACC_FINAL : 0);
+            default -> {
+                if (k.modality() == Modality.ABSTRACT || k.modality() == Modality.SEALED) {
+                    flags |= ClassFile.ACC_ABSTRACT;
+                } else if (k.modality() == Modality.FINAL) {
+                    flags |= ClassFile.ACC_FINAL;
+                }
+            }
+        }
+        return flags;
     }
 
     /** The superclass: the first class among the supertypes, java.lang.Enum for an enum. */
@@ -399,12 +524,20 @@ final class ClassCodegen {
     }
 
     /** An annotation class's parameters, as abstract methods. */
+    /** An annotation class's members: the parameters of its constructor, with their default values. */
     private void annotationMembers() {
         if (cls.decl().primaryConstructor() == null) return;
-        for (Decl.Param param : cls.decl().primaryConstructor().params()) {
-            for (PropertySymbol p : cls.members().properties(param.name())) {
-                addMethod(p.name(), ClassFile.ACC_PUBLIC | ClassFile.ACC_ABSTRACT,
-                        MethodTypeDesc.of(backend.types.mapType(p.returnType())), null, null, null);
+        FunctionSymbol k = primaryConstructor();
+        List<ValueParamSymbol> params = k.signature().params();
+        for (int i = 0; i < params.size(); i++) {
+            ValueParamSymbol param = params.get(i);
+            ClassDesc type = backend.annotations.memberType(param);
+            MethodTypeDesc methodType = MethodTypeDesc.of(type);
+            addMethod(param.name(), ClassFile.ACC_PUBLIC | ClassFile.ACC_ABSTRACT, methodType, null, null, null);
+            ConstantValue value = param.hasDefault() ? backend.checker.annotationDefault(k, i) : null;
+            if (value != null) {
+                methodAttributes.put(param.name() + methodType.descriptorString(),
+                        List.of(AnnotationDefaultAttribute.of(backend.annotations.value(value, type))));
             }
         }
     }
@@ -437,6 +570,11 @@ final class ClassCodegen {
         }
         MethodTypeDesc type = backend.types.methodType(f);
         String name = backend.names.functionName(f);
+        signature(name, type, f, false);
+        if (f.source() instanceof Decl.Function d) {
+            annotate(name, type, backend.annotations.select(d.modifiers().annotations(), "FUNCTION"),
+                    paramAnnotations(f, d.params(), false));
+        }
         if (isAbstract(f)) {
             addMethod(name, flags | ClassFile.ACC_ABSTRACT, type, null, null, null);
             return;
@@ -582,15 +720,17 @@ final class ClassCodegen {
         boolean jvmField = JvmNames.has(JvmNames.modifiers(p), "JvmField");
         if (p.has(Modifier.CONST)) {
             ConstantValue v = backend.checker.constValue(p);
-            ConstantDesc constant = v instanceof ConstantValue.Primitive prim ? constantDesc(prim.value()) : null;
-            fieldIn(f, ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL, constant);
+            ConstantDesc constant = v instanceof ConstantValue.Primitive prim && TypeMapper.valueClass(prim.type()) == null
+                    ? constantDesc(prim.value()) : null;
+            fieldIn(f, ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL, constant, null,
+                    fieldAnnotations(p));
             return;
         }
         if (hasBackingField(p)) {
             int flags = jvmField || p.has(Modifier.LATEINIT) ? visibilityFlags(p.visibility()) : ClassFile.ACC_PRIVATE;
             if (f.isStatic()) flags |= ClassFile.ACC_STATIC;
             if (!p.isVar() && !f.isStatic() && !jvmField) flags |= ClassFile.ACC_FINAL;
-            fieldIn(f, flags, null);
+            fieldIn(f, flags, null, backend.signatures.fieldSignature(p, f.type()), fieldAnnotations(p));
         }
         if (p.source() instanceof Decl.Property d && d.delegate() != null) {
             Members.FieldRef df = Members.delegateField(backend, p);
@@ -602,21 +742,25 @@ final class ClassCodegen {
     }
 
     /** A field, declared here, or in the outer class for a companion's static one. */
-    private void fieldIn(Members.FieldRef f, int flags, ConstantDesc constant) {
+    private void fieldIn(Members.FieldRef f, int flags, ConstantDesc constant, String signature,
+                         List<Attribute<?>> attributes) {
         if (f.owner().equals(desc)) {
-            field(flags, f.name(), f.type(), constant);
+            field(flags, f.name(), f.type(), constant, signature, attributes);
         } else {
             ClassCodegen outer = backend.generator(cls.outer());
-            if (outer != null) outer.pendingFields.add(new PendingField(flags, f.name(), f.type(), constant));
+            if (outer != null) {
+                outer.pendingFields.add(new PendingField(flags, f.name(), f.type(), constant, signature, attributes));
+            }
         }
     }
 
     private void builderField(Members.FieldRef f, int flags) {
-        fieldIn(f, flags, null);
+        fieldIn(f, flags, null, null, List.of());
     }
 
     /** Fields the companion declares in its outer class, added when that is generated. */
-    record PendingField(int flags, String name, ClassDesc type, ConstantDesc constant) {
+    record PendingField(int flags, String name, ClassDesc type, ConstantDesc constant, String signature,
+                        List<Attribute<?>> attributes) {
     }
 
     final List<PendingField> pendingFields = new ArrayList<>();
@@ -644,8 +788,10 @@ final class ClassCodegen {
         if (isInterface && !isStatic) flags = ClassFile.ACC_PUBLIC;
         String name = getter ? backend.names.getterName(p) : backend.names.setterName(p);
         MethodTypeDesc type = getter ? backend.types.getterType(p) : backend.types.setterType(p);
+        signature(name, type, p, !getter);
         Decl.Property d = p.source() instanceof Decl.Property dp ? dp : null;
         Decl.Accessor declared = d == null ? null : getter ? d.getter() : d.setter();
+        accessorAnnotations(p, getter, declared, name, type);
         boolean isAbstract = p.modality() == Modality.ABSTRACT
                 || isInterface && (declared == null || declared.body() == null) && (d == null || d.delegate() == null);
         if (isAbstract) {
@@ -700,6 +846,45 @@ final class ClassCodegen {
                 g.returnValue(TypeMapper.VOID);
             }
         });
+    }
+
+    private void accessorAnnotations(PropertySymbol p, boolean getter, Decl.Accessor declared, String name,
+                                     MethodTypeDesc type) {
+        List<kotlinbootstrap.ast.Annotation> propertyAnnotations = propertyAnnotations(p);
+        List<ConstantValue.Annotation> annotations = new ArrayList<>(backend.annotations.select(propertyAnnotations,
+                getter ? "get" : "set", List.of(), Set.of()));
+        if (declared != null) {
+            annotations.addAll(backend.annotations.select(declared.modifiers().annotations(),
+                    getter ? "PROPERTY_GETTER" : "PROPERTY_SETTER"));
+        }
+        List<List<ConstantValue.Annotation>> params = new ArrayList<>();
+        if (!getter) {
+            List<ConstantValue.Annotation> value = new ArrayList<>(backend.annotations.select(propertyAnnotations,
+                    "setparam", List.of(), Set.of()));
+            if (declared != null && declared.param() != null) {
+                value.addAll(backend.annotations.select(declared.param().modifiers().annotations(), "VALUE_PARAMETER"));
+            }
+            params.add(value);
+        }
+        annotate(name, type, annotations, params);
+    }
+
+    private static List<kotlinbootstrap.ast.Annotation> propertyAnnotations(PropertySymbol p) {
+        return switch (p.source()) {
+            case Decl.Property d -> d.modifiers().annotations();
+            case Decl.Param d -> d.modifiers().annotations();
+            case null, default -> List.of();
+        };
+    }
+
+    /** The annotations of a property's field: of the property's that go on it. */
+    private List<Attribute<?>> fieldAnnotations(PropertySymbol p) {
+        List<String> candidates = p.source() instanceof Decl.Param ? List.of("VALUE_PARAMETER", "PROPERTY", "FIELD")
+                : List.of("PROPERTY", "FIELD");
+        List<Attribute<?>> attributes = new ArrayList<>();
+        backend.annotations.attributes(backend.annotations.select(propertyAnnotations(p), "field", candidates,
+                Set.of("FIELD")), List.of(), attributes::add);
+        return attributes;
     }
 
     /** Stores a property's initial value or delegate in its field. */
@@ -798,6 +983,14 @@ final class ClassCodegen {
         MethodTypeDesc type = declared.insertParameterTypes(0, prefix.toArray(ClassDesc[]::new));
         int flags = cls.kind() == ClassKind.ENUM_CLASS ? ClassFile.ACC_PRIVATE : visibilityFlags(k.visibility());
         if (cls.modality() == Modality.SEALED) flags = ClassFile.ACC_PROTECTED;
+        signature("<init>", type, k, false);
+        if (k.source() instanceof Decl.SecondaryConstructor sc) {
+            annotate("<init>", type, backend.annotations.select(sc.modifiers().annotations(), "CONSTRUCTOR"),
+                    paramAnnotations(k, sc.params(), false));
+        } else if (k.source() instanceof Decl.PrimaryConstructor pc) {
+            annotate("<init>", type, backend.annotations.select(pc.modifiers().annotations(), "CONSTRUCTOR"),
+                    paramAnnotations(k, pc.params(), true));
+        }
         addMethod("<init>", flags, type, body, null, g -> {
             bindPrefix(g);
             bindParameters(g, k, body, type.parameterList(), prefix.size());
@@ -945,7 +1138,9 @@ final class ClassCodegen {
         }
         if (cls.kind() == ClassKind.ENUM_CLASS) clinit.add(this::enumEntries);
         // Static fields of the companion, initialized by it.
-        for (PendingField f : pendingFields) field(f.flags(), f.name(), f.type(), f.constant());
+        for (PendingField f : pendingFields) {
+            field(f.flags(), f.name(), f.type(), f.constant(), f.signature(), f.attributes());
+        }
         if (clinit.isEmpty()) return;
         addMethod("<clinit>", ClassFile.ACC_STATIC, MethodTypeDesc.of(TypeMapper.VOID), null, null, g -> {
             for (Consumer<ExprCodegen> c : clinit) c.accept(g);

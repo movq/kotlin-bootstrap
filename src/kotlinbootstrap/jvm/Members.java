@@ -84,7 +84,8 @@ final class Members {
     /** A Java field is accessed in the receiver's class, as a protected one must be from a subclass. */
     private FieldRef receiverField(PropertySymbol p, TExpr receiver) {
         FieldRef f = field(gen.backend, p);
-        if (!p.isJavaField() || f.isStatic() || receiver == null) return f;
+        if (!p.isJavaField() || f.isStatic()) return f;
+        if (receiver == null) return gen.owner.cls == null ? f : new FieldRef(gen.owner.desc, f.name(), f.type(), false);
         ClassDesc owner = gen.types.classDesc(new Calls(gen).memberOwner(p, receiver));
         return new FieldRef(owner, f.name(), f.type(), false);
     }
@@ -150,7 +151,7 @@ final class Members {
             if (p.source() instanceof VariableElement e && e.getConstantValue() != null && p.isStatic()) {
                 return javaConstant(e.getConstantValue(), gen.types.fieldType(p));
             }
-            return fieldGet(field(gen.backend, p), p.isStatic() ? null : g.dispatchReceiver());
+            return fieldGet(p, p.isStatic() ? null : g.dispatchReceiver());
         }
         if (p.javaGetter() != null) {
             return new Calls(gen).invoke(p.javaGetter(), g.dispatchReceiver(), List.of(), null, List.of(), false);
@@ -213,6 +214,10 @@ final class Members {
 
     private ClassDesc constant(ConstantValue v) {
         if (v instanceof ConstantValue.Primitive p) {
+            ClassSymbol valueClass = TypeMapper.valueClass(p.type());
+            if (valueClass != null && p.value() != null) {
+                return gen.newValueClass(valueClass, () -> javaConstant(p.value(), gen.types.underlyingType(valueClass)));
+            }
             ClassDesc t = gen.mapType(p.type());
             return javaConstant(p.value(), t);
         }

@@ -789,6 +789,7 @@ final class BodyChecker {
         KType lhsAsType = null;
         if (lhs instanceof Expr.TypeApplication) {
             lhsAsType = doubleColonLhsType(lhs, ctx);
+            if (r.nullable()) lhsAsType = lhsAsType.withNullable(true);
             KType.ClassType type = (KType.ClassType) Types.lowerBound(lhsAsType);
             receiver = new CallInfo.Qualifier(lhs.pos(), null, type.symbol(),
                     type.args().stream().map(a -> a.isStar() ? ts.nullableAny() : a.type()).toList(), null);
@@ -797,6 +798,7 @@ final class BodyChecker {
             if (receiver instanceof CallInfo.Qualifier q && q.classifier() != null) {
                 KType type = doubleColonLhsType(lhs, ctx);
                 // An object is only a value.
+                if (r.nullable()) type = type.withNullable(true);
                 if (!(Types.lowerBound(type) instanceof KType.ClassType c && c.symbol().isObject())) lhsAsType = type;
             }
         }

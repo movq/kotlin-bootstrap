@@ -102,8 +102,13 @@ public sealed interface Expr extends Stmt {
     record Member(int pos, Expr receiver, String name, boolean safe) implements Expr {
     }
 
-    /** {@code a::name}; @param receiver nullable */
-    record CallableRef(int pos, Expr receiver, String name) implements Expr {
+    /**
+     * {@code a::name}
+     *
+     * @param receiver nullable
+     * @param nullable whether the receiver, a type, is marked nullable, as in {@code A?::name}
+     */
+    record CallableRef(int pos, Expr receiver, String name, boolean nullable) implements Expr {
     }
 
     /** {@code a::class} */

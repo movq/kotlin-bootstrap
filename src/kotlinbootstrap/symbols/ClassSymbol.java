@@ -97,6 +97,14 @@ public abstract non-sealed class ClassSymbol implements ClassifierSymbol {
         return false;
     }
 
+    /**
+     * For a Java annotation class, its java.lang.annotation.Retention's
+     * policy: RUNTIME, CLASS (the default) or SOURCE; null for others.
+     */
+    public String javaRetention() {
+        return null;
+    }
+
     public abstract List<TypeParamSymbol> typeParams();
 
     /** Direct supertypes. Only {@code kotlin.Any} has none. */

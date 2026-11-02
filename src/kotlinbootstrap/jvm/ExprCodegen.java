@@ -23,6 +23,7 @@ import kotlinbootstrap.check.CheckedFunction;
 import kotlinbootstrap.check.LocalVariable;
 import kotlinbootstrap.check.TExpr;
 import kotlinbootstrap.check.TExprs;
+import kotlinbootstrap.java.JavaTypeMapping;
 import kotlinbootstrap.resolve.KotlinClassSymbol;
 import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassKind;
@@ -584,6 +585,11 @@ final class ExprCodegen {
             ClassDesc t = mapType(c.type());
             return t.isPrimitive() ? TypeMapper.box(t) : t;
         }
+        ClassSymbol valueClass = TypeMapper.valueClass(c.type());
+        if (valueClass != null) {
+            ClassDesc u = types.underlyingType(valueClass);
+            return newValueClass(valueClass, () -> number((Number) v, u));
+        }
         ClassDesc t = mapType(c.type());
         ClassDesc p = t.isPrimitive() ? t : TypeMapper.unbox(t);
         if (v instanceof String s) {
@@ -599,7 +605,11 @@ final class ExprCodegen {
             return ConstantDescs.CD_char;
         }
         if (p == null) p = v instanceof Double ? ConstantDescs.CD_double : ConstantDescs.CD_int;
-        Number n = (Number) v;
+        number((Number) v, p);
+        return p;
+    }
+
+    private void number(Number n, ClassDesc p) {
         switch (TypeKind.from(p)) {
             case LONG -> code.loadConstant(n.longValue());
             case FLOAT -> code.loadConstant(n.floatValue());
@@ -607,7 +617,19 @@ final class ExprCodegen {
             case CHAR -> code.loadConstant((int) (char) n.intValue());
             default -> code.loadConstant(n.intValue());
         }
-        return p;
+    }
+
+    /**
+     * Boxes an underlying value into a value class, an unsigned literal's: value
+     * classes are always boxed here, unlike kotlinc's, which keeps them unboxed.
+     */
+    ClassDesc newValueClass(ClassSymbol v, Runnable underlying) {
+        ClassDesc d = types.classDesc(v);
+        ClassDesc u = types.underlyingType(v);
+        code.new_(d).dup();
+        underlying.run();
+        code.invokespecial(d, "<init>", MethodTypeDesc.of(TypeMapper.VOID, u));
+        return d;
     }
 
     private ClassDesc stringTemplate(TExpr.StringTemplate s) {
@@ -674,7 +696,7 @@ final class ExprCodegen {
         ClassDesc desc = types.classDesc(object);
         if (object.kind() == ClassKind.ENUM_ENTRY) throw new CodegenException(-1, "Enum entry as object: " + object);
         ClassSymbol outer = object.outer();
-        if (outer != null && outer.companion() == object) {
+        if (outer != null && outer.companion() == object && JavaTypeMapping.javaClass(object.id()) == null) {
             code.getstatic(types.classDesc(outer), object.name(), desc);
         } else {
             code.getstatic(desc, "INSTANCE", desc);

@@ -24,7 +24,7 @@ KOTLINC_SHA256  := 7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e7
 KOTLINC_HOME    := tools/kotlinc-$(KOTLINC_VERSION)
 KOTLINC         := $(KOTLINC_HOME)/bin/kotlinc
 
-.PHONY: all clean test test-golden test-resolve test-types test-check test-psi test-box corpus update-golden fetch-kotlinc test-oracle
+.PHONY: all clean test test-golden test-resolve test-types test-check test-psi test-box test-box-ref corpus update-golden fetch-kotlinc test-oracle stdlib
 
 all: $(JARFILE)
 
@@ -53,6 +53,33 @@ $(ORACLE_CLASSES)/.stamp: $(MAIN_CLASSES)/.stamp $(KOTLINC_HOME)/.stamp $(ORACLE
 	@rm -rf $(ORACLE_CLASSES)
 	@mkdir -p $(ORACLE_CLASSES)
 	$(JAVAC) $(JFLAGS) -cp $(ORACLE_CP) -d $(ORACLE_CLASSES) $(ORACLE_SRC)
+	@touch $@
+
+# The stdlib, compiled by kbc from its Kotlin sources, then by javac from its
+# Java ones (with the org.jetbrains.annotations they use); and kotlin.test.
+STDLIB_SRC   := $(KOTLIN_SRC)/libraries/stdlib
+STDLIB_DIRS  := common/src src unsigned/src jvm/src jvm/runtime jvm/builtins jdk7/src jdk8/src
+STDLIB       := $(BUILD)/stdlib
+KOTLIN_TEST  := $(BUILD)/kotlin-test
+KTEST_SRC    := $(KOTLIN_SRC)/libraries/kotlin.test
+KTEST_DIRS   := common/src/main annotations-common/src/main jvm/src/main
+KBC          := $(JAVA) -Xss64m -jar $(JARFILE) compile -Xname-based-destructuring=complete
+
+stdlib: $(STDLIB)/.stamp $(KOTLIN_TEST)/.stamp
+
+$(STDLIB)/.stamp: $(JARFILE)
+	@rm -rf $(STDLIB)
+	@mkdir -p $(STDLIB)
+	$(KBC) -d $(STDLIB) --module-name kotlin-stdlib $(addprefix $(STDLIB_SRC)/,$(STDLIB_DIRS))
+	$(JAVAC) -nowarn -d $(STDLIB) -cp $(STDLIB) \
+		$(shell find $(KOTLIN_SRC)/third-party/java8-annotations $(STDLIB_SRC)/jvm/runtime $(STDLIB_SRC)/jvm/src -name '*.java')
+	@touch $@
+
+$(KOTLIN_TEST)/.stamp: $(STDLIB)/.stamp
+	@rm -rf $(KOTLIN_TEST)
+	@mkdir -p $(KOTLIN_TEST)
+	$(KBC) -d $(KOTLIN_TEST) --module-name kotlin-test $(addprefix -cp $(STDLIB_SRC)/,$(STDLIB_DIRS)) \
+		$(addprefix $(KTEST_SRC)/,$(KTEST_DIRS))
 	@touch $@
 
 test: test-golden test-resolve test-types test-check test-psi
@@ -94,9 +121,14 @@ corpus: $(TEST_CLASSES)/.stamp
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.CorpusTests $(KOTLIN_SRC)
 
 # Kotlin's codegen box tests under BOX (a file or directory), compiled
-# against the stdlib and kotlin.test sources and run with the reference jars.
+# against the stdlib and kotlin.test sources and run with those kbc compiled.
 BOX ?= $(KOTLIN_SRC)/compiler/testData/codegen/box
-test-box: $(TEST_CLASSES)/.stamp $(KOTLINC_HOME)/.stamp
+test-box: $(TEST_CLASSES)/.stamp $(STDLIB)/.stamp $(KOTLIN_TEST)/.stamp
+	$(JAVA) -Xss64m -cp $(TEST_CP):$(STDLIB):$(KOTLIN_TEST) kotlinbootstrap.test.BoxTests \
+		--failures $(BUILD)/box-failures.txt $(KOTLIN_SRC) $(BOX)
+
+# The same, run with the reference jars.
+test-box-ref: $(TEST_CLASSES)/.stamp $(KOTLINC_HOME)/.stamp
 	$(JAVA) -Xss64m -cp $(TEST_CP):$(KOTLINC_HOME)/lib/kotlin-stdlib.jar:$(KOTLINC_HOME)/lib/kotlin-test.jar kotlinbootstrap.test.BoxTests \
 		--failures $(BUILD)/box-failures.txt $(KOTLIN_SRC) $(BOX)
 

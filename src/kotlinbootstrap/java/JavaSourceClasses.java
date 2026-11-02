@@ -193,6 +193,17 @@ public final class JavaSourceClasses implements ClassFinder {
         }
 
         @Override
+        public String javaRetention() {
+            if (kind() != ClassKind.ANNOTATION_CLASS) return null;
+            for (var a : tree.getModifiers().getAnnotations()) {
+                if (!a.getAnnotationType().toString().endsWith("Retention")) continue;
+                String args = a.getArguments().toString();
+                for (String policy : List.of("RUNTIME", "SOURCE")) if (args.contains(policy)) return policy;
+            }
+            return "CLASS";
+        }
+
+        @Override
         public List<KType> supertypes() {
             return supertypes.get();
         }
