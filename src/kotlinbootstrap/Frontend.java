@@ -28,12 +28,20 @@ public final class Frontend {
      * @param jdkRelease the Java release whose API to compile against, e.g. "8"
      */
     public static Resolver load(List<Path> paths, String jdkRelease) throws IOException {
+        return load(paths, parseAll(sourceFiles(paths, ".kt")), jdkRelease);
+    }
+
+    /**
+     * Enters parsed Kotlin files, with the Java sources and jars among the
+     * paths, so that files parsed once can be resolved again.
+     */
+    public static Resolver load(List<Path> paths, List<KtFile> kotlinFiles, String jdkRelease) throws IOException {
         SymbolTable table = new SymbolTable();
         Resolver resolver = new Resolver(table);
         table.addFinder(new JavaSourceClasses(table, sourceFiles(paths, ".java")));
         List<Path> classPath = paths.stream().filter(p -> p.toString().endsWith(".jar")).toList();
         table.addFinder(new JdkClasses(table, jdkRelease, classPath));
-        resolver.enter(parseAll(sourceFiles(paths, ".kt")));
+        resolver.enter(kotlinFiles);
         return resolver;
     }
 

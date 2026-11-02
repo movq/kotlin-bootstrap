@@ -97,7 +97,7 @@ public final class JvmDescriptors {
 
     // ==== Java types ====
 
-    private static String descriptor(TypeMirror t) {
+    public static String descriptor(TypeMirror t) {
         return switch (t.getKind()) {
             case BOOLEAN -> "Z";
             case BYTE -> "B";

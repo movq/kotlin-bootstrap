@@ -374,6 +374,29 @@ public final class Checker {
         return delegate(p, (Decl.Property) p.source());
     }
 
+    /** The single abstract method of a functional interface, Java or {@code fun}; null if it is not one. */
+    public FunctionSymbol samMethod(ClassSymbol cls) {
+        return sam.samMethod(cls);
+    }
+
+    /** The checked initializer of a property with one; null if none. */
+    public TExpr checkedInitializer(PropertySymbol p) {
+        return p.source() instanceof Decl.Property d && d.initializer() != null ? initializer(p, d) : null;
+    }
+
+    /** The checked initializer of a property's explicit backing field; null if none. */
+    public TExpr checkedBackingFieldInitializer(PropertySymbol p) {
+        return p.source() instanceof Decl.Property d && d.backingField() != null
+                && d.backingField().initializer() != null ? backingFieldInitializer(p, d.backingField()) : null;
+    }
+
+    /** The checked getter or setter of a property, if declared with a body; null otherwise. */
+    public CheckedFunction checkedAccessor(PropertySymbol p, boolean getter) {
+        if (!(p.source() instanceof Decl.Property d)) return null;
+        Decl.Accessor accessor = getter ? d.getter() : d.setter();
+        return accessor == null || accessor.body() == null ? null : accessor(p, d, accessor);
+    }
+
     // ==== Inferred types ====
 
     private KType inferredType(CallableSymbol symbol) {

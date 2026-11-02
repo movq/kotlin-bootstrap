@@ -1,16 +1,22 @@
 package kotlinbootstrap;
 
 import java.io.IOException;
+import java.lang.classfile.ClassHierarchyResolver;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import kotlinbootstrap.ast.AstPrinter;
 import kotlinbootstrap.check.CheckException;
 import kotlinbootstrap.check.Checker;
 import kotlinbootstrap.check.LanguageSettings;
+import kotlinbootstrap.jvm.CodegenException;
+import kotlinbootstrap.jvm.JvmBackend;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.ResolveException;
 import kotlinbootstrap.resolve.Resolver;
@@ -26,7 +32,9 @@ public final class Main {
             usage: kbc parse <file.kt>...
                    kbc resolve [--jdk-release N] [--dump] <file.kt, file.java, file.jar or directory>...
                    kbc check [--jdk-release N] [--errors]
-                             [-Xname-based-destructuring={complete|only-syntax}] <file.kt, file.java, file.jar or directory>...""";
+                             [-Xname-based-destructuring={complete|only-syntax}] <file.kt, file.java, file.jar or directory>...
+                   kbc compile -d <directory> [--module-name name] [--jdk-release N] [-cp <path>]...
+                               <file.kt or directory>...""";
 
     private Main() {
     }
@@ -37,6 +45,7 @@ public final class Main {
             case "parse" -> parse(List.of(args).subList(1, args.length));
             case "resolve" -> resolve(List.of(args).subList(1, args.length));
             case "check" -> check(List.of(args).subList(1, args.length));
+            case "compile" -> compile(List.of(args).subList(1, args.length));
             default -> usage();
         }
     }
@@ -148,6 +157,48 @@ public final class Main {
                 .forEach(en -> System.out.printf("%7d  %s%n", en.getValue(), en.getKey()));
         System.out.println(report.declarations() + " declarations, " + report.failures().size() + " failed");
         System.exit(report.failures().isEmpty() ? 0 : 1);
+    }
+
+    /**
+     * Compiles the sources to class files in a directory, against those
+     * given with -cp: sources, such as the stdlib's, and jars.
+     */
+    private static void compile(List<String> args) throws IOException {
+        String release = "8";
+        String moduleName = "main";
+        Path out = null;
+        List<Path> classPath = new ArrayList<>();
+        List<Path> sources = new ArrayList<>();
+        for (int i = 0; i < args.size(); i++) {
+            switch (args.get(i)) {
+                case "--jdk-release" -> release = args.get(++i);
+                case "--module-name" -> moduleName = args.get(++i);
+                case "-d" -> out = Path.of(args.get(++i));
+                case "-cp" -> classPath.add(Path.of(args.get(++i)));
+                default -> sources.add(Path.of(args.get(i)));
+            }
+        }
+        if (out == null) usage();
+        Set<String> compiled = new HashSet<>();
+        for (Path f : Frontend.sourceFiles(sources, ".kt")) compiled.add(f.toString());
+        List<Path> paths = new ArrayList<>(classPath);
+        paths.addAll(sources);
+        String module = moduleName;
+        try {
+            Resolver resolver = Frontend.load(paths, release);
+            List<FileContext> files = resolver.files().stream()
+                    .filter(f -> compiled.contains(f.file().source().path())).toList();
+            JvmBackend backend = new JvmBackend(resolver, new Checker(resolver), file -> module,
+                    ClassHierarchyResolver.defaultResolver());
+            for (Map.Entry<String, byte[]> e : backend.compile(files).entrySet()) {
+                Path file = out.resolve(e.getKey() + ".class");
+                Files.createDirectories(file.getParent());
+                Files.write(file, e.getValue());
+            }
+        } catch (SyntaxError | ResolveException | CheckException | CodegenException e) {
+            System.err.println(e);
+            System.exit(1);
+        }
     }
 
     /** An error message without the names in it, to group errors by. */

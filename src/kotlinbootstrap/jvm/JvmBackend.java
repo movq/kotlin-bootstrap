@@ -1,0 +1,253 @@
+package kotlinbootstrap.jvm;
+
+import java.lang.classfile.ClassBuilder;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.ClassHierarchyResolver;
+import java.lang.classfile.ClassTransform;
+import java.lang.classfile.attribute.NestHostAttribute;
+import java.lang.classfile.attribute.NestMembersAttribute;
+import java.lang.constant.ClassDesc;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+
+import kotlinbootstrap.ast.Decl;
+import kotlinbootstrap.ast.Modifier;
+import kotlinbootstrap.check.Checker;
+import kotlinbootstrap.resolve.FileContext;
+import kotlinbootstrap.resolve.KotlinClassSymbol;
+import kotlinbootstrap.resolve.Resolver;
+import kotlinbootstrap.symbols.CallableSymbol;
+import kotlinbootstrap.symbols.ClassSymbol;
+import kotlinbootstrap.symbols.ClassifierSymbol;
+import kotlinbootstrap.symbols.FunctionSymbol;
+import kotlinbootstrap.symbols.MemberScope;
+import kotlinbootstrap.symbols.PropertySymbol;
+import kotlinbootstrap.syntax.SourceFile;
+import kotlinbootstrap.types.KType;
+
+/**
+ * The JVM backend: compiles the checked declarations of Kotlin files to
+ * class files, as kotlinc's JVM IR backend, though from checked trees
+ * directly. Inline functions are inlined from their checked bodies.
+ */
+public final class JvmBackend {
+    final Resolver resolver;
+    final Checker checker;
+    final TypeMapper types;
+    final JvmNames names;
+    final Closures closures;
+    private final ClassHierarchyResolver hierarchy;
+    private final Map<String, byte[]> output = new LinkedHashMap<>();
+    private final Deque<ClassCodegen> pending = new ArrayDeque<>();
+    /** The classes being generated, by symbol, for local classes generated where they are declared. */
+    private final Map<ClassSymbol, ClassCodegen> generators = new IdentityHashMap<>();
+    /** The multifile facades, with their parts. */
+    private final Map<String, List<FileContext>> multifileParts = new LinkedHashMap<>();
+    private final Map<String, Integer> localClassCounters = new HashMap<>();
+    final Nests nests = new Nests();
+
+    /**
+     * @param moduleName the name of the module a file is in, for internal names
+     * @param classPath  resolves the hierarchy of classes not compiled here, for stack map frames
+     */
+    public JvmBackend(Resolver resolver, Checker checker, Function<SourceFile, String> moduleName,
+                      ClassHierarchyResolver classPath) {
+        this.resolver = resolver;
+        this.checker = checker;
+        this.names = new JvmNames(resolver, moduleName);
+        this.types = new TypeMapper(names, resolver);
+        this.closures = new Closures(cls -> classBodies(cls));
+        this.hierarchy = new SourceHierarchy(this).orElse(classPath);
+    }
+
+    ClassHierarchyResolver hierarchy() {
+        return hierarchy;
+    }
+
+    /** Compiles the files; the class files by internal name. */
+    public Map<String, byte[]> compile(List<FileContext> files) {
+        for (FileContext file : files) {
+            if (JvmNames.isBuiltinFile(file.file())) continue;
+            // One nest per file: the file's part hosts it if there is one, else its first class.
+            String host = null;
+            if (hasTopLevelCallables(file)) {
+                ClassCodegen facade = new ClassCodegen(this, file, names.filePart(file));
+                host = facade.nestHost = facade.internalName;
+                pending.add(facade);
+                if (JvmNames.isMultifile(file.file())) {
+                    multifileParts.computeIfAbsent(names.facade(file), k -> new ArrayList<>()).add(file);
+                }
+            }
+            for (Decl d : file.file().declarations()) {
+                if (d instanceof Decl.Class c && !c.modifiers().has(Modifier.EXPECT)
+                        && resolver.table().packageScope(file.packageName()).classifier(c.name())
+                        instanceof KotlinClassSymbol cls && cls.decl() == c) {
+                    if (host == null) host = types.internalName(cls);
+                    addClass(cls, host);
+                }
+            }
+        }
+        drain();
+        nests.addMembers(output);
+        for (Map.Entry<String, List<FileContext>> e : multifileParts.entrySet()) {
+            output.put(e.getKey(), ClassCodegen.multifileFacade(this, e.getKey(), e.getValue()));
+        }
+        return output;
+    }
+
+    /**
+     * A class and its nested classes, which are generated first: a
+     * companion declares its static fields in the class it is in.
+     */
+    private void addClass(KotlinClassSymbol cls, String host) {
+        ClassCodegen g = new ClassCodegen(this, cls, types.internalName(cls));
+        g.nestHost = host;
+        generators.put(cls, g);
+        for (Decl d : cls.decl().members()) {
+            if (d instanceof Decl.Class c && cls.members().classifier(nameOf(c)) instanceof KotlinClassSymbol nested
+                    && nested.decl() == c) {
+                addClass(nested, host);
+            }
+        }
+        pending.add(g);
+    }
+
+    private static String nameOf(Decl.Class c) {
+        return c.name() != null ? c.name() : "Companion";
+    }
+
+    /** A local class, anonymous object or enum entry class, generated once its enclosing code is. */
+    ClassCodegen localClass(KotlinClassSymbol cls, ClassCodegen enclosingClass, String methodName) {
+        ClassCodegen existing = generators.get(cls);
+        if (existing != null) return existing;
+        String enclosing = enclosingClass.internalName;
+        String base = enclosing + "$" + (methodName == null || methodName.startsWith("<") ? "" : methodName + "$");
+        String name;
+        if (cls.decl().name() != null) {
+            name = base + cls.decl().name();
+            int n = localClassCounters.merge(name, 1, Integer::sum);
+            if (n > 1) name = name + "$" + n;
+        } else {
+            int n = localClassCounters.merge(enclosing, 1, Integer::sum);
+            name = enclosing + "$" + n;
+        }
+        types.setLocalName(cls, name);
+        ClassCodegen g = new ClassCodegen(this, cls, name);
+        g.nestHost = enclosingClass.nestHost;
+        generators.put(cls, g);
+        for (Decl d : cls.decl().members()) {
+            if (d instanceof Decl.Class c && cls.members().classifier(nameOf(c)) instanceof KotlinClassSymbol nested
+                    && nested.decl() == c) {
+                types.setLocalName(nested, name + "$" + nameOf(c));
+                ClassCodegen ng = new ClassCodegen(this, nested, name + "$" + nameOf(c));
+                ng.nestHost = g.nestHost;
+                generators.put(nested, ng);
+                pending.add(ng);
+            }
+        }
+        pending.add(g);
+        return g;
+    }
+
+    ClassCodegen generator(ClassSymbol cls) {
+        return generators.get(cls);
+    }
+
+    private void drain() {
+        while (!pending.isEmpty()) {
+            ClassCodegen g = pending.removeFirst();
+            output.put(g.internalName, g.generate());
+        }
+    }
+
+    private boolean hasTopLevelCallables(FileContext file) {
+        for (Decl d : file.file().declarations()) {
+            if (d instanceof Decl.Function f && !f.modifiers().has(Modifier.EXPECT)
+                    || d instanceof Decl.Property p && !p.modifiers().has(Modifier.EXPECT)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The top-level functions and properties declared in a file. */
+    List<CallableSymbol> topLevelCallables(FileContext file) {
+        List<CallableSymbol> result = new ArrayList<>();
+        MemberScope scope = resolver.table().packageScope(file.packageName());
+        for (Decl d : file.file().declarations()) {
+            if (d instanceof Decl.Function f && !f.modifiers().has(Modifier.EXPECT)) {
+                for (FunctionSymbol s : scope.functions(f.name())) if (s.source() == d) result.add(s);
+            } else if (d instanceof Decl.Property p && !p.modifiers().has(Modifier.EXPECT)) {
+                for (PropertySymbol s : scope.properties(p.name())) if (s.source() == d) result.add(s);
+            }
+        }
+        return result;
+    }
+
+    /** The checked bodies of a local class, for what it captures. */
+    private Closures.Bodies classBodies(ClassSymbol cls) {
+        ClassCodegen g = generators.get(cls);
+        return g != null ? g.bodies() : Closures.Bodies.NONE;
+    }
+
+    /**
+     * The nests of the classes compiled here, one per file, so that the
+     * classes of a file can use each other's private members as Kotlin
+     * allows, without kotlinc's synthetic accessors.
+     */
+    static final class Nests {
+        private final Map<String, List<ClassDesc>> members = new LinkedHashMap<>();
+
+        /** Records a class as in its nest, which it names if it is not the host. */
+        void member(ClassCodegen g, ClassBuilder cb) {
+            if (g.nestHost == null || g.nestHost.equals(g.internalName)) return;
+            cb.with(NestHostAttribute.of(ClassDesc.ofInternalName(g.nestHost)));
+            members.computeIfAbsent(g.nestHost, k -> new ArrayList<>()).add(g.desc);
+        }
+
+        /** Names the members of each nest in its host, once all are generated. */
+        void addMembers(Map<String, byte[]> output) {
+            for (Map.Entry<String, List<ClassDesc>> e : members.entrySet()) {
+                byte[] host = output.get(e.getKey());
+                if (host == null) continue;
+                ClassFile cf = ClassFile.of();
+                output.put(e.getKey(), cf.transformClass(cf.parse(host),
+                        ClassTransform.endHandler(cb -> cb.with(NestMembersAttribute.ofSymbols(e.getValue())))));
+            }
+        }
+    }
+
+    /** The superclass and interfaces of the classes compiled here, for stack map frames. */
+    private record SourceHierarchy(JvmBackend backend) implements ClassHierarchyResolver {
+        @Override
+        public ClassHierarchyInfo getClassInfo(ClassDesc desc) {
+            String name = desc.descriptorString();
+            name = name.substring(1, name.length() - 1);
+            ClassSymbol cls = backend.types.classByInternalName(name);
+            if (cls == null) return null;
+            if (cls.isInterface()) return ClassHierarchyInfo.ofInterface();
+            ClassDesc superclass = TypeMapper.OBJECT;
+            for (KType t : cls.supertypes()) {
+                if (t instanceof KType.ClassType c && !c.symbol().isInterface()) {
+                    superclass = backend.types.classDesc(c.symbol());
+                    break;
+                }
+            }
+            if (cls.kind() == kotlinbootstrap.symbols.ClassKind.ENUM_CLASS) {
+                superclass = ClassDesc.ofInternalName("java/lang/Enum");
+            }
+            return ClassHierarchyInfo.ofClass(superclass);
+        }
+    }
+
+    static boolean isLocalOrigin(ClassifierSymbol c) {
+        return c instanceof ClassSymbol cls && cls.isLocal();
+    }
+}

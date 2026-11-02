@@ -7,7 +7,7 @@ import java.util.function.UnaryOperator;
 import kotlinbootstrap.types.KType;
 
 /** Operations on checked expression trees. */
-final class TExprs {
+public final class TExprs {
     private TExprs() {
     }
 
@@ -15,7 +15,7 @@ final class TExprs {
      * Rebuilds a node with its child expressions and types transformed.
      * Function bodies (of lambdas and local functions) are not children.
      */
-    static TExpr map(TExpr e, UnaryOperator<TExpr> f, UnaryOperator<KType> t) {
+    public static TExpr map(TExpr e, UnaryOperator<TExpr> f, UnaryOperator<KType> t) {
         return switch (e) {
             case TExpr.Const c -> new TExpr.Const(c.pos(), t.apply(c.type()), c.value());
             case TExpr.StringTemplate s -> new TExpr.StringTemplate(s.pos(), t.apply(s.type()), all(s.parts(), f));
@@ -112,14 +112,14 @@ final class TExprs {
      * The expression a block's value comes from: its last statement, if
      * that is an expression rather than a declaration or assignment; else null.
      */
-    static TExpr lastExpression(TExpr.Block block) {
+    public static TExpr lastExpression(TExpr.Block block) {
         if (block.statements().isEmpty()) return null;
         TExpr last = block.statements().getLast();
         return isStatement(last) ? null : last;
     }
 
     /** Declarations, assignments and loops, which have no value. */
-    static boolean isStatement(TExpr e) {
+    public static boolean isStatement(TExpr e) {
         return switch (e) {
             case TExpr.LocalVarDecl d -> true;
             case TExpr.LocalDelegatedVarDecl d -> true;

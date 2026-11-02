@@ -206,6 +206,13 @@ final class SamResolver {
                 s.apply(f.returnType()));
     }
 
+    /** The single abstract method of a functional interface; null if it is not one. */
+    FunctionSymbol samMethod(ClassSymbol cls) {
+        if (functionType(cls) == null) return null;
+        MemberScopes.Member method = singleAbstractMethod(cls);
+        return method == null ? null : (FunctionSymbol) method.symbol();
+    }
+
     /** As FIR's getSingleAbstractMethodOrNull, with the substitution for the interface's own type parameters. */
     private MemberScopes.Member singleAbstractMethod(ClassSymbol cls) {
         if (hasMoreThanOneAbstractFunctionOrHasAbstractProperty(cls)) return null;
