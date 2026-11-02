@@ -15,6 +15,7 @@ import kotlinbootstrap.resolve.KotlinClassSymbol;
 import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassKind;
+import kotlinbootstrap.symbols.ClassifierSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.Origin;
 import kotlinbootstrap.symbols.Overrides;
@@ -60,7 +61,7 @@ final class Calls {
         }
         if (f.isConstructor()) return construct(c);
         // A SAM constructor converts its function argument.
-        if (f.origin() == Origin.SYNTHETIC && f.source() instanceof ClassSymbol && c.args().size() == 1) {
+        if (f.origin() == Origin.SYNTHETIC && f.source() instanceof ClassifierSymbol && c.args().size() == 1) {
             return new Lambdas(gen).samValue(c.args().getFirst().value(), c.type());
         }
         // A function type's invoke with an extension receiver passes it as the first argument.

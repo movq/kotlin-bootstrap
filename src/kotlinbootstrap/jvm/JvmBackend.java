@@ -52,6 +52,8 @@ public final class JvmBackend {
     private final Map<String, List<FileContext>> multifileParts = new LinkedHashMap<>();
     private final Map<String, Integer> localClassCounters = new HashMap<>();
     final Nests nests = new Nests();
+    private boolean keepGoing;
+    private final List<RuntimeException> errors = new ArrayList<>();
 
     /**
      * @param moduleName the name of the module a file is in, for internal names
@@ -163,8 +165,26 @@ public final class JvmBackend {
     private void drain() {
         while (!pending.isEmpty()) {
             ClassCodegen g = pending.removeFirst();
-            output.put(g.internalName, g.generate());
+            if (!keepGoing) {
+                output.put(g.internalName, g.generate());
+                continue;
+            }
+            try {
+                output.put(g.internalName, g.generate());
+            } catch (RuntimeException e) {
+                errors.add(e);
+            }
         }
+    }
+
+    /** Whether to go on after a class fails, collecting the errors. */
+    public void keepGoing() {
+        keepGoing = true;
+    }
+
+    /** The errors of the classes that failed, if going on. */
+    public List<RuntimeException> errors() {
+        return errors;
     }
 
     private boolean hasTopLevelCallables(FileContext file) {
@@ -193,8 +213,7 @@ public final class JvmBackend {
 
     /** The checked bodies of a local class, for what it captures. */
     private Closures.Bodies classBodies(ClassSymbol cls) {
-        ClassCodegen g = generators.get(cls);
-        return g != null ? g.bodies() : Closures.Bodies.NONE;
+        return cls instanceof KotlinClassSymbol k ? ClassCodegen.bodies(this, k) : Closures.Bodies.NONE;
     }
 
     /**

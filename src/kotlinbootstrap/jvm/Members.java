@@ -78,8 +78,15 @@ final class Members {
     }
 
     ClassDesc fieldGet(PropertySymbol p, TExpr receiver) {
+        return fieldGet(receiverField(p, receiver), receiver);
+    }
+
+    /** A Java field is accessed in the receiver's class, as a protected one must be from a subclass. */
+    private FieldRef receiverField(PropertySymbol p, TExpr receiver) {
         FieldRef f = field(gen.backend, p);
-        return fieldGet(f, receiver);
+        if (!p.isJavaField() || f.isStatic() || receiver == null) return f;
+        ClassDesc owner = gen.types.classDesc(new Calls(gen).memberOwner(p, receiver));
+        return new FieldRef(owner, f.name(), f.type(), false);
     }
 
     private ClassDesc fieldGet(FieldRef f, TExpr receiver) {
@@ -93,7 +100,7 @@ final class Members {
     }
 
     void fieldSet(PropertySymbol p, TExpr receiver, TExpr value) {
-        FieldRef f = field(gen.backend, p);
+        FieldRef f = receiverField(p, receiver);
         if (f.isStatic()) {
             gen.genAs(value, f.type());
             code.putstatic(f.owner(), f.name(), f.type());
@@ -178,7 +185,8 @@ final class Members {
             gen.pop(t);
             return;
         }
-        if (JvmNames.has(JvmNames.modifiers(p), "JvmField")) {
+        // A val is assigned in its class's initializers: its field.
+        if (JvmNames.has(JvmNames.modifiers(p), "JvmField") || !p.isVar()) {
             fieldSet(p, s.dispatchReceiver(), s.value());
             return;
         }

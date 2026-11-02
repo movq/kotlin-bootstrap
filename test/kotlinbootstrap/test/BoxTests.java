@@ -77,7 +77,7 @@ public final class BoxTests {
                 skipped++;
                 continue;
             }
-            String result = run(test, text, stdlib, stdlibRoots);
+            String result = run(test, preprocess(text), stdlib, stdlibRoots);
             if (result.equals("OK")) {
                 passed++;
                 if (verbose) System.out.println("PASS " + test);
@@ -116,6 +116,12 @@ public final class BoxTests {
             if (d.startsWith("TARGET_PLATFORM:") && !d.contains("JVM")) return true;
         }
         return false;
+    }
+
+    /** The test as for the JVM: value classes annotated, without diagnostic markup, as Kotlin's test runner. */
+    private static String preprocess(String text) {
+        return text.replace("OPTIONAL_JVM_INLINE_ANNOTATION", "@JvmInline")
+                .replaceAll("<!>|<![A-Z_]+(\\([^!]*\\))?(, [A-Z_]+(\\([^!]*\\))?)*!>", "");
     }
 
     /** Compiles and runs a test: "OK", or what went wrong. */

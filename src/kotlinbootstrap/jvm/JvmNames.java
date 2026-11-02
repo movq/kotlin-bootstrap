@@ -12,6 +12,7 @@ import kotlinbootstrap.ast.Expr;
 import kotlinbootstrap.ast.KtFile;
 import kotlinbootstrap.ast.Modifiers;
 import kotlinbootstrap.resolve.FileContext;
+import kotlinbootstrap.resolve.KotlinClassSymbol;
 import kotlinbootstrap.resolve.Resolver;
 import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassSymbol;
@@ -158,7 +159,9 @@ final class JvmNames {
 
     FileContext file(CallableSymbol symbol) {
         Resolver.DeclarationContext dc = resolver.context(symbol);
-        return dc == null ? null : dc.file();
+        if (dc != null) return dc.file();
+        // Members, also those without contexts of their own: in their class's file.
+        return symbol.owner() instanceof KotlinClassSymbol cls ? cls.file() : null;
     }
 
     static boolean isTopLevel(CallableSymbol symbol) {

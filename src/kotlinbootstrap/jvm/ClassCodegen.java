@@ -318,7 +318,8 @@ final class ClassCodegen {
                 if (!interfaces.contains(d)) interfaces.add(d);
             }
         }
-        if (cls.kind() == ClassKind.ANNOTATION_CLASS) interfaces.add(ClassDesc.of("java.lang.annotation.Annotation"));
+        ClassDesc annotation = ClassDesc.of("java.lang.annotation.Annotation");
+        if (cls.kind() == ClassKind.ANNOTATION_CLASS && !interfaces.contains(annotation)) interfaces.add(annotation);
         cb.withInterfaceSymbols(interfaces);
     }
 
@@ -385,6 +386,10 @@ final class ClassCodegen {
 
     /** The members, with those of companion blocks. */
     private List<Decl> allMembers() {
+        return allMembers(cls);
+    }
+
+    private static List<Decl> allMembers(KotlinClassSymbol cls) {
         List<Decl> result = new ArrayList<>();
         for (Decl d : cls.decl().members()) {
             if (d instanceof Decl.CompanionBlock b) result.addAll(b.members());
@@ -770,7 +775,7 @@ final class ClassCodegen {
                     implicitSuperCall(g);
                 }
                 // The instance is reachable before it is initialized, as kotlinc's are from <clinit>.
-                if (!cls.isLocal() && cls.isObject()) {
+                if (!cls.isLocal() && cls.isObject() && !(cls.has(Modifier.COMPANION) && cls.outer().isInterface())) {
                     g.code.aload(0);
                     if (cls.has(Modifier.COMPANION)) {
                         g.code.putstatic(backend.types.classDesc(cls.outer()), cls.name(), desc);
@@ -928,8 +933,15 @@ final class ClassCodegen {
         ClassSymbol companion = cls.companion();
         if (companion instanceof KotlinClassSymbol c) {
             ClassDesc cd = backend.types.classDesc(c);
-            field(ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC, c.name(), cd, null);
-            clinit.add(g -> g.code.new_(cd).invokespecial(cd, "<init>", MethodTypeDesc.of(TypeMapper.VOID)));
+            if (isInterface) {
+                // Interface fields are final: assigned here.
+                field(ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL, c.name(), cd, null);
+                clinit.add(g -> g.code.new_(cd).dup().invokespecial(cd, "<init>", MethodTypeDesc.of(TypeMapper.VOID))
+                        .putstatic(desc, c.name(), cd));
+            } else {
+                field(ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC, c.name(), cd, null);
+                clinit.add(g -> g.code.new_(cd).invokespecial(cd, "<init>", MethodTypeDesc.of(TypeMapper.VOID)));
+            }
         }
         if (cls.kind() == ClassKind.ENUM_CLASS) clinit.add(this::enumEntries);
         // Static fields of the companion, initialized by it.
@@ -1286,11 +1298,11 @@ final class ClassCodegen {
 
     // ==== Local classes ====
 
-    /** The checked bodies of the class, for what it captures. */
-    Closures.Bodies bodies() {
+    /** The checked bodies of a class, for what it captures. */
+    static Closures.Bodies bodies(JvmBackend backend, KotlinClassSymbol cls) {
         List<CheckedFunction> functions = new ArrayList<>();
         List<TExpr> expressions = new ArrayList<>();
-        for (Decl d : allMembers()) {
+        for (Decl d : allMembers(cls)) {
             switch (d) {
                 case Decl.Function fd -> {
                     for (FunctionSymbol f : cls.members().functions(fd.name())) {

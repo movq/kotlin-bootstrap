@@ -12,8 +12,11 @@ import java.util.Map;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.VariableElement;
 
+import kotlinbootstrap.ast.Decl;
+import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.java.JavaTypeMapping;
 import kotlinbootstrap.java.JvmDescriptors;
+import kotlinbootstrap.resolve.KotlinClassSymbol;
 import kotlinbootstrap.resolve.Resolver;
 import kotlinbootstrap.symbols.CallableSymbol;
 import kotlinbootstrap.symbols.ClassId;
@@ -27,6 +30,7 @@ import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.Substitution;
 import kotlinbootstrap.types.TypeArg;
+import kotlinbootstrap.types.Types;
 
 /**
  * Kotlin types as JVM types, as kotlinc's KotlinTypeMapper: primitives
@@ -150,6 +154,10 @@ final class TypeMapper {
                 if (isClass(c.symbol(), "kotlin.Array")) {
                     yield arrayOf(c.args().isEmpty() ? null : c.args().getFirst());
                 }
+                if (VALUE_CLASSES && isValueClass(c.symbol())) {
+                    ClassDesc unboxed = unboxedType(c);
+                    yield unboxed != null ? unboxed : classDesc(c.symbol());
+                }
                 yield classDesc(c.symbol());
             }
             case KType.TypeParamType p -> erasure(p.symbol());
@@ -164,10 +172,68 @@ final class TypeMapper {
         };
     }
 
-    /** The JVM type of a value of a type in a generic position: primitives boxed. */
+    /** The JVM type of a value of a type in a generic position: primitives and value classes boxed. */
     ClassDesc mapBoxedType(KType t) {
+        ClassSymbol v = VALUE_CLASSES ? valueClass(t) : null;
+        if (v != null) return classDesc(v);
         ClassDesc d = mapType(t);
         return d.isPrimitive() ? box(d) : d;
+    }
+
+    // ==== Value classes ====
+
+    static final boolean VALUE_CLASSES = false;
+
+    /** Whether a class is a value class, kept as its underlying value where its type is known, as kotlinc's. */
+    static boolean isValueClass(ClassSymbol cls) {
+        return cls instanceof KotlinClassSymbol k && (k.has(Modifier.VALUE) || k.has(Modifier.INLINE))
+                && !k.isInterface() && k.decl().primaryConstructor() != null
+                && k.decl().primaryConstructor().params().size() == 1;
+    }
+
+    /** The value class a type is of, nullable or not; null if none. */
+    static ClassSymbol valueClass(KType t) {
+        KType lower = Types.lowerBound(t);
+        if (lower instanceof KType.DefinitelyNotNull d) lower = d.inner();
+        return lower instanceof KType.ClassType c && isValueClass(c.symbol()) ? c.symbol() : null;
+    }
+
+    /** The property a value class keeps its value in. */
+    static PropertySymbol underlyingProperty(ClassSymbol v) {
+        Decl.Param param = ((KotlinClassSymbol) v).decl().primaryConstructor().params().getFirst();
+        for (PropertySymbol p : v.members().properties(param.name())) if (p.source() == param) return p;
+        throw new IllegalStateException("No underlying property in " + v);
+    }
+
+    /**
+     * The JVM type a value class's values are where its type is known, as
+     * kotlinc's InlineClassAbi.unboxType; null where they are boxed: a
+     * nullable type whose underlying type is nullable or primitive.
+     */
+    ClassDesc unboxedType(KType.ClassType t) {
+        KType underlying = underlyingProperty(t.symbol()).returnType();
+        ClassDesc d = mapType(underlying);
+        if (!t.nullable()) return d;
+        if (isNullable(underlying) || d.isPrimitive()) return null;
+        if (valueClass(underlying) != null && underlying instanceof KType.ClassType u && unboxedType(u.withNullable(true)) == null) {
+            return null;
+        }
+        return d;
+    }
+
+    /** Whether null is a value of a type: marked nullable, or a type parameter without a non-null bound. */
+    private static boolean isNullable(KType t) {
+        if (Types.isMarkedNullable(t)) return true;
+        if (t instanceof KType.TypeParamType p) {
+            for (KType b : p.symbol().bounds()) if (!isNullable(b)) return false;
+            return true;
+        }
+        return false;
+    }
+
+    /** The underlying JVM type of a value class's values, as unboxed. */
+    ClassDesc underlyingType(ClassSymbol v) {
+        return mapType(underlyingProperty(v).returnType());
     }
 
     private ClassDesc arrayOf(TypeArg element) {

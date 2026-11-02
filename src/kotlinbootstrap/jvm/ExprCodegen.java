@@ -754,8 +754,20 @@ final class ExprCodegen {
 
     /** Declares a local variable, in a Ref if closures change it, with its initial value if any. */
     Slot declare(LocalVariable v, TExpr initializer) {
-        ClassDesc type = mapType(v.type());
         boolean ref = boxed.contains(v);
+        if (!ref && initializer != null) {
+            // The initializer first: an object literal's class is named as it is generated.
+            line(initializer.pos());
+            boolean local = v.type() instanceof KType.ClassType c && c.symbol().isLocal();
+            ClassDesc t = gen(initializer, local ? null : mapType(v.type()));
+            ClassDesc type = mapType(v.type());
+            coerce(t, type);
+            Slot s = new Slot(newSlot(type), type, false);
+            store(type, s.slot());
+            env.bind(v, s);
+            return s;
+        }
+        ClassDesc type = mapType(v.type());
         Slot s = new Slot(newSlot(ref ? Refs.refClass(type) : type), type, ref);
         if (ref) {
             ClassDesc refClass = Refs.refClass(type);

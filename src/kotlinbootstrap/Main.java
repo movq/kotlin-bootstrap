@@ -33,7 +33,8 @@ public final class Main {
                    kbc resolve [--jdk-release N] [--dump] <file.kt, file.java, file.jar or directory>...
                    kbc check [--jdk-release N] [--errors]
                              [-Xname-based-destructuring={complete|only-syntax}] <file.kt, file.java, file.jar or directory>...
-                   kbc compile -d <directory> [--module-name name] [--jdk-release N] [-cp <path>]...
+                   kbc compile -d <directory> [--module-name name] [--jdk-release N] [--keep-going] [--errors]
+                               [-Xname-based-destructuring=complete] [-cp <path>]...
                                <file.kt or directory>...""";
 
     private Main() {
@@ -167,6 +168,9 @@ public final class Main {
         String release = "8";
         String moduleName = "main";
         Path out = null;
+        boolean keepGoing = false;
+        boolean printErrors = false;
+        LanguageSettings settings = LanguageSettings.DEFAULT;
         List<Path> classPath = new ArrayList<>();
         List<Path> sources = new ArrayList<>();
         for (int i = 0; i < args.size(); i++) {
@@ -175,6 +179,9 @@ public final class Main {
                 case "--module-name" -> moduleName = args.get(++i);
                 case "-d" -> out = Path.of(args.get(++i));
                 case "-cp" -> classPath.add(Path.of(args.get(++i)));
+                case "--keep-going" -> keepGoing = true;
+                case "--errors" -> printErrors = true;
+                case "-Xname-based-destructuring=complete" -> settings = new LanguageSettings(true);
                 default -> sources.add(Path.of(args.get(i)));
             }
         }
@@ -188,12 +195,31 @@ public final class Main {
             Resolver resolver = Frontend.load(paths, release);
             List<FileContext> files = resolver.files().stream()
                     .filter(f -> compiled.contains(f.file().source().path())).toList();
-            JvmBackend backend = new JvmBackend(resolver, new Checker(resolver), file -> module,
+            JvmBackend backend = new JvmBackend(resolver, new Checker(resolver, settings), file -> module,
                     ClassHierarchyResolver.defaultResolver());
+            if (keepGoing) backend.keepGoing();
             for (Map.Entry<String, byte[]> e : backend.compile(files).entrySet()) {
                 Path file = out.resolve(e.getKey() + ".class");
                 Files.createDirectories(file.getParent());
                 Files.write(file, e.getValue());
+            }
+            if (!backend.errors().isEmpty()) {
+                Map<String, Integer> histogram = new HashMap<>();
+                for (RuntimeException e : backend.errors()) {
+                    if (printErrors) {
+                        System.out.println(e);
+                        Throwable cause = e;
+                        while (cause.getCause() != null) cause = cause.getCause();
+                        StackTraceElement[] trace = cause.getStackTrace();
+                        for (int i = 0; i < Math.min(trace.length, 8); i++) System.out.println("\tat " + trace[i]);
+                    }
+                    histogram.merge(errorKind(e), 1, Integer::sum);
+                }
+                histogram.entrySet().stream()
+                        .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                        .forEach(en -> System.out.printf("%7d  %s%n", en.getValue(), en.getKey()));
+                System.out.println(backend.errors().size() + " classes failed");
+                System.exit(1);
             }
         } catch (SyntaxError | ResolveException | CheckException | CodegenException e) {
             System.err.println(e);
