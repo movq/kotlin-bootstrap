@@ -167,7 +167,7 @@ final class Calls {
             return defaults.type().returnType();
         }
         Operands ops = new Operands();
-        if (hasDispatch) ops.add(dispatchReceiver, target.owner());
+        if (hasDispatch) ops.add(dispatchReceiver, receiverType(target));
         if (f.source() instanceof javax.lang.model.element.ExecutableElement) {
             addJavaArgs(ops, params, args, jvmParams);
         } else {
@@ -177,6 +177,11 @@ final class Calls {
         ops.generate();
         emit(target);
         return target.type().returnType();
+    }
+
+    /** The type a receiver is passed as: for a super call, the class it is in, as invokespecial requires. */
+    private ClassDesc receiverType(Target t) {
+        return t.opcode() == Opcode.INVOKESPECIAL ? gen.owner.desc : t.owner();
     }
 
     void emit(Target t) {
@@ -418,7 +423,7 @@ final class Calls {
         Target target = target(p, name, type, dispatchReceiver, superCall);
         List<ClassDesc> jvmParams = type.parameterList();
         Operands ops = new Operands();
-        if (target.opcode() != Opcode.INVOKESTATIC) ops.add(dispatchReceiver, target.owner());
+        if (target.opcode() != Opcode.INVOKESTATIC) ops.add(dispatchReceiver, receiverType(target));
         addReceivers(ops, p, contextArgs, extensionReceiver, jvmParams, 0);
         if (!getter) ops.add(value, jvmParams.getLast());
         ops.generate();

@@ -20,6 +20,7 @@ import kotlinbootstrap.Frontend;
 import kotlinbootstrap.Stdlib;
 import kotlinbootstrap.ast.KtFile;
 import kotlinbootstrap.check.Checker;
+import kotlinbootstrap.check.LanguageSettings;
 import kotlinbootstrap.jvm.JvmBackend;
 import kotlinbootstrap.resolve.FileContext;
 import kotlinbootstrap.resolve.Resolver;
@@ -58,7 +59,12 @@ public final class BoxTests {
                 tests.add(input);
             }
         }
-        List<Path> stdlibRoots = Stdlib.sourceRoots(kotlinSource);
+        // The tests have kotlin.test too.
+        List<Path> stdlibRoots = new ArrayList<>(Stdlib.sourceRoots(kotlinSource));
+        Path kotlinTest = kotlinSource.resolve("libraries/kotlin.test");
+        for (String root : List.of("common/src/main", "annotations-common/src/main", "jvm/src/main")) {
+            stdlibRoots.add(kotlinTest.resolve(root));
+        }
         List<KtFile> stdlib = Frontend.parseAll(Frontend.sourceFiles(stdlibRoots, ".kt"));
 
         int passed = 0;
@@ -121,7 +127,8 @@ public final class BoxTests {
             files.add(file);
             Resolver resolver = Frontend.load(List.of(), files, "8");
             FileContext context = resolver.files().stream().filter(f -> f.file() == file).findFirst().orElseThrow();
-            JvmBackend backend = new JvmBackend(resolver, new Checker(resolver), f -> "main",
+            LanguageSettings settings = new LanguageSettings(text.contains("+EnableNameBasedDestructuringShortForm"));
+            JvmBackend backend = new JvmBackend(resolver, new Checker(resolver, settings), f -> "main",
                     ClassHierarchyResolver.defaultResolver());
             classes = backend.compile(List.of(context));
         } catch (RuntimeException | IOException | StackOverflowError e) {
@@ -172,7 +179,7 @@ public final class BoxTests {
         }
         StringBuilder out = new StringBuilder(" @ ");
         StackTraceElement[] trace = e.getStackTrace();
-        for (int i = 0; i < Math.min(trace.length, 4); i++) {
+        for (int i = 0; i < Math.min(trace.length, Integer.getInteger("frames", 4)); i++) {
             out.append(i == 0 ? "" : " < ").append(trace[i].getClassName().replaceAll(".*\\.", ""))
                     .append('.').append(trace[i].getMethodName()).append(':').append(trace[i].getLineNumber());
         }

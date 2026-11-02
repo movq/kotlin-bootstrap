@@ -94,10 +94,10 @@ corpus: $(TEST_CLASSES)/.stamp
 	$(JAVA) -cp $(TEST_CP) kotlinbootstrap.test.CorpusTests $(KOTLIN_SRC)
 
 # Kotlin's codegen box tests under BOX (a file or directory), compiled
-# against the stdlib sources and run with the reference stdlib jar.
+# against the stdlib and kotlin.test sources and run with the reference jars.
 BOX ?= $(KOTLIN_SRC)/compiler/testData/codegen/box
 test-box: $(TEST_CLASSES)/.stamp $(KOTLINC_HOME)/.stamp
-	$(JAVA) -Xss64m -cp $(TEST_CP):$(KOTLINC_HOME)/lib/kotlin-stdlib.jar kotlinbootstrap.test.BoxTests \
+	$(JAVA) -Xss64m -cp $(TEST_CP):$(KOTLINC_HOME)/lib/kotlin-stdlib.jar:$(KOTLINC_HOME)/lib/kotlin-test.jar kotlinbootstrap.test.BoxTests \
 		--failures $(BUILD)/box-failures.txt $(KOTLIN_SRC) $(BOX)
 
 # Tests against the reference kotlinc; not part of `make test`.

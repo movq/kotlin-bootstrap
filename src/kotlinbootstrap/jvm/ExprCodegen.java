@@ -37,6 +37,7 @@ import kotlinbootstrap.syntax.SourceFile;
 import kotlinbootstrap.types.FunctionTypes;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.Substitution;
+import kotlinbootstrap.types.TypeRenderer;
 import kotlinbootstrap.types.Types;
 
 /**
@@ -49,6 +50,7 @@ import kotlinbootstrap.types.Types;
 final class ExprCodegen {
     static final ClassDesc INTRINSICS = ClassDesc.ofInternalName("kotlin/jvm/internal/Intrinsics");
     static final ClassDesc VOID = TypeMapper.VOID;
+    private static final ClassDesc NPE = ClassDesc.of("java.lang.NullPointerException");
     static final ClassDesc OBJECT = TypeMapper.OBJECT;
 
     // ==== Bindings ====
@@ -86,6 +88,7 @@ final class ExprCodegen {
     static final class Env {
         final Env parent;
         final Map<Object, Object> bindings = new IdentityHashMap<>();
+        final Map<Object, ReturnTarget> returns = new IdentityHashMap<>();
         Substitution reified;
 
         Env(Env parent) {
@@ -103,6 +106,19 @@ final class ExprCodegen {
 
         void bind(Object key, Object binding) {
             bindings.put(key, binding);
+        }
+
+        /** Where returns to an inlined function or lambda go, apart from its receiver bound to it. */
+        void bindReturn(CheckedFunction function, ReturnTarget target) {
+            returns.put(function, target);
+        }
+
+        ReturnTarget lookupReturn(Object function) {
+            for (Env e = this; e != null; e = e.parent) {
+                ReturnTarget t = e.returns.get(function);
+                if (t != null) return t;
+            }
+            return null;
         }
     }
 
@@ -453,6 +469,11 @@ final class ExprCodegen {
                 storeLocal(s.variable(), s.value());
                 yield VOID;
             }
+            case TExpr.PropertyGet g when TypeMapper.isNothing(g.type()) -> {
+                new Members(this).propertyGet(g);
+                code.aconst_null().athrow();
+                yield VOID;
+            }
             case TExpr.PropertyGet g -> new Members(this).propertyGet(g);
             case TExpr.PropertySet s -> {
                 new Members(this).propertySet(s);
@@ -464,6 +485,12 @@ final class ExprCodegen {
                 yield VOID;
             }
             case TExpr.DelegateGet g -> new Members(this).delegateGet(g.property(), g.receiver());
+            case TExpr.Call c when TypeMapper.isNothing(c.type()) -> {
+                // A call that does not return ends the code, for the verifier, as kotlinc does.
+                call(c, VOID);
+                code.aconst_null().athrow();
+                yield VOID;
+            }
             case TExpr.Call c -> call(c, hint);
             case TExpr.Vararg v -> vararg(v, mapType(v.type()));
             case TExpr.ArrayLiteral a -> arrayLiteral(a);
@@ -787,10 +814,20 @@ final class ExprCodegen {
         if (f.name().equals("invoke") && c.dispatchReceiver() != null
                 && unwrap(c.dispatchReceiver()) instanceof TExpr.LocalGet g
                 && env.lookup(g.variable()) instanceof InlineLambda l) {
-            return invokeInlineLambda(l, c.args().stream().map(TExpr.Argument::value).toList(), hint);
+            // An extension function type's receiver is its first argument.
+            List<TExpr> args = new ArrayList<>();
+            if (c.extensionReceiver() != null) args.add(c.extensionReceiver());
+            for (TExpr.Argument a : c.args()) args.add(a.value());
+            return invokeInlineLambda(l, args, hint);
         }
         if (isInline(f)) return inlineCall(c, hint);
-        return new Calls(this).call(c);
+        ClassDesc result = new Calls(this).call(c);
+        // A generic function's result of type Unit is Unit itself, as kotlinc does.
+        if (!result.isPrimitive() && !result.equals(VOID) && TypeMapper.isUnit(c.type())) {
+            pop(result);
+            return VOID;
+        }
+        return result;
     }
 
     static TExpr unwrap(TExpr e) {
@@ -923,7 +960,7 @@ final class ExprCodegen {
                 : mapType(body.returnType());
         Label end = code.newLabel();
         int slot = type.equals(VOID) ? -1 : newSlot(type);
-        env.bind(body, new ReturnTarget(end, slot, type, finallies.size()));
+        env.bindReturn(body, new ReturnTarget(end, slot, type, finallies.size()));
         inlineDepth++;
         scanBoxed(body.body());
         ClassDesc t = gen(body.body(), type);
@@ -1019,6 +1056,9 @@ final class ExprCodegen {
         if (found[0] || e == null) return;
         switch (e) {
             case TExpr.Try t -> found[0] = true;
+            case TExpr.Break b -> found[0] = true;
+            case TExpr.Continue c -> found[0] = true;
+            case TExpr.Return r -> found[0] = true;
             case TExpr.Call c when isInline(c.function()) -> found[0] = true;
             case TExpr.Lambda l -> {
             }
@@ -1244,6 +1284,15 @@ final class ExprCodegen {
                 coerce(t, TypeMapper.box(t));
                 t = TypeMapper.box(t);
             }
+            // Null is not cast to a non-null class type, as kotlinc's TypeIntrinsics.
+            if (!t.isPrimitive() && !target.isPrimitive() && c.target() instanceof KType.ClassType ct
+                    && !ct.nullable() && !Types.isMarkedOrFlexiblyNullable(ct)) {
+                Label nonNull = code.newLabel();
+                code.dup().ifnonnull(nonNull);
+                code.new_(NPE).dup().ldc("null cannot be cast to non-null type " + TypeRenderer.render(ct))
+                        .invokespecial(NPE, "<init>", MethodTypeDesc.of(VOID, TypeMapper.STRING)).athrow();
+                code.labelBinding(nonNull);
+            }
             coerce(t, target);
             return target;
         }
@@ -1381,8 +1430,8 @@ final class ExprCodegen {
     }
 
     private void returnExpr(TExpr.Return r) {
-        Object b = env.lookup(r.target());
-        if (b instanceof ReturnTarget t) {
+        ReturnTarget t = env.lookupReturn(r.target());
+        if (t != null) {
             if (r.value() != null) {
                 genAs(r.value(), t.type());
                 if (t.slot() >= 0) store(t.type(), t.slot());
@@ -1423,6 +1472,8 @@ final class ExprCodegen {
         for (int i = saved.size() - 1; i >= 0; i--) {
             Finally f = saved.get(i);
             while (finallies.size() > depth + i) finallies.removeLast();
+            // A try's marker, for the ranges its catch clauses cover, has no block.
+            if (f.block == null) continue;
             Env e = env;
             env = new Env(f.env);
             genAs(f.block, VOID);
@@ -1463,6 +1514,7 @@ final class ExprCodegen {
             Label handler = code.newBoundLabel();
             ClassDesc exType = mapType(c.param().type());
             for (Label[] r : bodyRanges) code.exceptionCatch(r[0], r[1], handler, exType);
+            owner.hasCatches = true;
             if (fin != null) {
                 finallies.add(fin);
                 fin.start = handler;
@@ -1489,6 +1541,7 @@ final class ExprCodegen {
         if (fin != null) {
             Label handler = code.newBoundLabel();
             for (Label[] r : fin.ranges) code.exceptionCatch(r[0], r[1], handler, java.util.Optional.empty());
+            owner.hasCatches = true;
             int ex = newSlot(ConstantDescs.CD_Throwable);
             code.astore(ex);
             Env e = env;

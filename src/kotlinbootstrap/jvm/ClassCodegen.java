@@ -2,10 +2,13 @@ package kotlinbootstrap.jvm;
 
 import java.lang.classfile.ClassBuilder;
 import java.lang.classfile.ClassFile;
+import java.lang.classfile.ClassTransform;
 import java.lang.classfile.CodeBuilder;
 import java.lang.classfile.Label;
 import java.lang.classfile.TypeKind;
+import java.lang.classfile.attribute.CodeAttribute;
 import java.lang.classfile.attribute.ConstantValueAttribute;
+import java.lang.classfile.instruction.ExceptionCatch;
 import java.lang.classfile.attribute.SourceFileAttribute;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDesc;
@@ -78,6 +81,8 @@ final class ClassCodegen {
     private final List<String[]> fields = new ArrayList<>();
     private List<CapturedField> captured;
     private ClassBuilder builder;
+    /** Whether a method has exception handlers, whose empty ranges are dropped. */
+    boolean hasCatches;
 
     /** A file's part: its top-level functions and properties. */
     ClassCodegen(JvmBackend backend, FileContext file, String partName) {
@@ -145,7 +150,7 @@ final class ClassCodegen {
 
     byte[] generate() {
         ClassFile cf = ClassFile.of(ClassFile.ClassHierarchyResolverOption.of(backend.hierarchy()));
-        return cf.build(desc, cb -> {
+        byte[] bytes = cf.build(desc, cb -> {
             builder = cb;
             cb.withVersion(ClassFile.JAVA_17_VERSION, 0);
             if (file != null) {
@@ -163,6 +168,27 @@ final class ClassCodegen {
             while (!methods.isEmpty()) generateMethod(methods.removeFirst());
             backend.nests.member(this, cb);
         });
+        return hasCatches ? dropEmptyCatches(cf, bytes) : bytes;
+    }
+
+    /**
+     * Drops the ranges of exception handlers that cover no code, which the
+     * JVM rejects: a try's ranges are split around jumps out through its
+     * finally block, and may end where they start.
+     */
+    private static byte[] dropEmptyCatches(ClassFile cf, byte[] bytes) {
+        return cf.transformClass(cf.parse(bytes), ClassTransform.transformingMethods((mb, me) -> {
+            if (!(me instanceof CodeAttribute code)) {
+                mb.with(me);
+                return;
+            }
+            mb.transformCode(code, (cob, coe) -> {
+                if (coe instanceof ExceptionCatch c && code.labelToBci(c.tryStart()) == code.labelToBci(c.tryEnd())) {
+                    return;
+                }
+                cob.with(coe);
+            });
+        }));
     }
 
     private void field(int flags, String name, ClassDesc type, ConstantDesc constant) {
@@ -743,6 +769,15 @@ final class ClassCodegen {
                 } else {
                     implicitSuperCall(g);
                 }
+                // The instance is reachable before it is initialized, as kotlinc's are from <clinit>.
+                if (!cls.isLocal() && cls.isObject()) {
+                    g.code.aload(0);
+                    if (cls.has(Modifier.COMPANION)) {
+                        g.code.putstatic(backend.types.classDesc(cls.outer()), cls.name(), desc);
+                    } else {
+                        g.code.putstatic(desc, "INSTANCE", desc);
+                    }
+                }
                 initializers(g);
                 g.returnValue(TypeMapper.VOID);
             });
@@ -836,8 +871,28 @@ final class ClassCodegen {
         g.code.invokespecial(superclass(), "<init>", MethodTypeDesc.of(TypeMapper.VOID));
     }
 
-    /** The initializers of properties and init blocks, in order, after the superclass's constructor. */
+    /**
+     * The initializers of properties and init blocks, in order, after the
+     * superclass's constructor; first, the properties of the primary
+     * constructor's parameters.
+     */
     private void initializers(ExprCodegen g) {
+        Decl.PrimaryConstructor primary = cls.decl().primaryConstructor();
+        FunctionSymbol k = primary == null ? null : cls.members().constructors().stream()
+                .filter(c -> c.source() == primary).findFirst().orElse(null);
+        for (int i = 0; k != null && i < primary.params().size(); i++) {
+            Decl.Param param = primary.params().get(i);
+            if (param.valOrVar() == Decl.ValOrVar.NONE) continue;
+            for (PropertySymbol p : cls.members().properties(param.name())) {
+                if (p.source() != param || !hasBackingField(p)) continue;
+                Members.FieldRef f = Members.field(backend, p);
+                ExprCodegen.Slot s = (ExprCodegen.Slot) g.env.lookup(k.signature().params().get(i));
+                g.code.aload(0);
+                g.loadSlotValue(s);
+                g.coerce(s.type(), f.type());
+                g.code.putfield(f.owner(), f.name(), f.type());
+            }
+        }
         for (Decl d : allMembers()) {
             switch (d) {
                 case Decl.Property pd -> {
@@ -865,17 +920,16 @@ final class ClassCodegen {
 
     private void companionAndObject() {
         List<Consumer<ExprCodegen>> clinit = new ArrayList<>();
+        // Not final: the constructor stores the instance, before initializing it.
         if (cls.isObject() && !cls.has(Modifier.COMPANION) && !cls.isLocal()) {
-            field(ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL, "INSTANCE", desc, null);
-            clinit.add(g -> g.code.new_(desc).dup().invokespecial(desc, "<init>", MethodTypeDesc.of(TypeMapper.VOID))
-                    .putstatic(desc, "INSTANCE", desc));
+            field(ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC, "INSTANCE", desc, null);
+            clinit.add(g -> g.code.new_(desc).invokespecial(desc, "<init>", MethodTypeDesc.of(TypeMapper.VOID)));
         }
         ClassSymbol companion = cls.companion();
         if (companion instanceof KotlinClassSymbol c) {
             ClassDesc cd = backend.types.classDesc(c);
-            field(ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL, c.name(), cd, null);
-            clinit.add(g -> g.code.new_(cd).dup().invokespecial(cd, "<init>", MethodTypeDesc.of(TypeMapper.VOID))
-                    .putstatic(desc, c.name(), cd));
+            field(ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC, c.name(), cd, null);
+            clinit.add(g -> g.code.new_(cd).invokespecial(cd, "<init>", MethodTypeDesc.of(TypeMapper.VOID)));
         }
         if (cls.kind() == ClassKind.ENUM_CLASS) clinit.add(this::enumEntries);
         // Static fields of the companion, initialized by it.

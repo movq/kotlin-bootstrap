@@ -186,6 +186,10 @@ final class TypeMapper {
                 && (isClass(c.symbol(), "kotlin.Unit") || isClass(c.symbol(), "kotlin.Nothing"));
     }
 
+    static boolean isNothing(KType t) {
+        return t instanceof KType.ClassType c && !c.nullable() && isClass(c.symbol(), "kotlin.Nothing");
+    }
+
     static boolean isUnit(KType t) {
         return t instanceof KType.ClassType c && !c.nullable() && isClass(c.symbol(), "kotlin.Unit");
     }
