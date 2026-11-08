@@ -471,7 +471,7 @@ public final class Checker {
             // All the parameters are visible in the default values, as FIR's withParameters.
             function.setDefaultValues(defaultValues(checker, f, params, ctx));
             ctx = ctx.withFunction(new Context.FunctionFrame(function, f.name(), false, null));
-            function.setBody(body(checker, function, d.body(), ctx));
+            if (d.body() != null) function.setBody(body(checker, function, d.body(), ctx));
             checker.dfa().exitFunction();
             return function;
         }));

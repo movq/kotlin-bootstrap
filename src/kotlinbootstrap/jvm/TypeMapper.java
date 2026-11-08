@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.VariableElement;
@@ -61,6 +62,8 @@ final class TypeMapper {
     private final Map<ClassSymbol, String> localNames = new IdentityHashMap<>();
     private final Map<Decl.Class, String> localDeclNames = new IdentityHashMap<>();
     private Map<String, ClassSymbol> byInternalName;
+    /** Names a local class met before the code declaring it; see JvmBackend.reserveLocalName. */
+    Function<KotlinClassSymbol, String> localNamer;
 
     TypeMapper(JvmNames names, Resolver resolver) {
         this.names = names;
@@ -74,6 +77,17 @@ final class TypeMapper {
         localNames.put(cls, internalName);
         if (cls instanceof KotlinClassSymbol k) localDeclNames.put(k.decl(), internalName);
         if (byInternalName != null) byInternalName.put(internalName, cls);
+    }
+
+    /** The name a local class, or one nested in it, has been given; null if none yet. */
+    String assignedLocalName(KotlinClassSymbol cls) {
+        String name = localNames.get(cls);
+        return name != null ? name : localDeclNames.get(cls.decl());
+    }
+
+    private static boolean isInLocal(ClassSymbol cls) {
+        for (ClassSymbol c = cls; c != null; c = c.outer()) if (c.isLocal()) return true;
+        return false;
     }
 
     /** The source class of an internal name; null if not a Kotlin class of the sources. */
@@ -97,6 +111,10 @@ final class TypeMapper {
         // A body checked more than once has a symbol for its local classes each time.
         if (cls instanceof KotlinClassSymbol k && k.isLocal()) {
             local = localDeclNames.get(k.decl());
+            if (local != null) return local;
+        }
+        if (cls instanceof KotlinClassSymbol k && localNamer != null && isInLocal(k)) {
+            local = localNamer.apply(k);
             if (local != null) return local;
         }
         ClassId id = cls.id();

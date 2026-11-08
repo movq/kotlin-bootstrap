@@ -59,7 +59,8 @@ final class Conditions {
         ClassDesc rt = primitiveType(right.type());
         if (lt != null && rt != null && (identity || comparableAsPrimitives(lt, rt))) {
             ClassDesc op = Intrinsics.compareType(lt, rt);
-            binary(left, op, right, op);
+            // Values narrower than int are ints on the stack: generated as such, a boxed Char isn't a Number.
+            binary(left, isInt(op) ? lt : op, right, isInt(op) ? rt : op);
             compareJump(op, jumpIfEqual ? Opcode.IF_ICMPEQ : Opcode.IF_ICMPNE, target, true);
             return;
         }
@@ -72,6 +73,10 @@ final class Conditions {
         code.invokestatic(ExprCodegen.INTRINSICS, "areEqual",
                 MethodTypeDesc.of(ConstantDescs.CD_boolean, TypeMapper.OBJECT, TypeMapper.OBJECT));
         if (jumpIfEqual) code.ifne(target); else code.ifeq(target);
+    }
+
+    private static boolean isInt(ClassDesc t) {
+        return t.equals(ConstantDescs.CD_int);
     }
 
     private static boolean isNull(TExpr e) {

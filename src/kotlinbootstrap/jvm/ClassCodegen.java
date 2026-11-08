@@ -591,6 +591,7 @@ final class ClassCodegen {
         }
         if (isAbstract(f)) {
             addMethod(name, flags | ClassFile.ACC_ABSTRACT, type, null, null, null);
+            if (hasOwnDefaults(f)) defaultMethod(f, backend.checker.checkedFunction(f), isStatic);
             return;
         }
         if (f.has(Modifier.EXTERNAL)) {

@@ -53,6 +53,8 @@ public final class JvmBackend {
     /** The superclasses of the synthetic classes generated here, for stack map frames. */
     final Map<String, ClassDesc> syntheticSupers = new HashMap<>();
     private final Deque<ClassCodegen> pending = new ArrayDeque<>();
+    /** The class being generated. */
+    private ClassCodegen current;
     /** The classes being generated, by symbol, for local classes generated where they are declared. */
     private final Map<ClassSymbol, ClassCodegen> generators = new IdentityHashMap<>();
     /** The multifile facades, with their parts. */
@@ -72,6 +74,7 @@ public final class JvmBackend {
         this.checker = checker;
         this.names = new JvmNames(resolver, moduleName);
         this.types = new TypeMapper(names, resolver);
+        types.localNamer = this::reserveLocalName;
         this.signatures = new Signatures(types);
         this.closures = new Closures(cls -> classBodies(cls));
         this.hierarchy = new SourceHierarchy(this).orElse(classPath);
@@ -144,30 +147,53 @@ public final class JvmBackend {
     ClassCodegen localClass(KotlinClassSymbol cls, ClassCodegen enclosingClass, String methodName) {
         ClassCodegen existing = generators.get(cls);
         if (existing != null) return existing;
-        String enclosing = enclosingClass.internalName;
-        String base = enclosing + "$" + (methodName == null || methodName.startsWith("<") ? "" : methodName + "$");
-        String name;
-        if (cls.decl().name() != null) {
-            name = base + cls.decl().name();
-            int n = localClassCounters.merge(name, 1, Integer::sum);
-            if (n > 1) name = name + "$" + n;
-        } else {
-            int n = localClassCounters.merge(enclosing, 1, Integer::sum);
-            name = enclosing + "$" + n;
-        }
+        String name = types.assignedLocalName(cls);
+        if (name == null) name = localClassName(cls, enclosingClass.internalName, methodName);
         types.setLocalName(cls, name);
         ClassCodegen g = new ClassCodegen(this, cls, name);
         g.nestHost = enclosingClass.nestHost;
         generators.put(cls, g);
-        for (KotlinClassSymbol nested : nestedClasses(cls)) {
-            types.setLocalName(nested, name + "$" + nested.name());
-            ClassCodegen ng = new ClassCodegen(this, nested, name + "$" + nested.name());
+        localNestedClasses(g);
+        pending.add(g);
+        return g;
+    }
+
+    private String localClassName(KotlinClassSymbol cls, String enclosing, String methodName) {
+        String base = enclosing + "$" + (methodName == null || methodName.startsWith("<") ? "" : methodName + "$");
+        if (cls.decl().name() == null) return enclosing + "$" + localClassCounters.merge(enclosing, 1, Integer::sum);
+        String name = base + cls.decl().name();
+        int n = localClassCounters.merge(name, 1, Integer::sum);
+        return n > 1 ? name + "$" + n : name;
+    }
+
+    private void localNestedClasses(ClassCodegen g) {
+        for (KotlinClassSymbol nested : nestedClasses(g.cls)) {
+            types.setLocalName(nested, g.internalName + "$" + nested.name());
+            ClassCodegen ng = new ClassCodegen(this, nested, g.internalName + "$" + nested.name());
             ng.nestHost = g.nestHost;
             generators.put(nested, ng);
             pending.add(ng);
+            localNestedClasses(ng);
         }
-        pending.add(g);
-        return g;
+    }
+
+    /**
+     * Names a local class, or one nested in it, whose type the code of
+     * the class being generated uses before the code declaring it, as a
+     * private property's initializer does in its field's type; null if
+     * no class is being generated.
+     */
+    String reserveLocalName(KotlinClassSymbol cls) {
+        String name;
+        if (!cls.isLocal() && cls.outer() != null) {
+            name = types.internalName(cls.outer()) + "$" + cls.name();
+        } else if (current != null) {
+            name = localClassName(cls, current.internalName, null);
+        } else {
+            return null;
+        }
+        types.setLocalName(cls, name);
+        return name;
     }
 
     /**
@@ -244,6 +270,7 @@ public final class JvmBackend {
     private void drain() {
         while (!pending.isEmpty()) {
             ClassCodegen g = pending.removeFirst();
+            current = g;
             if (!keepGoing) {
                 output.put(g.internalName, g.generate());
                 continue;
