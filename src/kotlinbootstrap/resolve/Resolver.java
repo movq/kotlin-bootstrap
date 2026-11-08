@@ -364,7 +364,7 @@ public final class Resolver {
                 () -> new CallableSymbol.Signature(
                         f.receiver() == null ? null : types.resolve(f.receiver(), scope, file),
                         contextParams(f.modifiers(), scope, file),
-                        valueParams(f.params(), scope, file)),
+                        actualValueParams(f, owner, valueParams(f.params(), scope, file))),
                 returnType);
         self[0] = result;
         contexts.put(result, new DeclarationContext(file, scope, (KotlinClassSymbol) cls));
@@ -398,6 +398,43 @@ public final class Resolver {
         self[0] = result;
         contexts.put(result, new DeclarationContext(file, scope, (KotlinClassSymbol) cls));
         return result;
+    }
+
+    /**
+     * The parameters of an actual top-level function, which have the
+     * default values of its expected declaration's.
+     */
+    private List<ValueParamSymbol> actualValueParams(Decl.Function f, Symbol owner, List<ValueParamSymbol> params) {
+        if (!f.modifiers().has(Modifier.ACTUAL) || !(owner instanceof PackageSymbol)) return params;
+        Decl.Function expected = expectedFunction(f, owner);
+        if (expected == null) return params;
+        List<ValueParamSymbol> result = new ArrayList<>();
+        for (int i = 0; i < params.size(); i++) {
+            ValueParamSymbol p = params.get(i);
+            boolean inherited = !p.hasDefault() && expected.params().get(i).defaultValue() != null;
+            result.add(inherited ? new ValueParamSymbol(p.name(), p.type(), true, p.modifiers(), p.source()) : p);
+        }
+        return result;
+    }
+
+    /**
+     * The expected declaration of an actual top-level function: the expect
+     * function of the package with its name and parameter names; null if none.
+     */
+    public Decl.Function expectedFunction(Decl.Function actual, Symbol owner) {
+        for (Map.Entry<Object, Symbol> e : expectedDeclarations.entrySet()) {
+            if (!(e.getKey() instanceof Decl.Function f) || !f.name().equals(actual.name())
+                    || !(e.getValue() instanceof FunctionSymbol fn) || !fn.owner().equals(owner)
+                    || f.params().size() != actual.params().size() || (f.receiver() == null) != (actual.receiver() == null)) {
+                continue;
+            }
+            boolean same = true;
+            for (int i = 0; i < f.params().size() && same; i++) {
+                same = f.params().get(i).name().equals(actual.params().get(i).name());
+            }
+            if (same) return f;
+        }
+        return null;
     }
 
     List<ValueParamSymbol> valueParams(List<Decl.Param> params, Scope scope, FileContext file) {

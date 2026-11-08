@@ -6,7 +6,9 @@ import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.check.TExpr;
@@ -132,9 +134,34 @@ final class Calls {
         return new Target(opcode, ownerDesc, name, type, isInterface);
     }
 
-    private static ClassSymbol superClass(TExpr dispatchReceiver, ClassSymbol declaring) {
+    /**
+     * The class a super call is made on, which invokespecial needs to be a
+     * direct supertype: as FIR's super qualifier, the superclass if it
+     * inherits the member, else the direct superinterface that does.
+     */
+    private ClassSymbol superClass(TExpr dispatchReceiver, ClassSymbol declaring) {
         ClassSymbol r = dispatchReceiver != null ? receiverClass(dispatchReceiver.type()) : null;
-        return r != null ? r : declaring;
+        if (r == null) r = declaring;
+        if (!r.isInterface() || gen.owner.cls == null) return r;
+        ClassSymbol direct = null;
+        for (KType t : gen.owner.cls.supertypes()) {
+            if (!(t instanceof KType.ClassType c) || TypeMapper.isClass(c.symbol(), "kotlin.Any")) continue;
+            if (!c.symbol().isInterface() && isSubclass(c.symbol(), declaring, new HashSet<>())) return c.symbol();
+            if (c.symbol() == r) direct = r;
+            else if (direct == null && c.symbol().isInterface() && isSubclass(c.symbol(), declaring, new HashSet<>())) {
+                direct = c.symbol();
+            }
+        }
+        return direct != null ? direct : r;
+    }
+
+    private static boolean isSubclass(ClassSymbol sub, ClassSymbol sup, Set<ClassSymbol> seen) {
+        if (sub == sup) return true;
+        if (!seen.add(sub)) return false;
+        for (KType t : sub.supertypes()) {
+            if (t instanceof KType.ClassType c && isSubclass(c.symbol(), sup, seen)) return true;
+        }
+        return false;
     }
 
     Target functionTarget(FunctionSymbol f, TExpr dispatchReceiver, boolean superCall) {

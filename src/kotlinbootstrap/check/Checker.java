@@ -499,6 +499,11 @@ public final class Checker {
         List<ValueParamSymbol> symbols = f.signature().params();
         for (int i = 0; i < symbols.size(); i++) {
             Expr value = symbols.get(i).source() instanceof Decl.Param p ? p.defaultValue() : null;
+            // An actual function's parameter may have its expected declaration's default.
+            if (value == null && symbols.get(i).hasDefault() && f.source() instanceof Decl.Function actual) {
+                Decl.Function expected = resolver.expectedFunction(actual, f.owner());
+                if (expected != null) value = expected.params().get(i).defaultValue();
+            }
             if (value == null) {
                 result.add(null);
                 continue;
