@@ -476,6 +476,7 @@ final class Lambdas {
                         LocalVariable p = body.params().get(i);
                         g.parameter(p, symbols.get(i).isVararg() ? g.mapType(p.type()) : g.mapType(p.type()));
                     }
+                    if (TypeMapper.isSuspend(f)) g.beginSuspend(g.parameter(null, TypeMapper.CONTINUATION).slot());
                     g.body(body.body());
                 });
     }
@@ -526,6 +527,10 @@ final class Lambdas {
         for (ExprCodegen.Slot s : values) {
             gen.loadSlotValue(s);
             gen.coerce(s.type(), jvmParams.get(k++));
+        }
+        if (TypeMapper.isSuspend(f)) {
+            gen.loadContinuation();
+            gen.suspensionPoint();
         }
         code.invokestatic(lf.owner(), lf.name(), lf.type(), lf.ownerIsInterface());
         return lf.type().returnType();

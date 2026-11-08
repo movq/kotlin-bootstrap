@@ -803,8 +803,11 @@ final class ExprCodegen {
         if (b instanceof Slot s) {
             if (s.ref()) {
                 ClassDesc ref = Refs.refClass(s.type());
+                // A value with a try is evaluated first, with the stack empty.
+                Slot first = needsEmptyStack(value) ? spillAs(value, s.type()) : null;
                 code.aload(s.slot());
-                genAs(value, s.type());
+                if (first != null) loadSlotValue(first);
+                else genAs(value, s.type());
                 coerce(s.type(), Refs.elementType(s.type()));
                 code.putfield(ref, "element", Refs.elementType(s.type()));
             } else {
@@ -1121,7 +1124,10 @@ final class ExprCodegen {
 
     // ==== Operands ====
 
-    /** Whether evaluating an expression may need an empty stack: it has a try, maybe through an inlined call. */
+    /**
+     * Whether evaluating an expression may need an empty stack: it has a try,
+     * maybe through an inlined call, or a suspension point.
+     */
     boolean needsEmptyStack(TExpr e) {
         if (e == null) return false;
         boolean[] found = new boolean[1];
@@ -1137,6 +1143,8 @@ final class ExprCodegen {
             case TExpr.Continue c -> found[0] = true;
             case TExpr.Return r -> found[0] = true;
             case TExpr.Call c when isInline(c.function()) -> found[0] = true;
+            // A suspension point cannot keep an object being constructed on the stack.
+            case TExpr.Call c when TypeMapper.isSuspend(c.function()) -> found[0] = true;
             case TExpr.Lambda l -> {
             }
             default -> Closures.children(e, c -> scan(c, found));

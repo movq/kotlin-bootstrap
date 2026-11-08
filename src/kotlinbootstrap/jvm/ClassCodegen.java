@@ -1671,8 +1671,11 @@ final class ClassCodegen {
         for (CapturedField f : captured()) {
             if (f.capture().key() != v || !f.capture().ref()) continue;
             ExprCodegen.Capture c = f.capture();
+            // A value with a try is evaluated first, with the stack empty.
+            ExprCodegen.Slot first = g.needsEmptyStack(value) ? g.spillAs(value, c.type()) : null;
             g.code.aload(0).getfield(desc, f.name(), c.jvmType());
-            g.genAs(value, c.type());
+            if (first != null) g.loadSlotValue(first);
+            else g.genAs(value, c.type());
             g.coerce(c.type(), Refs.elementType(c.type()));
             g.code.putfield(c.jvmType(), "element", Refs.elementType(c.type()));
             return true;
