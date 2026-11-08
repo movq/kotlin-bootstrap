@@ -280,6 +280,22 @@ final class ExprCodegen {
     }
 
     /** Marks the variables of a body that closures change, to keep them in Refs. */
+    /**
+     * Names the classes of the object literals in a body, before code that
+     * mentions their types, such as a call of a member of one, is generated.
+     */
+    void nameObjects(TExpr e) {
+        if (e == null) return;
+        switch (e) {
+            case TExpr.ObjectLiteral o -> {
+                backend.localClass((KotlinClassSymbol) o.cls(), owner, methodName);
+                Closures.children(e, this::nameObjects);
+            }
+            case TExpr.Lambda l -> nameObjects(l.function().body());
+            default -> Closures.children(e, this::nameObjects);
+        }
+    }
+
     void scanBoxed(TExpr body) {
         if (body != null) boxed.addAll(backend.closures.boxedVariables(body));
     }
@@ -301,6 +317,7 @@ final class ExprCodegen {
     /** Generates a function body and returns from it. */
     void body(TExpr body) {
         scanBoxed(body);
+        nameObjects(body);
         ClassDesc t = gen(body, returnType);
         coerce(t, returnType);
         returnValue(returnType);

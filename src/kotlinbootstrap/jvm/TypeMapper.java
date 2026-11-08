@@ -58,6 +58,7 @@ final class TypeMapper {
     private final JvmNames names;
     private final Resolver resolver;
     private final Map<ClassSymbol, String> localNames = new IdentityHashMap<>();
+    private final Map<Decl.Class, String> localDeclNames = new IdentityHashMap<>();
     private Map<String, ClassSymbol> byInternalName;
 
     TypeMapper(JvmNames names, Resolver resolver) {
@@ -70,6 +71,7 @@ final class TypeMapper {
     /** Names a local or anonymous class, as the class that compiles it found it. */
     void setLocalName(ClassSymbol cls, String internalName) {
         localNames.put(cls, internalName);
+        if (cls instanceof KotlinClassSymbol k) localDeclNames.put(k.decl(), internalName);
         if (byInternalName != null) byInternalName.put(internalName, cls);
     }
 
@@ -91,6 +93,11 @@ final class TypeMapper {
     String internalName(ClassSymbol cls) {
         String local = localNames.get(cls);
         if (local != null) return local;
+        // A body checked more than once has a symbol for its local classes each time.
+        if (cls instanceof KotlinClassSymbol k && k.isLocal()) {
+            local = localDeclNames.get(k.decl());
+            if (local != null) return local;
+        }
         ClassId id = cls.id();
         String rel = id.relativeName();
         if (id.packageName().equals("kotlin")) {

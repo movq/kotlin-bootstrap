@@ -66,6 +66,14 @@ final class Intrinsics {
     /** Generates an intrinsic call and returns the type left; null if the function is not an intrinsic. */
     ClassDesc call(TExpr.Call c) {
         FunctionSymbol f = c.function();
+        // kotlin.jvm.internal.unsafe's monitorEnter and monitorExit, as kotlinc's MonitorInstruction.
+        if (f.owner() instanceof PackageSymbol p && p.name().equals("kotlin.jvm.internal.unsafe")
+                && (f.name().equals("monitorEnter") || f.name().equals("monitorExit"))) {
+            gen.genAs(arg(c, 0), TypeMapper.OBJECT);
+            if (f.name().equals("monitorEnter")) code.monitorenter();
+            else code.monitorexit();
+            return TypeMapper.VOID;
+        }
         if (!isBuiltin(gen.backend, f)) return null;
         ClassDesc primitive = primitiveOwner(f);
         if (primitive != null) return primitiveCall(c, primitive);

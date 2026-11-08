@@ -359,7 +359,8 @@ final class ClassCodegen {
 
     private void classHeader(ClassBuilder cb) {
         int flags = ClassFile.ACC_SUPER;
-        if (!cls.isLocal() && cls.visibility() != Visibility.PRIVATE) flags |= ClassFile.ACC_PUBLIC;
+        // Local classes are public too, as kotlinc's, for code inlined elsewhere to create them.
+        if (cls.isLocal() || cls.visibility() != Visibility.PRIVATE) flags |= ClassFile.ACC_PUBLIC;
         if (cls.outer() != null && !cls.isLocal()) flags |= ClassFile.ACC_PUBLIC;
         switch (cls.kind()) {
             case INTERFACE -> flags = flags & ~ClassFile.ACC_SUPER | ClassFile.ACC_INTERFACE | ClassFile.ACC_ABSTRACT;
@@ -948,7 +949,7 @@ final class ClassCodegen {
         List<FunctionSymbol> constructors = cls.members().constructors();
         if (constructors.isEmpty()) {
             // An object: a constructor calling the superclass's, then initializing.
-            int flags = cls.isLocal() ? 0 : ClassFile.ACC_PRIVATE;
+            int flags = cls.isLocal() ? ClassFile.ACC_PUBLIC : ClassFile.ACC_PRIVATE;
             MethodTypeDesc type = MethodTypeDesc.of(TypeMapper.VOID, constructorPrefix());
             addMethod("<init>", flags, type, null, null, g -> {
                 bindPrefix(g);
