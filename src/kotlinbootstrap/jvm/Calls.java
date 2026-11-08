@@ -330,15 +330,16 @@ final class Calls {
         Operands ops = new Operands();
         List<ClassDesc> prefix = new ArrayList<>();
         ClassCodegen local = backend.generator(cls);
+        if (cls.isInner() && cls.outer() != null) {
+            ClassDesc outer = gen.types.classDesc(cls.outer());
+            ops.add(c.dispatchReceiver(), outer);
+            prefix.add(outer);
+        }
         if (local != null && cls.isLocal()) {
             for (ExprCodegen.Capture capture : local.captures()) {
                 ops.addCapture(capture);
                 prefix.add(capture.jvmType());
             }
-        } else if (cls.isInner() && cls.outer() != null) {
-            ClassDesc outer = gen.types.classDesc(cls.outer());
-            ops.add(c.dispatchReceiver(), outer);
-            prefix.add(outer);
         }
         int[] mask = defaultMask(k, c.args());
         MethodTypeDesc type = mask != null ? defaultMethodType(backend, k) : gen.types.methodType(k);
@@ -385,16 +386,17 @@ final class Calls {
             prefix.add(ConstantDescs.CD_int);
         }
         ClassCodegen local = backend.generator(target);
+        if (target.isInner() && target.outer() != null) {
+            ClassDesc outer = gen.types.classDesc(target.outer());
+            if (d.outerReceiver() != null) ops.add(d.outerReceiver(), outer);
+            else ops.addThis(target.outer(), outer);
+            prefix.add(outer);
+        }
         if (local != null && target.isLocal()) {
             for (ExprCodegen.Capture capture : local.captures()) {
                 ops.addCapture(capture);
                 prefix.add(capture.jvmType());
             }
-        } else if (target.isInner() && target.outer() != null) {
-            ClassDesc outer = gen.types.classDesc(target.outer());
-            if (d.outerReceiver() != null) ops.add(d.outerReceiver(), outer);
-            else ops.addThis(target.outer(), outer);
-            prefix.add(outer);
         }
         ClassDesc desc = gen.types.classDesc(target);
         MethodTypeDesc type = constructorType(k, d.args(), prefix);

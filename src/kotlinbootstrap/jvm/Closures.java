@@ -81,6 +81,11 @@ final class Closures {
         });
     }
 
+    private static boolean isNestedIn(ClassSymbol c, ClassSymbol outer) {
+        for (ClassSymbol o = c.outer(); o != null; o = o.outer()) if (o == outer) return true;
+        return false;
+    }
+
     /** What a local class or object literal captures. */
     Captures of(ClassSymbol cls) {
         return captures(cls, () -> {
@@ -92,6 +97,8 @@ final class Closures {
                 scan.function(f);
             }
             for (TExpr body : bodies.expressions()) scan.expr(body);
+            // Those of nested classes are among the bodies.
+            scan.usedReceivers.removeIf(r -> r instanceof ClassSymbol c && isNestedIn(c, cls));
             return scan.result();
         });
     }
@@ -112,9 +119,12 @@ final class Closures {
 
     /**
      * The variables of a body that closures change or capture while they
-     * may change: kept in Refs. Variables declared {@code var} and used by
-     * a closure.
+     * may change: kept in Refs. Variables declared {@code var}, or
+     * {@code val} without an initializer, and used by a closure.
      */
+    /** The vals declared without an initializer, which a closure called in place may assign. */
+    private final Set<LocalVariable> deferredVals = Collections.newSetFromMap(new IdentityHashMap<>());
+
     Set<LocalVariable> boxedVariables(TExpr body) {
         Set<LocalVariable> result = Collections.newSetFromMap(new IdentityHashMap<>());
         registerLocalFunctions(body);
@@ -139,25 +149,34 @@ final class Closures {
         if (e == null) return;
         switch (e) {
             case TExpr.Lambda l -> {
-                for (LocalVariable v : of(l.function()).variables()) if (v.isVar()) result.add(v);
+                for (LocalVariable v : of(l.function()).variables()) if (isMutable(v)) result.add(v);
                 collectBoxed(l.function().body(), result);
             }
             case TExpr.LocalFunctionDecl d -> {
                 registerLocalFunction(d.function(), d.body());
-                for (LocalVariable v : of(d.body()).variables()) if (v.isVar()) result.add(v);
+                for (LocalVariable v : of(d.body()).variables()) if (isMutable(v)) result.add(v);
                 collectBoxed(d.body().body(), result);
                 for (TExpr dv : d.body().defaultValues()) collectBoxed(dv, result);
             }
             case TExpr.LocalClassDecl d -> {
-                for (LocalVariable v : of(d.cls()).variables()) if (v.isVar()) result.add(v);
+                for (LocalVariable v : of(d.cls()).variables()) if (isMutable(v)) result.add(v);
                 collectBoxed(classBodies.bodies(d.cls()), result);
             }
             case TExpr.ObjectLiteral o -> {
-                for (LocalVariable v : of(o.cls()).variables()) if (v.isVar()) result.add(v);
+                for (LocalVariable v : of(o.cls()).variables()) if (isMutable(v)) result.add(v);
                 collectBoxed(classBodies.bodies(o.cls()), result);
+            }
+            case TExpr.LocalVarDecl d -> {
+                if (d.initializer() == null && !d.variable().isVar()) deferredVals.add(d.variable());
+                children(e, c -> collectBoxed(c, result));
             }
             default -> children(e, c -> collectBoxed(c, result));
         }
+    }
+
+    /** Whether a variable may be assigned once captured: a var, or a val declared without its value. */
+    private boolean isMutable(LocalVariable v) {
+        return v.isVar() || deferredVals.contains(v);
     }
 
     private void collectBoxed(Bodies bodies, Set<LocalVariable> result) {

@@ -444,7 +444,7 @@ final class ClassCodegen {
     /** The flags of a nested class in InnerClasses: as in its header, with its visibility, and static unless inner. */
     private static int innerClassFlags(KotlinClassSymbol k) {
         int flags = k.isLocal() ? 0 : visibilityFlags(k.visibility());
-        if (!k.isInner() && !k.isLocal()) flags |= ClassFile.ACC_STATIC;
+        if (!k.isInner() && k.outer() != null) flags |= ClassFile.ACC_STATIC;
         switch (k.kind()) {
             case INTERFACE -> flags |= ClassFile.ACC_INTERFACE | ClassFile.ACC_ABSTRACT | ClassFile.ACC_STATIC;
             case ANNOTATION_CLASS -> flags |= ClassFile.ACC_INTERFACE | ClassFile.ACC_ABSTRACT
@@ -511,7 +511,7 @@ final class ClassCodegen {
                 field(ClassFile.ACC_FINAL | ClassFile.ACC_SYNTHETIC, f.name(), f.capture().jvmType(), null);
             }
         }
-        if (cls.isInner() && !cls.isLocal() && cls.outer() != null) {
+        if (cls.isInner() && cls.outer() != null) {
             field(ClassFile.ACC_FINAL | ClassFile.ACC_SYNTHETIC, "this$0", backend.types.classDesc(cls.outer()), null);
         }
         if (!cls.isInterface()) {
@@ -974,7 +974,7 @@ final class ClassCodegen {
             prefix.add(TypeMapper.STRING);
             prefix.add(ConstantDescs.CD_int);
         }
-        if (cls.isInner() && !cls.isLocal() && cls.outer() != null) prefix.add(backend.types.classDesc(cls.outer()));
+        if (cls.isInner() && cls.outer() != null) prefix.add(backend.types.classDesc(cls.outer()));
         for (ExprCodegen.Capture c : captures()) prefix.add(c.jvmType());
         return prefix;
     }
@@ -985,7 +985,7 @@ final class ClassCodegen {
             g.parameter(null, TypeMapper.STRING);
             g.parameter(null, ConstantDescs.CD_int);
         }
-        if (cls.isInner() && !cls.isLocal() && cls.outer() != null) {
+        if (cls.isInner() && cls.outer() != null) {
             ClassDesc outer = backend.types.classDesc(cls.outer());
             ExprCodegen.Slot s = g.parameter(cls.outer(), outer);
             g.code.aload(0).aload(s.slot()).putfield(desc, "this$0", outer);
@@ -1083,7 +1083,10 @@ final class ClassCodegen {
                 slot += TypeKind.from(p).slotSize();
             }
             // Parameter slots, for the default values to read; captures are bound to theirs.
-            for (int i = 0; i < prefix.size(); i++) g.parameter(null, params.get(i));
+            // The default values have no instance, but may use the outer one.
+            boolean inner = cls.isInner() && cls.outer() != null;
+            int outerIndex = inner ? (cls.kind() == ClassKind.ENUM_CLASS || isEnumEntryClass() ? 2 : 0) : -1;
+            for (int i = 0; i < prefix.size(); i++) g.parameter(i == outerIndex ? cls.outer() : null, params.get(i));
             List<CapturedField> fields = captured();
             int captureStart = prefix.size() - fields.size();
             for (int i = 0; i < fields.size(); i++) {
@@ -1831,6 +1834,12 @@ final class ClassCodegen {
             TExpr superCall = backend.checker.checkedSuperCall(cls);
             if (superCall != null) expressions.add(superCall);
         }
+        // The class captures for its nested classes too, which reach its captures through it.
+        for (KotlinClassSymbol nested : JvmBackend.nestedClasses(cls)) {
+            Closures.Bodies b = bodies(backend, nested);
+            functions.addAll(b.functions());
+            expressions.addAll(b.expressions());
+        }
         return new Closures.Bodies(functions, expressions);
     }
 
@@ -1874,61 +1883,84 @@ final class ClassCodegen {
     /** How a value captured by the class is kept, or for the outer instance of an inner class; null if neither. */
     ExprCodegen.Capture capturedField(Object key) {
         for (CapturedField f : captured()) if (f.capture().key() == key) return f.capture();
-        if (cls != null && cls.isInner() && !cls.isLocal() && key instanceof ClassSymbol outer) {
-            for (ClassSymbol o = cls.outer(); o != null; o = o.isInner() ? o.outer() : null) {
-                if (o == outer) return new ExprCodegen.Capture(key, backend.types.classDesc(outer), false);
-            }
+        ClassSymbol holder = outerHolding(key);
+        if (holder == null) return null;
+        if (holder == key) return new ExprCodegen.Capture(key, backend.types.classDesc(holder), false);
+        return backend.generator(holder).capturedField(key);
+    }
+
+    /**
+     * The outer instance of an inner class that is the receiver, or that
+     * captured the value, as a local class does for the classes nested in
+     * it; null if none.
+     */
+    private ClassSymbol outerHolding(Object key) {
+        if (cls == null || !cls.isInner()) return null;
+        for (ClassSymbol o = cls.outer(); o != null; o = o.isInner() ? o.outer() : null) {
+            if (o == key) return o;
+            ClassCodegen g = backend.generator(o);
+            if (g != null && g.captured().stream().anyMatch(f -> f.capture().key() == key)) return o;
         }
         return null;
     }
 
     /**
      * Loads a captured value from its field: the value, or a variable's Ref
-     * itself if raw; the outer instance of an inner class. Null if not
-     * captured.
+     * itself if raw; the outer instance of an inner class, or what it
+     * captured. Null if not captured.
      */
     ClassDesc loadCaptured(ExprCodegen g, Object key, boolean raw) {
         if (g.isStatic || cls == null) return null;
         for (CapturedField f : captured()) {
             if (f.capture().key() != key) continue;
-            ExprCodegen.Capture c = f.capture();
-            g.code.aload(0).getfield(desc, f.name(), c.jvmType());
-            if (c.ref() && !raw) {
-                g.derefLoad(c.jvmType(), c.type());
-                return c.type();
-            }
-            return c.jvmType();
-        }
-        if (cls.isInner() && !cls.isLocal() && key instanceof ClassSymbol outer) {
             g.code.aload(0);
-            ClassSymbol current = cls;
-            while (current.isInner() && current.outer() != null) {
-                ClassDesc o = backend.types.classDesc(current.outer());
-                g.code.getfield(backend.types.classDesc(current), "this$0", o);
-                if (current.outer() == outer) return o;
-                current = current.outer();
-            }
-            g.code.pop();
+            return loadCapturedField(g, f, raw);
         }
-        return null;
+        ClassSymbol holder = outerHolding(key);
+        if (holder == null) return null;
+        ClassSymbol current = cls.outer();
+        ClassDesc o = backend.types.classDesc(current);
+        // In a constructor, the outer instance is a parameter, read before this is initialized.
+        if (g.env.lookup(current) instanceof ExprCodegen.Slot s) g.loadSlotValue(s);
+        else g.code.aload(0).getfield(desc, "this$0", o);
+        while (current != holder) {
+            ClassDesc next = backend.types.classDesc(current.outer());
+            g.code.getfield(o, "this$0", next);
+            current = current.outer();
+            o = next;
+        }
+        if (holder == key) return o;
+        ClassCodegen outer = backend.generator(holder);
+        for (CapturedField f : outer.captured()) {
+            if (f.capture().key() == key) return outer.loadCapturedField(g, f, raw);
+        }
+        throw new IllegalStateException();
+    }
+
+    /** Loads a captured value from its field of the instance on the stack. */
+    private ClassDesc loadCapturedField(ExprCodegen g, CapturedField f, boolean raw) {
+        ExprCodegen.Capture c = f.capture();
+        g.code.getfield(desc, f.name(), c.jvmType());
+        if (c.ref() && !raw) {
+            g.derefLoad(c.jvmType(), c.type());
+            return c.type();
+        }
+        return c.jvmType();
     }
 
     /** Assigns a captured variable, through its Ref. */
     boolean storeCaptured(ExprCodegen g, LocalVariable v, TExpr value) {
         if (g.isStatic || cls == null) return false;
-        for (CapturedField f : captured()) {
-            if (f.capture().key() != v || !f.capture().ref()) continue;
-            ExprCodegen.Capture c = f.capture();
-            // A value with a try is evaluated first, with the stack empty.
-            ExprCodegen.Slot first = g.needsEmptyStack(value) ? g.spillAs(value, c.type()) : null;
-            g.code.aload(0).getfield(desc, f.name(), c.jvmType());
-            if (first != null) g.loadSlotValue(first);
-            else g.genAs(value, c.type());
-            g.coerce(c.type(), Refs.elementType(c.type()));
-            g.code.putfield(c.jvmType(), "element", Refs.elementType(c.type()));
-            return true;
-        }
-        return false;
+        ExprCodegen.Capture c = capturedField(v);
+        if (c == null || !c.ref()) return false;
+        // A value with a try is evaluated first, with the stack empty.
+        ExprCodegen.Slot first = g.needsEmptyStack(value) ? g.spillAs(value, c.type()) : null;
+        loadCaptured(g, v, true);
+        if (first != null) g.loadSlotValue(first);
+        else g.genAs(value, c.type());
+        g.coerce(c.type(), Refs.elementType(c.type()));
+        g.code.putfield(c.jvmType(), "element", Refs.elementType(c.type()));
+        return true;
     }
 
     /** Creates an instance of an object literal, with what it captures. */

@@ -185,7 +185,7 @@ public final class JvmBackend {
      */
     String reserveLocalName(KotlinClassSymbol cls) {
         String name;
-        if (!cls.isLocal() && cls.outer() != null) {
+        if (cls.outer() != null) {
             name = types.internalName(cls.outer()) + "$" + cls.name();
         } else if (current != null) {
             name = localClassName(cls, current.internalName, null);
