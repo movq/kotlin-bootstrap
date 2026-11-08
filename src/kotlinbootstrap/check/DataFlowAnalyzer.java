@@ -11,6 +11,7 @@ import kotlinbootstrap.ast.Decl;
 import kotlinbootstrap.ast.Expr;
 import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.dfa.DataFlowVariable;
+import kotlinbootstrap.dfa.DfaType;
 import kotlinbootstrap.dfa.Flow;
 import kotlinbootstrap.dfa.Implication;
 import kotlinbootstrap.dfa.LogicSystem;
@@ -41,9 +42,6 @@ import kotlinbootstrap.types.Types;
  * joins the states where it merges. Whether a local var is stable, not
  * assigned where it may be read concurrently, is up to
  * {@link LocalVariableAssignments}.
- *
- * <p>Not yet: statements about the values of enum entries and objects,
- * which only exhaustiveness uses.
  */
 final class DataFlowAnalyzer {
     /** What is known at a point, and whether the point is reachable. */
@@ -184,6 +182,20 @@ final class DataFlowAnalyzer {
         KType withoutNullableNothing = isKindOfNothing(type) && !isKindOfNothing(e.type()) && !nonNothing.isEmpty()
                 ? ts.intersect(nonNothing) : null;
         return new TExpr.SmartCast(e.pos(), type, e, withoutNullableNothing);
+    }
+
+    /**
+     * The types and values an expression's stable variable is known not to
+     * have, as FIR's lowerTypesFromSmartCast; exhaustiveness uses them.
+     */
+    Set<DfaType> lowerTypes(TExpr e) {
+        if (!(variable(e, false, false) instanceof RealVariable v)) return Set.of();
+        TypeStatement s = flow.getTypeStatement(v);
+        if (s == null || !isStable(v) || v.symbol() instanceof LocalVariable l
+                && assignments.isUnstableInCurrentScope(l, null)) {
+            return Set.of();
+        }
+        return s.lowerTypes();
     }
 
     private boolean isKindOfNothing(KType t) {
@@ -432,9 +444,14 @@ final class DataFlowAnalyzer {
         DataFlowVariable operand = variableIfUsedOrReal(t.expr());
         if (operand == null) return;
         SyntheticVariable expression = new SyntheticVariable(t, t.type());
-        if (operand instanceof RealVariable) {
+        if (operand instanceof RealVariable r) {
             addImplication(OperationStatement.eq(expression, isType).implies(TypeStatement.typeEq(operand, type)));
             addImplication(OperationStatement.eq(expression, !isType).implies(TypeStatement.typeNotEq(operand, type)));
+            List<ClassSymbol> complementary = complementaryClasses(type);
+            if (!complementary.isEmpty()) {
+                addImplication(OperationStatement.eq(expression, isType)
+                        .implies(TypeStatement.valueNotEq(r, complementary)));
+            }
         }
         if (!Types.canBeNull(type)) {
             // x is T & Any implies x != null
@@ -453,18 +470,32 @@ final class DataFlowAnalyzer {
         SyntheticVariable expression = new SyntheticVariable(c, c.type());
         if (c.safe()) {
             addImplication(OperationStatement.notEqNull(expression).implies(OperationStatement.notEqNull(operand)));
-            if (operand instanceof RealVariable) {
+            if (operand instanceof RealVariable r) {
                 addImplication(OperationStatement.notEqNull(expression).implies(TypeStatement.typeEq(operand, type)));
+                List<ClassSymbol> complementary = complementaryClasses(type);
+                if (!complementary.isEmpty()) {
+                    addImplication(OperationStatement.notEqNull(expression)
+                            .implies(TypeStatement.valueNotEq(r, complementary)));
+                }
             }
             return;
         }
-        if (operand instanceof RealVariable) addTypeStatement(TypeStatement.typeEq(operand, type));
+        if (operand instanceof RealVariable r) {
+            addTypeStatement(TypeStatement.typeEq(operand, type));
+            List<ClassSymbol> complementary = complementaryClasses(type);
+            if (!complementary.isEmpty()) addTypeStatement(TypeStatement.valueNotEq(r, complementary));
+        }
         if (!Types.canBeNull(type)) {
             commit(OperationStatement.notEqNull(operand));
         } else {
             addImplication(OperationStatement.notEqNull(expression).implies(OperationStatement.notEqNull(operand)));
             addImplication(OperationStatement.eqNull(expression).implies(OperationStatement.eqNull(operand)));
         }
+    }
+
+    /** The classes a value of a type is not, from the sealed classes it is in. */
+    private List<ClassSymbol> complementaryClasses(KType type) {
+        return Types.lowerBound(type) instanceof KType.ClassType c ? checker.complementaryClasses(c.symbol()) : List.of();
     }
 
     /** {@code a!!} */
@@ -557,12 +588,37 @@ final class DataFlowAnalyzer {
             if (nullable != null) addImplication(OperationStatement.eq(e, isEq).implies(OperationStatement.notEqNull(nullable)));
         }
         boolean identity = op == TExpr.EqualityOp.IDENTITY_EQ || op == TExpr.EqualityOp.IDENTITY_NE;
-        if (!identity && !equalsIsSafeForSmartCast(left.type())) return;
-        if (leftVariable instanceof RealVariable) {
-            addImplication(OperationStatement.eq(e, isEq).implies(TypeStatement.typeEq(leftVariable, right.type())));
+        boolean safe = identity || equalsIsSafeForSmartCast(left.type());
+        addEqualityImplications(e, isEq, safe, leftVariable, right);
+        addEqualityImplications(e, isEq, safe, rightVariable, left);
+    }
+
+    /**
+     * What {@code v == other} implies of v, as FIR's addEqualityImplications:
+     * other's type, if equals is safe, and for an enum entry or object, that
+     * v is it or one of the others.
+     */
+    private void addEqualityImplications(SyntheticVariable e, boolean isEq, boolean safe, DataFlowVariable v,
+                                         TExpr other) {
+        if (!(v instanceof RealVariable r)) return;
+        if (safe) addImplication(OperationStatement.eq(e, isEq).implies(TypeStatement.typeEq(r, other.type())));
+        TExpr unwrapped = other instanceof TExpr.SmartCast sc ? sc.expr() : other;
+        List<?> complementary;
+        Object singleton;
+        if (unwrapped instanceof TExpr.PropertyGet p && p.property().isEnumEntry()) {
+            singleton = p.property();
+            complementary = p.property().owner() instanceof ClassSymbol enumClass
+                    ? enumClass.members().properties().values().stream().flatMap(List::stream)
+                    .filter(e2 -> e2.isEnumEntry() && e2 != singleton).toList() : List.of();
+        } else if (unwrapped instanceof TExpr.ObjectValue o && o.object().isObject()) {
+            singleton = o.object();
+            complementary = checker.complementaryClasses(o.object());
+        } else {
+            return;
         }
-        if (rightVariable instanceof RealVariable) {
-            addImplication(OperationStatement.eq(e, isEq).implies(TypeStatement.typeEq(rightVariable, left.type())));
+        addImplication(OperationStatement.eq(e, !isEq).implies(TypeStatement.valueNotEq(r, List.of(singleton))));
+        if (!complementary.isEmpty()) {
+            addImplication(OperationStatement.eq(e, isEq).implies(TypeStatement.valueNotEq(r, complementary)));
         }
     }
 

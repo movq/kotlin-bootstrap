@@ -212,6 +212,29 @@ public final class Checker {
         return sealedInheritors.getOrDefault(sealed, List.of());
     }
 
+    /**
+     * The other direct subclasses of a class's sealed supertypes, which its
+     * values are not, as FIR's getComplementarySymbols.
+     */
+    List<ClassSymbol> complementaryClasses(ClassSymbol cls) {
+        Set<ClassSymbol> supertypes = new LinkedHashSet<>();
+        collectSuperclassifiers(cls, supertypes);
+        List<ClassSymbol> result = new ArrayList<>();
+        for (ClassSymbol sup : supertypes) {
+            if (sup.modality() != Modality.SEALED) continue;
+            for (ClassSymbol sub : sealedInheritors(sup)) {
+                if (sub != cls && !supertypes.contains(sub)) result.add(sub);
+            }
+        }
+        return result;
+    }
+
+    private static void collectSuperclassifiers(ClassSymbol cls, Set<ClassSymbol> result) {
+        for (KType st : cls.supertypes()) {
+            if (st instanceof KType.ClassType t && result.add(t.symbol())) collectSuperclassifiers(t.symbol(), result);
+        }
+    }
+
     /** The contract a function or property getter declares; {@link Contract#NONE} if none. */
     Contract contract(CallableSymbol f) {
         if (!(f.source() instanceof Decl.Function || f.source() instanceof Decl.Property)) return Contract.NONE;

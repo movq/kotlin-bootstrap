@@ -14,7 +14,10 @@ import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.infer.ConstraintSystemCompleter;
 import kotlinbootstrap.infer.LambdaWithTypeVariableAsExpectedType;
 import kotlinbootstrap.infer.PostponedAtom;
+import kotlinbootstrap.symbols.CallableSymbol;
+import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.Origin;
+import kotlinbootstrap.symbols.TypeParamSymbol;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeSystem;
 import kotlinbootstrap.types.TypeVariable;
@@ -96,7 +99,9 @@ final class CallCompleter {
         if (w.forceFullCompletion() && isSyntheticCallThatShouldUseEqualityConstraint(candidate, expected)) {
             ArgumentChecker.addEqualityConstraintIfCompatible(system, initialType, expected, position);
         } else if (w.fromCast()) {
-            // TODO: expected types from casts for functions like findViewById
+            if (isFunctionForExpectTypeFromCastFeature(candidate)) {
+                system.addSubtypeConstraint(initialType, expected, position);
+            }
         } else if (isUnitOrFlexibleUnit(expected) && w.lastStatementInBlock()) {
             if (system.notFixedTypeVariables().isEmpty()) return;
             if (!(expected instanceof KType.Flexible)) {
@@ -127,6 +132,30 @@ final class CallCompleter {
             if (v.typeParam() != null && checker.synthetic().isElvisTypeParam(v.typeParam())) return false;
         }
         return true;
+    }
+
+    /**
+     * Whether a call in a cast, {@code f() as R}, takes the cast's type as
+     * its expected type, as kotlinc's isFunctionForExpectTypeFromCastFeature:
+     * a materialize-like function returning its single type parameter that
+     * no parameter or receiver mentions, called without type arguments.
+     */
+    private static boolean isFunctionForExpectTypeFromCastFeature(Candidate candidate) {
+        if (candidate.call == null || !candidate.call.typeArgs().isEmpty()) return false;
+        if (!(candidate.symbol instanceof FunctionSymbol f) || f.typeParams().size() != 1) return false;
+        TypeParamSymbol typeParam = f.typeParams().getFirst();
+        if (!isTypeParam(f.returnType(), typeParam)) return false;
+        CallableSymbol.Signature signature = f.signature();
+        if (signature.receiver() != null && Types.contains(signature.receiver(), t -> isTypeParam(t, typeParam))) {
+            return false;
+        }
+        return signature.params().stream().noneMatch(p -> Types.contains(p.type(), t -> isTypeParam(t, typeParam)));
+    }
+
+    private static boolean isTypeParam(KType t, TypeParamSymbol typeParam) {
+        KType unwrapped = Types.lowerBound(t);
+        while (unwrapped instanceof KType.DefinitelyNotNull d) unwrapped = Types.lowerBound(d.inner());
+        return unwrapped instanceof KType.TypeParamType p && p.symbol() == typeParam;
     }
 
     private static boolean isUnitOrFlexibleUnit(KType t) {

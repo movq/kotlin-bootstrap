@@ -17,6 +17,7 @@ import kotlinbootstrap.ast.Modifier;
 import kotlinbootstrap.ast.Stmt;
 import kotlinbootstrap.ast.TypeRef;
 import kotlinbootstrap.ast.ValueArg;
+import kotlinbootstrap.dfa.DfaType;
 import kotlinbootstrap.infer.ConstraintPosition;
 import kotlinbootstrap.infer.ConstraintSystem;
 import kotlinbootstrap.symbols.CallableSymbol;
@@ -1213,11 +1214,15 @@ final class BodyChecker {
         Context inner = ctx.withLocalScope(new LocalScope());
         TExpr subject = null;
         LocalVariable subjectVariable = null;
+        Set<DfaType> knownNotSubject = Set.of();
         if (w.subjectVariable() != null) {
             subject = localVariable(w.subjectVariable(), inner);
             subjectVariable = ((TExpr.LocalVarDecl) subject).variable();
+            TExpr initializer = ((TExpr.LocalVarDecl) subject).initializer();
+            if (initializer != null) knownNotSubject = dfa.lowerTypes(initializer);
         } else if (w.subject() != null) {
             TExpr value = expr(w.subject(), inner, Mode.INDEPENDENT);
+            knownNotSubject = dfa.lowerTypes(value);
             subjectVariable = new LocalVariable("<subject>", value.type(), LocalVariable.Kind.TEMPORARY, false, null);
             subject = new TExpr.LocalVarDecl(w.subject().pos(), unit(), subjectVariable, value);
             dfa.localVariableInitialized(subjectVariable, value, false, true);
@@ -1239,7 +1244,7 @@ final class BodyChecker {
             dfa.restore(conditionExit);
             if (condition != null) dfa.assume(condition, false);
         }
-        boolean exhaustive = isExhaustive(w, subjectVariable, conditions);
+        boolean exhaustive = isExhaustive(w, subjectVariable, knownNotSubject, conditions);
         // Past the last condition only if no branch is always taken.
         if (!exhaustive) exits.add(dfa.save());
         dfa.join(exits);
@@ -1316,14 +1321,26 @@ final class BodyChecker {
     /**
      * Whether some branch is always taken, as FIR's
      * FirWhenExhaustivenessTransformer: there is an else, or the conditions
-     * without guards match every value of the subject's type.
+     * without guards match every value of the subject's type. Types and
+     * values data flow knows the subject not to have are covered.
      */
-    private boolean isExhaustive(Expr.When w, LocalVariable subject, List<TExpr> conditions) {
+    private boolean isExhaustive(Expr.When w, LocalVariable subject, Set<DfaType> knownNot, List<TExpr> conditions) {
         for (Expr.WhenEntry entry : w.entries()) {
             if (entry.conditions().isEmpty() && entry.guard() == null) return true;
         }
         if (subject == null) return false;
         Coverage coverage = new Coverage();
+        for (DfaType t : knownNot) {
+            switch (t) {
+                case DfaType.Cone c when Types.lowerBound(c.type()) instanceof KType.ClassType ct ->
+                        coverage.classes.add(ct.symbol());
+                case DfaType.Symbol sym when sym.symbol() instanceof ClassSymbol cls -> coverage.classes.add(cls);
+                case DfaType.Symbol sym -> coverage.values.add(sym.symbol());
+                case DfaType.BooleanLiteral b -> coverage.booleans.add(b.value());
+                default -> {
+                }
+            }
+        }
         for (int i = 0; i < conditions.size(); i++) {
             if (w.entries().get(i).guard() == null) collect(conditions.get(i), subject, coverage);
         }
@@ -1615,8 +1632,17 @@ final class BodyChecker {
     }
 
     private TExpr cast(Expr.As a, Context ctx) {
-        // TODO: the expected type from the cast for calls, as kotlinc's fromCast mode
-        TExpr operand = expr(a.expr(), ctx, Mode.INDEPENDENT);
+        // A call takes the cast's type, unless bare, as its expected type, as kotlinc's fromCast mode.
+        Mode mode = Mode.INDEPENDENT;
+        Expr inner = a.expr();
+        while (inner instanceof Expr.Paren p) inner = p.expr();
+        if (inner instanceof Expr.Call) {
+            KType type = owner.resolver().types().resolveAllowingBare(a.type(), ctx.typeScope(), ctx.file());
+            if (!BareTypes.isBare(type)) {
+                mode = new Mode.WithExpectedType(a.safe() ? type.withNullable(true) : type, false, true, true);
+            }
+        }
+        TExpr operand = expr(a.expr(), ctx, mode);
         KType target = typeOperand(a.type(), operand.type(), ctx);
         TExpr.Cast cast = new TExpr.Cast(a.pos(), a.safe() ? target.withNullable(true) : target, operand, target,
                 a.safe());
