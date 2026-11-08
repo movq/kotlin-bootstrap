@@ -301,6 +301,7 @@ final class ClassCodegen {
             });
         }
         mainBridge(callables);
+        backend.inlineAccessors.generate(this);
     }
 
     /** {@code fun main()} gets a {@code main(String[])} calling it, as kotlinc's MainFunctionDetector. */
@@ -522,6 +523,7 @@ final class ClassCodegen {
         companionAndObject();
         bridges();
         toArray();
+        backend.inlineAccessors.generate(this);
     }
 
     /** The members, with those of companion blocks. */
@@ -581,6 +583,9 @@ final class ClassCodegen {
         if (f.source() instanceof Decl.Function d && d.params().stream().anyMatch(p -> p.modifiers().has(Modifier.VARARG))
                 && d.params().getLast().modifiers().has(Modifier.VARARG)) {
             flags |= ClassFile.ACC_VARARGS;
+        }
+        if (f.source() instanceof Decl.Function d && JvmNames.has(d.modifiers(), "Synchronized")) {
+            flags |= ClassFile.ACC_SYNCHRONIZED;
         }
         MethodTypeDesc type = backend.types.methodType(f);
         String name = backend.names.functionName(f);
@@ -877,7 +882,9 @@ final class ClassCodegen {
             for (; i < receiverCount; i++) slot += TypeKind.from(params.get(i)).slotSize();
             Members.FieldRef f = Members.field(backend, p);
             CodeBuilder code = g.code;
-            if (!f.isStatic()) code.aload(0);
+            // A @JvmStatic accessor of an object reads its instance's field.
+            if (!f.isStatic() && isStatic) g.thisValue(p.owner());
+            else if (!f.isStatic()) code.aload(0);
             if (getter) {
                 if (f.isStatic()) code.getstatic(f.owner(), f.name(), f.type());
                 else code.getfield(f.owner(), f.name(), f.type());
@@ -959,8 +966,11 @@ final class ClassCodegen {
             g.genAs(value, f.type());
             g.code.putstatic(f.owner(), f.name(), f.type());
         } else {
+            // A value with a try is evaluated first, with the stack empty.
+            ExprCodegen.Slot first = g.needsEmptyStack(value) ? g.spillAs(value, f.type()) : null;
             g.code.aload(0);
-            g.genAs(value, f.type());
+            if (first != null) g.loadSlotValue(first);
+            else g.genAs(value, f.type());
             g.code.putfield(f.owner(), f.name(), f.type());
         }
     }
@@ -1910,10 +1920,10 @@ final class ClassCodegen {
      * captured. Null if not captured.
      */
     ClassDesc loadCaptured(ExprCodegen g, Object key, boolean raw) {
-        if (g.isStatic || cls == null) return null;
+        if (!hasSelf(g)) return null;
         for (CapturedField f : captured()) {
             if (f.capture().key() != key) continue;
-            g.code.aload(0);
+            loadSelf(g);
             return loadCapturedField(g, f, raw);
         }
         ClassSymbol holder = outerHolding(key);
@@ -1922,7 +1932,7 @@ final class ClassCodegen {
         ClassDesc o = backend.types.classDesc(current);
         // In a constructor, the outer instance is a parameter, read before this is initialized.
         if (g.env.lookup(current) instanceof ExprCodegen.Slot s) g.loadSlotValue(s);
-        else g.code.aload(0).getfield(desc, "this$0", o);
+        else loadSelf(g).getfield(desc, "this$0", o);
         while (current != holder) {
             ClassDesc next = backend.types.classDesc(current.outer());
             g.code.getfield(o, "this$0", next);
@@ -1935,6 +1945,17 @@ final class ClassCodegen {
             if (f.capture().key() == key) return outer.loadCapturedField(g, f, raw);
         }
         throw new IllegalStateException();
+    }
+
+    /** Whether the code has the instance: in an instance method, or a static one taking it, as $suspendImpl. */
+    private boolean hasSelf(ExprCodegen g) {
+        return cls != null && (!g.isStatic || g.env.lookup(cls) instanceof ExprCodegen.Slot);
+    }
+
+    private CodeBuilder loadSelf(ExprCodegen g) {
+        if (g.env.lookup(cls) instanceof ExprCodegen.Slot s) g.loadSlotValue(s);
+        else g.code.aload(0);
+        return g.code;
     }
 
     /** Loads a captured value from its field of the instance on the stack. */
@@ -1950,7 +1971,7 @@ final class ClassCodegen {
 
     /** Assigns a captured variable, through its Ref. */
     boolean storeCaptured(ExprCodegen g, LocalVariable v, TExpr value) {
-        if (g.isStatic || cls == null) return false;
+        if (!hasSelf(g)) return false;
         ExprCodegen.Capture c = capturedField(v);
         if (c == null || !c.ref()) return false;
         // A value with a try is evaluated first, with the stack empty.

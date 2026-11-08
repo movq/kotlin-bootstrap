@@ -10,7 +10,10 @@ import java.lang.constant.DirectMethodHandleDesc;
 import java.lang.constant.DynamicCallSiteDesc;
 import java.lang.constant.MethodHandleDesc;
 import java.lang.constant.MethodTypeDesc;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -422,7 +425,26 @@ final class ExprCodegen {
                 || to.descriptorString().equals("Ljava/io/Serializable;"))) {
             return;
         }
+        // Not to a superclass: a protected member of one in another package needs the subclass's type.
+        if (isSourceSubclass(from, to)) return;
         code.checkcast(to);
+    }
+
+    /** Whether a class compiled here extends or implements another, directly or not. */
+    private boolean isSourceSubclass(ClassDesc from, ClassDesc to) {
+        if (!from.isClassOrInterface() || !to.isClassOrInterface()) return false;
+        String name = from.descriptorString();
+        ClassSymbol cls = types.classByInternalName(name.substring(1, name.length() - 1));
+        if (cls == null) return false;
+        Deque<ClassSymbol> work = new ArrayDeque<>(List.of(cls));
+        Set<ClassSymbol> seen = new HashSet<>();
+        while (!work.isEmpty()) {
+            ClassSymbol c = work.removeFirst();
+            if (!seen.add(c)) continue;
+            if (types.classDesc(c).equals(to)) return true;
+            for (KType t : c.supertypes()) if (t instanceof KType.ClassType ct) work.add(ct.symbol());
+        }
+        return false;
     }
 
     private void unboxFrom(ClassDesc box, ClassDesc primitive) {
@@ -729,7 +751,10 @@ final class ExprCodegen {
             code.aload(0);
             return owner.desc;
         }
-        if (receiverOwner instanceof ClassSymbol c && c.isObject() && c != owner.cls) return objectValue(c);
+        // An object's instance, also in its own static methods, as @JvmStatic ones.
+        if (receiverOwner instanceof ClassSymbol c && c.isObject() && (c != owner.cls || isStatic)) {
+            return objectValue(c);
+        }
         ClassDesc captured = owner.loadCaptured(this, receiverOwner, false);
         if (captured != null) return captured;
         throw new CodegenException(-1, "No receiver for " + receiverOwner + " in " + owner.internalName);
@@ -867,7 +892,7 @@ final class ExprCodegen {
             Slot s = parameterSlotFor(accessor.params().getFirst(), value);
             env.bind(accessor.params().getFirst(), s);
         }
-        ClassDesc result = inlineBody(accessor, args);
+        ClassDesc result = inlineBody(accessor, null);
         env = saved;
         return result;
     }
@@ -992,7 +1017,8 @@ final class ExprCodegen {
             store(type, s.slot());
             callee.bind(p, s);
         }
-        ClassDesc result = inlineBody(body, List.of());
+        // A body without a declared type returns the type inferred from it.
+        ClassDesc result = inlineBody(body, body.returnType() != null ? null : f.returnType());
         env = caller;
         return result;
     }
@@ -1035,9 +1061,10 @@ final class ExprCodegen {
      * Generates an inlined body, whose bindings are in the current
      * environment, with its returns going to its end.
      */
-    ClassDesc inlineBody(CheckedFunction body, List<TExpr> unused) {
-        ClassDesc type = body.returnType() == null || TypeMapper.isUnitOrNothing(body.returnType()) ? VOID
-                : mapType(body.returnType());
+    /** @param returnType the type returned, if not the body's own */
+    ClassDesc inlineBody(CheckedFunction body, KType returnType) {
+        KType returned = returnType != null ? returnType : body.returnType();
+        ClassDesc type = returned == null || TypeMapper.isUnitOrNothing(returned) ? VOID : mapType(returned);
         Label end = code.newLabel();
         int slot = type.equals(VOID) ? -1 : newSlot(type);
         env.bindReturn(body, new ReturnTarget(end, slot, type, finallies.size()));
@@ -1087,7 +1114,7 @@ final class ExprCodegen {
         if (fn.receiverType() != null && k < values.size()) env.bind(fn, values.get(k++));
         for (LocalVariable p : fn.contextParams()) if (k < values.size()) env.bind(p, values.get(k++));
         for (LocalVariable p : fn.params()) if (k < values.size()) env.bind(p, values.get(k++));
-        ClassDesc result = inlineBody(fn, List.of());
+        ClassDesc result = inlineBody(fn, null);
         env = saved;
         return result;
     }

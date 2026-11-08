@@ -241,7 +241,7 @@ final class JvmNames {
         return "set" + (startsWithIs(property) ? property.substring(2) : capitalize(property));
     }
 
-    private static String capitalize(String s) {
+    static String capitalize(String s) {
         if (s.isEmpty() || !(s.charAt(0) >= 'a' && s.charAt(0) <= 'z')) return s;
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }

@@ -74,6 +74,12 @@ final class Lambdas {
         return new Sam(gen.types.classDesc(cls), backend.names.functionName(method), gen.types.methodType(method));
     }
 
+    /** Whether a functional interface's method is a suspend function, as FlowCollector's emit. */
+    private boolean isSuspendSam(KType type) {
+        return kotlinbootstrap.types.Types.lowerBound(type) instanceof KType.ClassType c
+                && backend.checker.samMethod(c.symbol()) instanceof FunctionSymbol m && TypeMapper.isSuspend(m);
+    }
+
     private Sam samOf(KType type) {
         if (kotlinbootstrap.types.Types.lowerBound(type) instanceof KType.ClassType c) return sam(c.symbol());
         throw new CodegenException(-1, "Not a functional interface type: " + type);
@@ -86,8 +92,8 @@ final class Lambdas {
         CheckedFunction fn = l.function();
         List<KType> paramTypes = ExprCodegen.lambdaParameterTypes(fn);
         // A suspend lambda takes a continuation last, and its method is a suspend function's.
-        boolean suspend = samType == null && FunctionTypes.kind(l.type()) instanceof FunctionTypes.Kind k
-                && k.isSuspend();
+        boolean suspend = samType == null ? FunctionTypes.kind(l.type()) instanceof FunctionTypes.Kind k
+                && k.isSuspend() : isSuspendSam(samType);
         Sam sam = samType != null ? samOf(samType) : functionN(paramTypes.size() + (suspend ? 1 : 0));
         List<ExprCodegen.Capture> captures = captures(backend.closures.of(fn));
         ExprCodegen.Env enclosing = gen.env;
@@ -226,7 +232,8 @@ final class Lambdas {
         List<KType> paramTypes = new ArrayList<>();
         for (int i = 0; i < type.args().size() - 1; i++) paramTypes.add(argType(type.args().get(i)));
         KType returnType = argType(type.args().getLast());
-        boolean suspend = samType == null && FunctionTypes.kind(type) instanceof FunctionTypes.Kind k && k.isSuspend();
+        boolean suspend = samType == null ? FunctionTypes.kind(type) instanceof FunctionTypes.Kind k && k.isSuspend()
+                : isSuspendSam(samType);
         Sam sam = samType != null ? samOf(samType) : functionN(paramTypes.size() + (suspend ? 1 : 0));
         // The bound receivers are evaluated now, into variables the method takes.
         List<ExprCodegen.Capture> captures = new ArrayList<>();

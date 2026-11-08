@@ -210,6 +210,8 @@ final class Calls {
             gen.loadContinuation();
             gen.suspensionPoint();
         }
+        // A private member's, in code inlined from another file.
+        if (backend.inlineAccessors.needed(gen.owner, f)) target = backend.inlineAccessors.method(f, target);
         emit(target);
         return target.type().returnType();
     }
@@ -449,6 +451,17 @@ final class Calls {
     /** Calls a property's getter, or its setter with the value; returns the type left. */
     ClassDesc invokeAccessor(PropertySymbol p, boolean getter, TExpr dispatchReceiver, List<TExpr> contextArgs,
                              TExpr extensionReceiver, TExpr value, boolean superCall) {
+        boolean viaAccessor = backend.inlineAccessors.needed(gen.owner, p);
+        if (isDirectFieldAccess(p) && extensionReceiver == null && viaAccessor) {
+            Target accessor = backend.inlineAccessors.field(p, getter);
+            Operands ops = new Operands();
+            List<ClassDesc> params = accessor.type().parameterList();
+            if (!Members.field(backend, p).isStatic()) ops.add(dispatchReceiver, params.getFirst());
+            if (!getter) ops.add(value, params.getLast());
+            ops.generate();
+            emit(accessor);
+            return accessor.type().returnType();
+        }
         if (isDirectFieldAccess(p) && extensionReceiver == null) {
             Members members = new Members(gen);
             if (getter) return members.fieldGet(p, dispatchReceiver);
@@ -464,7 +477,7 @@ final class Calls {
         addReceivers(ops, p, contextArgs, extensionReceiver, jvmParams, 0);
         if (!getter) ops.add(value, jvmParams.getLast());
         ops.generate();
-        emit(target);
+        emit(viaAccessor ? backend.inlineAccessors.method(p, target) : target);
         return type.returnType();
     }
 

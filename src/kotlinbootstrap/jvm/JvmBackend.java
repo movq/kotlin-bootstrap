@@ -61,6 +61,7 @@ public final class JvmBackend {
     private final Map<String, List<FileContext>> multifileParts = new LinkedHashMap<>();
     private final Map<String, Integer> localClassCounters = new HashMap<>();
     final Nests nests = new Nests();
+    final InlineAccessors inlineAccessors = new InlineAccessors(this);
     private boolean keepGoing;
     private final List<RuntimeException> errors = new ArrayList<>();
 
