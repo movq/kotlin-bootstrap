@@ -7,8 +7,11 @@ import java.lang.classfile.ClassTransform;
 import java.lang.classfile.attribute.NestHostAttribute;
 import java.lang.classfile.attribute.NestMembersAttribute;
 import java.lang.constant.ClassDesc;
+import java.lang.constant.ConstantDescs;
+import java.lang.constant.MethodTypeDesc;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -47,6 +50,8 @@ public final class JvmBackend {
     final Closures closures;
     private final ClassHierarchyResolver hierarchy;
     private final Map<String, byte[]> output = new LinkedHashMap<>();
+    /** The superclasses of the synthetic classes generated here, for stack map frames. */
+    private final Map<String, ClassDesc> syntheticSupers = new HashMap<>();
     private final Deque<ClassCodegen> pending = new ArrayDeque<>();
     /** The classes being generated, by symbol, for local classes generated where they are declared. */
     private final Map<ClassSymbol, ClassCodegen> generators = new IdentityHashMap<>();
@@ -165,6 +170,67 @@ public final class JvmBackend {
         return g;
     }
 
+    /**
+     * A property reference's class, as kotlinc's: a subclass of the
+     * PropertyReferenceNImpl given, in the nest of the class creating it,
+     * whose get and set call that class's static accessor methods, with
+     * the bound receiver first if there is one.
+     *
+     * @param setName null for a read-only reference
+     */
+    ClassDesc propertyReferenceClass(ClassCodegen enclosing, ClassDesc impl, int arity, boolean bound,
+                                     ClassDesc owner, String name, String signature, String getName,
+                                     MethodTypeDesc getType, String setName, MethodTypeDesc setType) {
+        String internalName = enclosing.internalName + "$" + localClassCounters.merge(enclosing.internalName, 1,
+                Integer::sum);
+        ClassDesc desc = ClassDesc.ofInternalName(internalName);
+        syntheticSupers.put(internalName, impl);
+        ClassDesc callableReference = ClassDesc.ofInternalName("kotlin/jvm/internal/CallableReference");
+        MethodTypeDesc boundReceiver = MethodTypeDesc.of(TypeMapper.OBJECT);
+        byte[] bytes = ClassFile.of().build(desc, cb -> {
+            cb.withVersion(ClassFile.JAVA_17_VERSION, 0);
+            cb.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_FINAL | ClassFile.ACC_SUPER | ClassFile.ACC_SYNTHETIC);
+            cb.withSuperclass(impl);
+            MethodTypeDesc init = bound ? MethodTypeDesc.of(TypeMapper.VOID, TypeMapper.OBJECT)
+                    : MethodTypeDesc.of(TypeMapper.VOID);
+            cb.withMethodBody("<init>", init, ClassFile.ACC_PUBLIC, code -> {
+                code.aload(0);
+                if (bound) code.aload(1);
+                code.ldc(owner).ldc(name).ldc(signature).iconst_0();
+                List<ClassDesc> params = new ArrayList<>();
+                if (bound) params.add(TypeMapper.OBJECT);
+                params.addAll(List.of(ConstantDescs.CD_Class, TypeMapper.STRING, TypeMapper.STRING,
+                        ConstantDescs.CD_int));
+                code.invokespecial(impl, "<init>", MethodTypeDesc.of(TypeMapper.VOID, params));
+                code.return_();
+            });
+            List<ClassDesc> objects = Collections.nCopies(arity, TypeMapper.OBJECT);
+            cb.withMethodBody("get", MethodTypeDesc.of(TypeMapper.OBJECT, objects), ClassFile.ACC_PUBLIC, code -> {
+                if (bound) code.aload(0).invokevirtual(callableReference, "getBoundReceiver", boundReceiver);
+                for (int i = 0; i < arity; i++) code.aload(i + 1);
+                code.invokestatic(enclosing.desc, getName, getType, enclosing.isInterface);
+                code.areturn();
+            });
+            if (setName != null) {
+                List<ClassDesc> setParams = new ArrayList<>(objects);
+                setParams.add(TypeMapper.OBJECT);
+                cb.withMethodBody("set", MethodTypeDesc.of(TypeMapper.VOID, setParams), ClassFile.ACC_PUBLIC,
+                        code -> {
+                            if (bound) code.aload(0).invokevirtual(callableReference, "getBoundReceiver", boundReceiver);
+                            for (int i = 0; i <= arity; i++) code.aload(i + 1);
+                            code.invokestatic(enclosing.desc, setName, setType, enclosing.isInterface);
+                            code.return_();
+                        });
+            }
+            if (enclosing.nestHost != null) {
+                cb.with(NestHostAttribute.of(ClassDesc.ofInternalName(enclosing.nestHost)));
+                nests.members.computeIfAbsent(enclosing.nestHost, k -> new ArrayList<>()).add(desc);
+            }
+        });
+        output.put(internalName, bytes);
+        return desc;
+    }
+
     ClassCodegen generator(ClassSymbol cls) {
         return generators.get(cls);
     }
@@ -256,6 +322,8 @@ public final class JvmBackend {
         public ClassHierarchyInfo getClassInfo(ClassDesc desc) {
             String name = desc.descriptorString();
             name = name.substring(1, name.length() - 1);
+            ClassDesc synthetic = backend.syntheticSupers.get(name);
+            if (synthetic != null) return ClassHierarchyInfo.ofClass(synthetic);
             ClassSymbol cls = backend.types.classByInternalName(name);
             if (cls == null) return null;
             if (cls.isInterface()) return ClassHierarchyInfo.ofInterface();

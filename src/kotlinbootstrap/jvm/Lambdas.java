@@ -336,21 +336,87 @@ final class Lambdas {
         return new TExpr.LocalGet(pos, v.type(), v);
     }
 
-    /** A property reference as a reflection object: only its name is supported, without kotlin-reflect. */
+    /**
+     * A property reference as a reflection object, as kotlinc's: a subclass
+     * of kotlin.jvm.internal's PropertyReferenceNImpl (MutablePropertyReferenceNImpl
+     * for a var) whose get and set call static synthetic methods of this
+     * class, which access the property; a bound receiver is kept by the
+     * reference. Only its name and accessors work without kotlin-reflect.
+     */
     private ClassDesc propertyReference(TExpr.CallableReference r) {
         PropertySymbol p = (PropertySymbol) r.target();
-        int arity = (r.dispatchReceiver() == null && p.owner() instanceof ClassSymbol cls && !cls.isObject() ? 1 : 0)
-                + (p.signature().receiver() != null && r.extensionReceiver() == null ? 1 : 0);
+        KType.ClassType type = (KType.ClassType) kotlinbootstrap.types.Types.lowerBound(r.type());
+        List<KType> paramTypes = new ArrayList<>();
+        for (int i = 0; i < type.args().size() - 1; i++) paramTypes.add(argType(type.args().get(i)));
+        KType valueType = argType(type.args().getLast());
+        int arity = paramTypes.size();
+        boolean mutable = p.isVar() && type.symbol().name().startsWith("KMutableProperty");
         ClassDesc impl = ClassDesc.ofInternalName("kotlin/jvm/internal/"
-                + (p.isVar() ? "MutablePropertyReference" : "PropertyReference") + arity + "Impl");
-        code.new_(impl).dup();
-        code.ldc(p.owner() instanceof ClassSymbol cls ? gen.types.classDesc(cls) : gen.owner.desc);
-        code.ldc(p.name());
-        code.ldc(backend.names.getterName(p) + gen.types.getterType(p).descriptorString());
-        code.iconst_0();
-        code.invokespecial(impl, "<init>", MethodTypeDesc.of(TypeMapper.VOID, ConstantDescs.CD_Class,
-                TypeMapper.STRING, TypeMapper.STRING, ConstantDescs.CD_int));
+                + (mutable ? "MutablePropertyReference" : "PropertyReference") + arity + "Impl");
+        TExpr bound = r.dispatchReceiver() != null && !(r.dispatchReceiver() instanceof TExpr.ObjectValue)
+                ? r.dispatchReceiver() : r.extensionReceiver();
+        LocalVariable boundVar = bound == null ? null
+                : new LocalVariable("$receiver", bound.type(), LocalVariable.Kind.TEMPORARY, false, null);
+        // The accessors: static methods taking the bound receiver, the receivers, and for set, the value.
+        List<LocalVariable> params = new ArrayList<>();
+        for (int i = 0; i < arity; i++) {
+            params.add(new LocalVariable("p" + i, paramTypes.get(i), LocalVariable.Kind.PARAMETER, false, null));
+        }
+        LocalVariable boundDispatch = bound != null && bound == r.dispatchReceiver() ? boundVar : null;
+        LocalVariable boundExtension = bound != null && bound == r.extensionReceiver() ? boundVar : null;
+        TExpr.PropertyGet get = (TExpr.PropertyGet) referenceCall(r, params, boundDispatch, boundExtension, valueType);
+        List<ClassDesc> accessorParams = new ArrayList<>();
+        if (bound != null) accessorParams.add(TypeMapper.OBJECT);
+        for (int i = 0; i < arity; i++) accessorParams.add(TypeMapper.OBJECT);
+        String getName = gen.owner.syntheticName(gen.methodName + "$get");
+        MethodTypeDesc getType = MethodTypeDesc.of(TypeMapper.OBJECT, accessorParams);
+        int flags = ClassFile.ACC_PRIVATE | ClassFile.ACC_STATIC | ClassFile.ACC_SYNTHETIC;
+        gen.owner.addMethod(getName, flags, getType, null, gen.env, g -> {
+            bindAccessorParams(g, getType, boundVar, params);
+            g.genAs(get, TypeMapper.OBJECT);
+            g.returnValue(TypeMapper.OBJECT);
+        });
+        String setName = null;
+        MethodTypeDesc setType = null;
+        if (mutable) {
+            setName = gen.owner.syntheticName(gen.methodName + "$set");
+            List<ClassDesc> setParams = new ArrayList<>(accessorParams);
+            setParams.add(TypeMapper.OBJECT);
+            setType = MethodTypeDesc.of(TypeMapper.VOID, setParams);
+            LocalVariable value = new LocalVariable("value", valueType, LocalVariable.Kind.PARAMETER, false, null);
+            List<LocalVariable> setVars = new ArrayList<>(params);
+            setVars.add(value);
+            TExpr.PropertySet set = new TExpr.PropertySet(r.pos(), backend.resolver.types().unit(), p,
+                    get.typeArgs(), get.dispatchReceiver(), get.extensionReceiver(), get.contextArgs(), false,
+                    get(value, r.pos()));
+            MethodTypeDesc st = setType;
+            gen.owner.addMethod(setName, flags, setType, null, gen.env, g -> {
+                bindAccessorParams(g, st, boundVar, setVars);
+                g.genAs(set, TypeMapper.VOID);
+                g.returnValue(TypeMapper.VOID);
+            });
+        }
+        ClassDesc owner = p.owner() instanceof ClassSymbol cls ? gen.types.classDesc(cls) : gen.owner.desc;
+        String signature = backend.names.getterName(p) + gen.types.getterType(p).descriptorString();
+        ClassDesc ref = backend.propertyReferenceClass(gen.owner, impl, arity, bound != null, owner, p.name(),
+                signature, getName, getType, setName, setType);
+        code.new_(ref).dup();
+        if (bound != null) gen.genAs(bound, TypeMapper.OBJECT);
+        code.invokespecial(ref, "<init>", bound != null ? MethodTypeDesc.of(TypeMapper.VOID, TypeMapper.OBJECT)
+                : MethodTypeDesc.of(TypeMapper.VOID));
         return impl;
+    }
+
+    /** Binds an accessor's parameters, Objects, to the variables, as their types. */
+    private static void bindAccessorParams(ExprCodegen g, MethodTypeDesc type, LocalVariable bound,
+                                           List<LocalVariable> vars) {
+        List<KType> types = new ArrayList<>();
+        if (bound != null) types.add(bound.type());
+        for (LocalVariable v : vars) types.add(v.type());
+        List<ExprCodegen.Slot> slots = g.erasedParameters(type.parameterList(), types);
+        int k = 0;
+        if (bound != null) g.env.bind(bound, slots.get(k++));
+        for (LocalVariable v : vars) g.env.bind(v, slots.get(k++));
     }
 
     // ==== Local functions ====
