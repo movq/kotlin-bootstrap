@@ -74,6 +74,10 @@ final class Intrinsics {
             else code.monitorexit();
             return TypeMapper.VOID;
         }
+        if (f.owner() instanceof PackageSymbol p && p.name().equals("kotlin.coroutines.intrinsics")
+                && f.name().equals("suspendCoroutineUninterceptedOrReturn")) {
+            return suspendCoroutineUninterceptedOrReturn(arg(c, 0));
+        }
         if (!isBuiltin(gen.backend, f)) return null;
         ClassDesc primitive = primitiveOwner(f);
         if (primitive != null) return primitiveCall(c, primitive);
@@ -85,6 +89,25 @@ final class Intrinsics {
         }
         if (f.owner() instanceof PackageSymbol) return libraryCall(c);
         return null;
+    }
+
+    /**
+     * suspendCoroutineUninterceptedOrReturn: calls the block with the
+     * continuation, a suspension point, as kotlinc's intrinsic; the block as
+     * a function object.
+     */
+    private ClassDesc suspendCoroutineUninterceptedOrReturn(TExpr block) {
+        ClassDesc function1 = ClassDesc.ofInternalName("kotlin/jvm/functions/Function1");
+        if (ExprCodegen.unwrap(block) instanceof TExpr.LocalGet g
+                && gen.env.lookup(g.variable()) instanceof ExprCodegen.InlineLambda) {
+            gen.coerce(gen.loadForCapture(g.variable()), function1);
+        } else {
+            gen.genAs(block, function1);
+        }
+        gen.loadContinuation();
+        gen.suspensionPoint();
+        code.invokeinterface(function1, "invoke", MethodTypeDesc.of(TypeMapper.OBJECT, TypeMapper.OBJECT));
+        return TypeMapper.OBJECT;
     }
 
     private static TExpr arg(TExpr.Call c, int param) {

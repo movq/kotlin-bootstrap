@@ -43,6 +43,7 @@ final class TypeMapper {
     static final ClassDesc STRING = ConstantDescs.CD_String;
     static final ClassDesc UNIT = ClassDesc.ofInternalName("kotlin/Unit");
     static final ClassDesc VOID = ConstantDescs.CD_void;
+    static final ClassDesc CONTINUATION = ClassDesc.ofInternalName("kotlin/coroutines/Continuation");
 
     private static final Map<String, ClassDesc> PRIMITIVES = Map.of(
             "Boolean", ConstantDescs.CD_boolean, "Char", ConstantDescs.CD_char,
@@ -302,6 +303,8 @@ final class TypeMapper {
     ClassDesc mapReturnType(CallableSymbol f) {
         if (f instanceof FunctionSymbol fn && fn.isConstructor()) return VOID;
         if (f.source() instanceof ExecutableElement e) return MethodTypeDesc.ofDescriptor(javaDescriptor(fn(f))).returnType();
+        // A suspend function returns its value, or COROUTINE_SUSPENDED.
+        if (isSuspend(f)) return OBJECT;
         KType t = f.returnType();
         if (f instanceof FunctionSymbol && isUnitOrNothing(t) && !overridesNonVoid(f)) return VOID;
         if (forceBoxedReturnType(f)) return mapBoxedType(t);
@@ -346,8 +349,20 @@ final class TypeMapper {
             for (ValueParamSymbol p : f.signature().params()) {
                 result.add(p.isVararg() ? varargArray(p.type()) : mapType(p.type()));
             }
+            if (isSuspend(f)) result.add(isSuspendFunctionClass(f.owner()) ? OBJECT : CONTINUATION);
         }
         return result;
+    }
+
+    /** Whether a function is a suspend one, taking a continuation last on the JVM. */
+    static boolean isSuspend(CallableSymbol f) {
+        return f instanceof FunctionSymbol && f.has(Modifier.SUSPEND) && !(f.source() instanceof ExecutableElement);
+    }
+
+    /** Whether the class is a SuspendFunctionN, whose invoke is FunctionN+1's erased one. */
+    private static boolean isSuspendFunctionClass(Object owner) {
+        return owner instanceof ClassSymbol c && c.id().packageName().equals("kotlin.coroutines")
+                && c.id().relativeName().startsWith("SuspendFunction");
     }
 
     /** The array a vararg parameter of the element type is. */

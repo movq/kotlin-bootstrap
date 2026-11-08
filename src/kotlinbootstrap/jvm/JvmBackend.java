@@ -49,9 +49,9 @@ public final class JvmBackend {
     final JvmNames names;
     final Closures closures;
     private final ClassHierarchyResolver hierarchy;
-    private final Map<String, byte[]> output = new LinkedHashMap<>();
+    final Map<String, byte[]> output = new LinkedHashMap<>();
     /** The superclasses of the synthetic classes generated here, for stack map frames. */
-    private final Map<String, ClassDesc> syntheticSupers = new HashMap<>();
+    final Map<String, ClassDesc> syntheticSupers = new HashMap<>();
     private final Deque<ClassCodegen> pending = new ArrayDeque<>();
     /** The classes being generated, by symbol, for local classes generated where they are declared. */
     private final Map<ClassSymbol, ClassCodegen> generators = new IdentityHashMap<>();
@@ -231,6 +231,12 @@ public final class JvmBackend {
         return desc;
     }
 
+    /** The name of the continuation class of a suspend function, as kotlinc's: Outer$function$1. */
+    String continuationClassName(ClassCodegen enclosing, String methodName) {
+        String base = enclosing.internalName + "$" + methodName.replace('<', '_').replace('>', '_') + "$";
+        return base + localClassCounters.merge(base, 1, Integer::sum);
+    }
+
     ClassCodegen generator(ClassSymbol cls) {
         return generators.get(cls);
     }
@@ -302,6 +308,12 @@ public final class JvmBackend {
             if (g.nestHost == null || g.nestHost.equals(g.internalName)) return;
             cb.with(NestHostAttribute.of(ClassDesc.ofInternalName(g.nestHost)));
             members.computeIfAbsent(g.nestHost, k -> new ArrayList<>()).add(g.desc);
+        }
+
+        /** Records a synthetic class as in a nest. */
+        void member(String host, ClassDesc member, ClassBuilder cb) {
+            cb.with(NestHostAttribute.of(ClassDesc.ofInternalName(host)));
+            members.computeIfAbsent(host, k -> new ArrayList<>()).add(member);
         }
 
         /** Names the members of each nest in its host, once all are generated. */

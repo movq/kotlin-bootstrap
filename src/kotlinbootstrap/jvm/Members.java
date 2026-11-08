@@ -165,6 +165,14 @@ final class Members {
         if (JvmNames.has(JvmNames.modifiers(p), "JvmField")) {
             return fieldGet(field(gen.backend, p), g.dispatchReceiver());
         }
+        // kotlin.coroutines.coroutineContext: the context of the continuation, as kotlinc's intrinsic.
+        if (p.name().equals("coroutineContext") && p.owner() instanceof PackageSymbol pkg
+                && pkg.name().equals("kotlin.coroutines")) {
+            ClassDesc context = ClassDesc.ofInternalName("kotlin/coroutines/CoroutineContext");
+            gen.loadContinuation();
+            code.invokeinterface(TypeMapper.CONTINUATION, "getContext", MethodTypeDesc.of(context));
+            return context;
+        }
         CheckedFunction inline = inlineAccessor(p, true);
         if (inline != null) {
             return gen.inlineFunction(p, inline, g.typeArgs(), g.dispatchReceiver(), g.contextArgs(),

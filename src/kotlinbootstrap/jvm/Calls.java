@@ -177,7 +177,8 @@ final class Calls {
         boolean hasDispatch = target.opcode() != Opcode.INVOKESTATIC;
         List<ClassDesc> jvmParams = target.type().parameterList();
         List<ValueParamSymbol> params = f.signature().params();
-        int first = jvmParams.size() - params.size();
+        boolean suspend = TypeMapper.isSuspend(f);
+        int first = jvmParams.size() - params.size() - (suspend ? 1 : 0);
         if (f.source() instanceof javax.lang.model.element.ExecutableElement) first = 0;
         int[] mask = defaultMask(f, args);
         if (mask != null) {
@@ -189,8 +190,10 @@ final class Calls {
             addReceivers(ops, f, contextArgs, extensionReceiver, defaultParams, offset);
             addArgs(ops, params, args, defaultParams, offset + first);
             ops.generate();
+            if (suspend) gen.loadContinuation();
             for (int m : mask) code.loadConstant(m);
             code.aconst_null();
+            if (suspend) gen.suspensionPoint();
             emit(defaults);
             return defaults.type().returnType();
         }
@@ -203,6 +206,10 @@ final class Calls {
             addArgs(ops, params, args, jvmParams, first);
         }
         ops.generate();
+        if (suspend) {
+            gen.loadContinuation();
+            gen.suspensionPoint();
+        }
         emit(target);
         return target.type().returnType();
     }

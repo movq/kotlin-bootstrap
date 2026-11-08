@@ -101,6 +101,9 @@ final class ClassCodegen {
     private ClassBuilder builder;
     /** Whether a method has exception handlers, whose empty ranges are dropped. */
     boolean hasCatches;
+    /** The suspend functions' methods, by name and descriptor, to make state machines of. */
+    private final Map<String, StateMachines.Method> stateMachines = new HashMap<>();
+    private MethodJob currentJob;
 
     /** A file's part: its top-level functions and properties. */
     ClassCodegen(JvmBackend backend, FileContext file, String partName) {
@@ -181,7 +184,15 @@ final class ClassCodegen {
         return result;
     }
 
+    /** Makes the method being generated, a suspend function's, a state machine if it suspends. */
+    void stateMachine(int completionSlot, int continuationSlot) {
+        MethodJob job = currentJob;
+        stateMachines.put(job.name() + job.type().descriptorString(), new StateMachines.Method(job.name(), job.type(),
+                (job.flags() & ClassFile.ACC_STATIC) != 0, completionSlot, continuationSlot));
+    }
+
     private void generateMethod(MethodJob job) {
+        currentJob = job;
         builder.withMethod(job.name(), job.type(), job.flags(), mb -> {
             String signature = signatures.get(job.name() + job.type().descriptorString());
             if (signature != null) mb.with(SignatureAttribute.of(MethodSignature.parseFrom(signature)));
@@ -230,6 +241,7 @@ final class ClassCodegen {
             innerClasses(cb);
             backend.nests.member(this, cb);
         });
+        if (!stateMachines.isEmpty()) bytes = new StateMachines(backend, this).transform(cf, bytes, stateMachines);
         return hasCatches ? dropEmptyCatches(cf, bytes) : bytes;
     }
 
@@ -524,7 +536,6 @@ final class ClassCodegen {
         return result;
     }
 
-    /** An annotation class's parameters, as abstract methods. */
     /** An annotation class's members: the parameters of its constructor, with their default values. */
     private void annotationMembers() {
         if (cls.decl().primaryConstructor() == null) return;
@@ -585,11 +596,46 @@ final class ClassCodegen {
             return;
         }
         CheckedFunction body = backend.checker.checkedFunction(f);
-        addMethod(name, flags, type, body, null, g -> {
-            bindParameters(g, f, body, type.parameterList(), 0);
-            g.body(body.body());
-        });
+        boolean suspend = TypeMapper.isSuspend(f);
+        if (suspend && !isStatic && f.modality() != Modality.FINAL && f.visibility() != Visibility.PRIVATE) {
+            suspendImpl(f, name, flags, type, body);
+        } else {
+            addMethod(name, flags, type, body, null, g -> {
+                bindParameters(g, f, body, type.parameterList(), 0);
+                if (suspend) g.beginSuspend(g.parameter(null, TypeMapper.CONTINUATION).slot());
+                g.body(body.body());
+            });
+        }
         if (hasOwnDefaults(f)) defaultMethod(f, body, isStatic);
+    }
+
+    /**
+     * An open suspend function, as kotlinc's: calls a static
+     * {@code $suspendImpl} method with the body, which its continuation
+     * calls again on resuming, rather than an override.
+     */
+    private void suspendImpl(FunctionSymbol f, String name, int flags, MethodTypeDesc type, CheckedFunction body) {
+        List<ClassDesc> params = new ArrayList<>();
+        params.add(desc);
+        params.addAll(type.parameterList());
+        MethodTypeDesc implType = MethodTypeDesc.of(type.returnType(), params);
+        String implName = name + "$suspendImpl";
+        addMethod(name, flags, type, null, null, g -> {
+            int slot = 0;
+            for (ClassDesc t : params) {
+                g.code.loadLocal(TypeKind.from(t), slot);
+                slot += TypeKind.from(t).slotSize();
+            }
+            g.code.invokestatic(desc, implName, implType, isInterface);
+            g.code.areturn();
+        });
+        addMethod(implName, ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC | ClassFile.ACC_SYNTHETIC, implType, body,
+                null, g -> {
+                    g.parameter(cls, desc);
+                    bindParameters(g, f, body, implType.parameterList(), 1);
+                    g.beginSuspend(g.parameter(null, TypeMapper.CONTINUATION).slot());
+                    g.body(body.body());
+                });
     }
 
     static boolean hasOwnDefaults(FunctionSymbol f) {
@@ -640,9 +686,11 @@ final class ClassCodegen {
             for (int i = first; i < first + contextCount + body.params().size(); i++) {
                 slots.add(null);
             }
+            // A suspend function's continuation follows its parameters.
+            int passed = first + contextCount + body.params().size() + (TypeMapper.isSuspend(f) ? 1 : 0);
             int maskSlot = 0;
             int slot = 0;
-            for (int i = 0; i < first + contextCount + body.params().size(); i++) {
+            for (int i = 0; i < passed; i++) {
                 slot += TypeKind.from(params.get(i)).slotSize();
             }
             maskSlot = slot;
@@ -661,7 +709,7 @@ final class ClassCodegen {
                 valueSlot += TypeKind.from(t).slotSize();
             }
             int s = 0;
-            for (int i = 0; i < first + contextCount + body.params().size(); i++) {
+            for (int i = 0; i < passed; i++) {
                 g.code.loadLocal(TypeKind.from(params.get(i)), s);
                 s += TypeKind.from(params.get(i)).slotSize();
             }
@@ -731,6 +779,8 @@ final class ClassCodegen {
             int flags = jvmField || p.has(Modifier.LATEINIT) ? visibilityFlags(p.visibility()) : ClassFile.ACC_PRIVATE;
             if (f.isStatic()) flags |= ClassFile.ACC_STATIC;
             if (!p.isVar() && !f.isStatic() && !jvmField) flags |= ClassFile.ACC_FINAL;
+            if (JvmNames.has(JvmNames.modifiers(p), "Volatile")) flags |= ClassFile.ACC_VOLATILE;
+            if (JvmNames.has(JvmNames.modifiers(p), "Transient")) flags |= ClassFile.ACC_TRANSIENT;
             fieldIn(f, flags, null, backend.signatures.fieldSignature(p, f.type()), fieldAnnotations(p));
         }
         if (p.source() instanceof Decl.Property d && d.delegate() != null) {

@@ -21,6 +21,7 @@ import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.FunctionSymbol;
 import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
+import kotlinbootstrap.types.FunctionTypes;
 import kotlinbootstrap.types.KType;
 import kotlinbootstrap.types.TypeArg;
 
@@ -84,7 +85,10 @@ final class Lambdas {
     ClassDesc lambda(TExpr.Lambda l, KType samType) {
         CheckedFunction fn = l.function();
         List<KType> paramTypes = ExprCodegen.lambdaParameterTypes(fn);
-        Sam sam = samType != null ? samOf(samType) : functionN(paramTypes.size());
+        // A suspend lambda takes a continuation last, and its method is a suspend function's.
+        boolean suspend = samType == null && FunctionTypes.kind(l.type()) instanceof FunctionTypes.Kind k
+                && k.isSuspend();
+        Sam sam = samType != null ? samOf(samType) : functionN(paramTypes.size() + (suspend ? 1 : 0));
         List<ExprCodegen.Capture> captures = captures(backend.closures.of(fn));
         ExprCodegen.Env enclosing = gen.env;
         String name = gen.owner.syntheticName(gen.methodName + "$lambda");
@@ -97,6 +101,7 @@ final class Lambdas {
                     if (fn.receiverType() != null) g.env.bind(fn, args.get(k++));
                     for (LocalVariable p : fn.contextParams()) g.env.bind(p, args.get(k++));
                     for (LocalVariable p : fn.params()) g.env.bind(p, args.get(k++));
+                    if (suspend) g.beginSuspend(args.getLast().slot());
                     g.body(fn.body());
                 });
         return indy(sam, captures, name, implType);
@@ -179,6 +184,30 @@ final class Lambdas {
         return sam.type();
     }
 
+    /**
+     * A function value as a suspend function: a FunctionN+1 whose invoke
+     * calls the FunctionN's, ignoring the continuation.
+     */
+    ClassDesc suspendConversion(TExpr.SuspendConversion s) {
+        int arity = ((KType.ClassType) kotlinbootstrap.types.Types.lowerBound(s.type())).args().size() - 1;
+        Sam function = functionN(arity);
+        Sam suspend = functionN(arity + 1);
+        String name = gen.owner.syntheticName(gen.methodName + "$suspend");
+        List<ClassDesc> params = new ArrayList<>();
+        params.add(function.type());
+        params.addAll(suspend.erased().parameterList());
+        MethodTypeDesc implType = MethodTypeDesc.of(TypeMapper.OBJECT, params);
+        gen.owner.addMethod(name, ClassFile.ACC_PRIVATE | ClassFile.ACC_STATIC | ClassFile.ACC_SYNTHETIC, implType,
+                null, null, g -> {
+                    for (int i = 0; i <= arity; i++) g.code.aload(i);
+                    g.code.invokeinterface(function.type(), "invoke", function.erased());
+                    g.code.areturn();
+                });
+        gen.genAs(s.expr(), function.type());
+        indyOnStack(suspend, List.of(function.type()), name, implType);
+        return suspend.type();
+    }
+
     // ==== References ====
 
     /**
@@ -197,7 +226,8 @@ final class Lambdas {
         List<KType> paramTypes = new ArrayList<>();
         for (int i = 0; i < type.args().size() - 1; i++) paramTypes.add(argType(type.args().get(i)));
         KType returnType = argType(type.args().getLast());
-        Sam sam = samType != null ? samOf(samType) : functionN(paramTypes.size());
+        boolean suspend = samType == null && FunctionTypes.kind(type) instanceof FunctionTypes.Kind k && k.isSuspend();
+        Sam sam = samType != null ? samOf(samType) : functionN(paramTypes.size() + (suspend ? 1 : 0));
         // The bound receivers are evaluated now, into variables the method takes.
         List<ExprCodegen.Capture> captures = new ArrayList<>();
         List<ExprCodegen.Slot> boundValues = new ArrayList<>();
@@ -241,6 +271,7 @@ final class Lambdas {
                     g.bindCaptures(captures);
                     List<ExprCodegen.Slot> args = g.erasedParameters(sam.erased().parameterList(), paramTypes);
                     for (int i = 0; i < params.size(); i++) g.env.bind(params.get(i), args.get(i));
+                    if (suspend) g.beginSuspend(args.getLast().slot());
                     ClassDesc ret = sam.erased().returnType();
                     if (toUnit) {
                         g.genAs(call, TypeMapper.VOID);

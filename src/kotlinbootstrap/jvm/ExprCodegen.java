@@ -154,6 +154,8 @@ final class ExprCodegen {
     private int inlineDepth;
     private int lastLine = -1;
     private final Intrinsics intrinsics;
+    /** In the body of a suspend function, the slot of the continuation its suspend calls pass; else -1. */
+    private int continuationSlot = -1;
 
     ExprCodegen(ClassCodegen owner, CodeBuilder code, boolean isStatic, CheckedFunction function, String methodName,
                 ClassDesc returnType) {
@@ -279,7 +281,6 @@ final class ExprCodegen {
         pushDefault(type);
     }
 
-    /** Marks the variables of a body that closures change, to keep them in Refs. */
     /**
      * Names the classes of the object literals in a body, before code that
      * mentions their types, such as a call of a member of one, is generated.
@@ -296,6 +297,7 @@ final class ExprCodegen {
         }
     }
 
+    /** Marks the variables of a body that closures change, to keep them in Refs. */
     void scanBoxed(TExpr body) {
         if (body != null) boxed.addAll(backend.closures.boxedVariables(body));
     }
@@ -310,6 +312,30 @@ final class ExprCodegen {
 
     private void loadSlot(ClassDesc type, int slot) {
         code.loadLocal(TypeKind.from(type), slot);
+    }
+
+    // ==== Coroutines ====
+
+    /**
+     * Begins the body of a suspend function, whose continuation the slot
+     * has: copied to the slot its suspend calls pass, which its state
+     * machine, if it suspends, makes its own continuation (see {@link StateMachines}).
+     */
+    void beginSuspend(int completionSlot) {
+        continuationSlot = newSlot(TypeMapper.CONTINUATION);
+        code.aload(completionSlot).checkcast(TypeMapper.CONTINUATION).astore(continuationSlot);
+        owner.stateMachine(completionSlot, continuationSlot);
+    }
+
+    void loadContinuation() {
+        if (continuationSlot < 0) throw new CodegenException(-1, "Suspend call outside a suspend function");
+        code.aload(continuationSlot);
+    }
+
+    /** Marks the call that follows as a suspension point, for the state machine. */
+    void suspensionPoint() {
+        Label next = code.newLabel();
+        code.ldc(StateMachines.MARKER).ifnull(next).labelBinding(next);
     }
 
     // ==== Entry points ====
@@ -533,7 +559,7 @@ final class ExprCodegen {
             case TExpr.Cast c -> cast(c);
             case TExpr.SmartCast s -> smartCast(s, hint);
             case TExpr.SamConversion s -> new Lambdas(this).samConversion(s);
-            case TExpr.SuspendConversion s -> throw unsupported(s, "suspend conversion");
+            case TExpr.SuspendConversion s -> new Lambdas(this).suspendConversion(s);
             case TExpr.Block b -> block(b, hint);
             case TExpr.If i -> ifExpr(i, hint);
             case TExpr.When w -> whenExpr(w, hint);

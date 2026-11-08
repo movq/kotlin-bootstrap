@@ -10,8 +10,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
@@ -66,6 +69,11 @@ public final class BoxTests {
             stdlibRoots.add(kotlinTest.resolve(root));
         }
         List<KtFile> stdlib = Frontend.parseAll(Frontend.sourceFiles(stdlibRoots, ".kt"));
+        Path helpers = kotlinSource.resolve("compiler/testData/diagnostics/helpers");
+        HELPERS.put("WITH_COROUTINES", Frontend.parseAll(Frontend.sourceFiles(List.of(helpers.resolve("coroutines")),
+                ".kt")));
+        HELPERS.put("CHECK_TYPE_WITH_EXACT", Frontend.parseAll(List.of(helpers.resolve("types/checkTypeWithExact.kt"))));
+        HELPERS.put("CHECK_TYPE", Frontend.parseAll(List.of(helpers.resolve("types/checkType.kt"))));
 
         int passed = 0;
         int skipped = 0;
@@ -98,13 +106,12 @@ public final class BoxTests {
         System.exit(failed == 0 ? 0 : 1);
     }
 
-    /** Tests of several files or modules, needing reflection or coroutine helpers, or not run on the JVM. */
+    /** Tests of several files or modules, needing reflection, or not run on the JVM. */
     private static boolean skip(String text) {
         for (String line : text.lines().toList()) {
             if (!line.startsWith("//")) continue;
             String d = line.substring(2).trim();
-            if (d.startsWith("FILE:") || d.startsWith("MODULE:") || d.startsWith("WITH_REFLECT")
-                    || d.startsWith("WITH_COROUTINES")) {
+            if (d.startsWith("FILE:") || d.startsWith("MODULE:") || d.startsWith("WITH_REFLECT")) {
                 return true;
             }
             if (d.startsWith("TARGET_BACKEND:") && !d.contains("JVM")) return true;
@@ -116,6 +123,21 @@ public final class BoxTests {
             if (d.startsWith("TARGET_PLATFORM:") && !d.contains("JVM")) return true;
         }
         return false;
+    }
+
+    /** The helper files of the tests with a directive, as Kotlin's test runner adds them. */
+    private static final Map<String, List<KtFile>> HELPERS = new LinkedHashMap<>();
+
+    private static List<KtFile> helpers(String text) {
+        List<KtFile> result = new ArrayList<>();
+        Set<String> directives = new HashSet<>();
+        for (String line : text.lines().toList()) {
+            if (line.startsWith("//")) directives.add(line.substring(2).trim());
+        }
+        HELPERS.forEach((directive, files) -> {
+            if (directives.contains(directive)) result.addAll(files);
+        });
+        return result;
     }
 
     /** The test as for the JVM: value classes annotated, without diagnostic markup, as Kotlin's test runner. */
@@ -131,12 +153,15 @@ public final class BoxTests {
             KtFile file = Parser.parse(new SourceFile(test.toString(), text));
             List<KtFile> files = new ArrayList<>(stdlib);
             files.add(file);
+            List<KtFile> helperFiles = helpers(text);
+            files.addAll(helperFiles);
             Resolver resolver = Frontend.load(List.of(), files, "8");
-            FileContext context = resolver.files().stream().filter(f -> f.file() == file).findFirst().orElseThrow();
+            List<FileContext> contexts = resolver.files().stream()
+                    .filter(f -> f.file() == file || helperFiles.contains(f.file())).toList();
             LanguageSettings settings = new LanguageSettings(text.contains("+EnableNameBasedDestructuringShortForm"));
             JvmBackend backend = new JvmBackend(resolver, new Checker(resolver, settings), f -> "main",
                     ClassHierarchyResolver.defaultResolver());
-            classes = backend.compile(List.of(context));
+            classes = backend.compile(contexts);
         } catch (RuntimeException | IOException | StackOverflowError e) {
             return "compile: " + e.toString().replace(test + ":", "") + where(e);
         }

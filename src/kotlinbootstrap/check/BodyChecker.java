@@ -1413,7 +1413,15 @@ final class BodyChecker {
         List<DataFlowAnalyzer.State> finallyEnters = new ArrayList<>(exits);
         finallyEnters.add(tryEnter);
         dfa.join(exits);
-        TExpr[] finallyBlock = new TExpr[1];
+        // The finally block is checked before the try is completed, which may be postponed with its calls.
+        TExpr finallyBlock = null;
+        if (t.finallyBlock() != null) {
+            DataFlowAnalyzer.State exit = dfa.save();
+            DataFlowAnalyzer.State finallyEnter = dfa.enterFinally(finallyEnters);
+            finallyBlock = block(t.finallyBlock().pos(), t.finallyBlock().statements(), ctx, Mode.INDEPENDENT);
+            dfa.exitFinally(finallyEnter, exit);
+        }
+        TExpr checkedFinally = finallyBlock;
         Candidate candidate = synthetic().tryCall(inferenceSession, t.pos(), bodies, null);
         candidate.builder = w -> {
             List<TExpr.CatchClause> catches = new ArrayList<>();
@@ -1423,19 +1431,9 @@ final class BodyChecker {
             }
             return new TExpr.Try(t.pos(), w.callType(candidate, candidate.returnType()),
                     w.writeArgument(bodies.getFirst(), SyntheticCalls.parameterType(candidate, 0)), catches,
-                    finallyBlock[0]);
+                    checkedFinally == null ? null : w.write(checkedFinally));
         };
         TExpr result = completer.completeCall(candidate, mode);
-        if (t.finallyBlock() != null) {
-            DataFlowAnalyzer.State exit = dfa.save();
-            DataFlowAnalyzer.State finallyEnter = dfa.enterFinally(finallyEnters);
-            finallyBlock[0] = block(t.finallyBlock().pos(), t.finallyBlock().statements(), ctx, Mode.INDEPENDENT);
-            dfa.exitFinally(finallyEnter, exit);
-            // The builder ran already if the call was completed.
-            if (result instanceof TExpr.Try r) {
-                result = new TExpr.Try(r.pos(), r.type(), r.body(), r.catches(), finallyBlock[0]);
-            }
-        }
         return result;
     }
 
