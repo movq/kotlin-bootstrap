@@ -59,6 +59,7 @@ import kotlinbootstrap.symbols.PropertySymbol;
 import kotlinbootstrap.symbols.ValueParamSymbol;
 import kotlinbootstrap.symbols.Visibility;
 import kotlinbootstrap.types.KType;
+import kotlinbootstrap.types.Substitution;
 
 /**
  * Generates a class file: of a class, object or interface with its
@@ -469,10 +470,7 @@ final class ClassCodegen {
     }
 
     private ClassSymbol superclassSymbol() {
-        for (KType t : cls.supertypes()) {
-            if (t instanceof KType.ClassType c && !c.symbol().isInterface()) return c.symbol();
-        }
-        return null;
+        return superclassOf(cls);
     }
 
     /** An enum entry's class, whose constructor takes the name and ordinal for the enum's. */
@@ -523,6 +521,7 @@ final class ClassCodegen {
         synthesized();
         companionAndObject();
         bridges();
+        toArray();
     }
 
     /** The members, with those of companion blocks. */
@@ -1506,10 +1505,117 @@ final class ClassCodegen {
                 }
             }
         }
+        inheritedBridges(bridges);
         for (Map.Entry<String, Object[]> e : bridges.entrySet()) {
             Object[] b = e.getValue();
             bridge((String) b[0], (MethodTypeDesc) b[1], (String) b[2], (MethodTypeDesc) b[3]);
         }
+    }
+
+    /** A member of a supertype, with the substitution of its class's type parameters in this class. */
+    private record Inherited(CallableSymbol member, Substitution subst) {
+    }
+
+    /**
+     * Bridges for members the class inherits rather than declares, as
+     * kotlinc's for fake overrides: of an interface's member that a member
+     * of a superclass, or another interface's default method, implements
+     * with another JVM signature. A superclass may have the same bridge,
+     * which is then redundant.
+     */
+    private void inheritedBridges(Map<String, Object[]> bridges) {
+        Set<CallableSymbol> overridden = overriddenByMembers();
+        List<Inherited> inherited = inheritedMembers();
+        for (Inherited m : inherited) {
+            if (!(m.member().owner() instanceof ClassSymbol owner) || !owner.isInterface()
+                    || overridden.contains(m.member())) {
+                continue;
+            }
+            Inherited impl = implementation(m, inherited);
+            if (impl == null) continue;
+            if (m.member() instanceof FunctionSymbol mf && impl.member() instanceof FunctionSymbol f) {
+                addBridge(bridges, backend.names.functionName(mf), backend.types.methodType(mf),
+                        backend.names.functionName(f), backend.types.methodType(f));
+            } else if (m.member() instanceof PropertySymbol mp && impl.member() instanceof PropertySymbol p) {
+                if (mp.isJavaField() || p.isJavaField()) continue;
+                addBridge(bridges, backend.names.getterName(mp), backend.types.getterType(mp),
+                        backend.names.getterName(p), backend.types.getterType(p));
+                if (mp.isVar() && p.isVar()) {
+                    addBridge(bridges, backend.names.setterName(mp), backend.types.setterType(mp),
+                            backend.names.setterName(p), backend.types.setterType(p));
+                }
+            }
+        }
+    }
+
+    /**
+     * The inherited member implementing an interface's member: a
+     * superclass's with the same signature, else a default method
+     * overriding it; null if none.
+     */
+    private static Inherited implementation(Inherited m, List<Inherited> inherited) {
+        Inherited byDefault = null;
+        for (Inherited c : inherited) {
+            CallableSymbol f = c.member();
+            if (f == m.member() || !f.name().equals(m.member().name()) || isAbstractMember(f)
+                    || !(f.owner() instanceof ClassSymbol owner)) {
+                continue;
+            }
+            boolean overrides = allOverridden(f).contains(m.member());
+            if (!owner.isInterface() && (overrides || Overrides.sameSignature(f, c.subst(), m.member(), m.subst()))) {
+                return c;
+            }
+            if (owner.isInterface() && overrides && byDefault == null) byDefault = c;
+        }
+        return byDefault;
+    }
+
+    /** Whether a member has no implementation. */
+    private static boolean isAbstractMember(CallableSymbol s) {
+        if (s.modality() == Modality.ABSTRACT) return true;
+        if (!(s.owner() instanceof ClassSymbol owner) || !owner.isInterface()) return false;
+        return switch (s.source()) {
+            case Decl.Function d -> d.body() == null;
+            case Decl.Property d -> d.getter() == null || d.getter().body() == null;
+            case null, default -> false;
+        };
+    }
+
+    /** The members of the supertypes, transitively, each once; non-static and not private. */
+    private List<Inherited> inheritedMembers() {
+        List<Inherited> result = new ArrayList<>();
+        Deque<KType.ClassType> work = new ArrayDeque<>();
+        for (KType t : cls.supertypes()) if (t instanceof KType.ClassType ct) work.add(ct);
+        Set<ClassSymbol> seen = new HashSet<>();
+        while (!work.isEmpty()) {
+            KType.ClassType type = work.removeFirst();
+            ClassSymbol sup = type.symbol();
+            if (!seen.add(sup)) continue;
+            Substitution subst = type.args().size() == Overrides.allTypeParams(sup).size()
+                    ? Substitution.of(Overrides.allTypeParams(sup), type.args()) : Substitution.EMPTY;
+            for (List<FunctionSymbol> fs : sup.members().functions().values()) {
+                for (FunctionSymbol f : fs) if (isInheritable(f)) result.add(new Inherited(f, subst));
+            }
+            for (List<PropertySymbol> ps : sup.members().properties().values()) {
+                for (PropertySymbol p : ps) if (isInheritable(p)) result.add(new Inherited(p, subst));
+            }
+            for (KType t : sup.supertypes()) {
+                if (subst.apply(t) instanceof KType.ClassType ct) work.add(ct);
+            }
+        }
+        return result;
+    }
+
+    /** The members of supertypes that the class's own members override. */
+    private Set<CallableSymbol> overriddenByMembers() {
+        Set<CallableSymbol> overridden = new HashSet<>();
+        for (List<FunctionSymbol> fs : cls.members().functions().values()) {
+            for (FunctionSymbol f : fs) overridden.addAll(allOverridden(f));
+        }
+        for (List<PropertySymbol> ps : cls.members().properties().values()) {
+            for (PropertySymbol p : ps) overridden.addAll(allOverridden(p));
+        }
+        return overridden;
     }
 
     private static List<CallableSymbol> allOverridden(CallableSymbol s) {
@@ -1551,6 +1657,59 @@ final class ClassCodegen {
         });
     }
 
+    // ==== Collections ====
+
+    private static final ClassDesc COLLECTION = ClassDesc.of("java.util.Collection");
+    private static final ClassDesc COLLECTION_TO_ARRAY = ClassDesc.of("kotlin.jvm.internal.CollectionToArray");
+
+    /**
+     * Java's {@code toArray} methods, which Kotlin's Collection doesn't
+     * declare, for a collection class, as kotlinc's ToArrayLowering: they
+     * call CollectionToArray's, unless declared, or a Kotlin superclass,
+     * being a collection, has them.
+     */
+    private void toArray() {
+        if (isInterface || !isCollection(cls)) return;
+        ClassSymbol sup = superclassSymbol();
+        while (sup != null && (sup.origin() == Origin.JAVA_BINARY || sup.origin() == Origin.JAVA_SOURCE)) {
+            sup = superclassOf(sup);
+        }
+        if (sup != null && isCollection(sup)) return;
+        ClassDesc array = TypeMapper.OBJECT.arrayType();
+        MethodTypeDesc plain = MethodTypeDesc.of(array);
+        MethodTypeDesc generic = MethodTypeDesc.of(array, array);
+        for (MethodTypeDesc type : List.of(plain, generic)) {
+            if (declaredMethods.contains("toArray" + type.descriptorString())) continue;
+            addMethod("toArray", ClassFile.ACC_PUBLIC, type, null, null, g -> {
+                g.code.aload(0);
+                if (type == generic) g.code.aload(1);
+                g.code.invokestatic(COLLECTION_TO_ARRAY, "toArray", type.insertParameterTypes(0, COLLECTION));
+                g.code.areturn();
+            });
+        }
+    }
+
+    private static boolean isCollection(ClassSymbol c) {
+        Deque<ClassSymbol> work = new ArrayDeque<>(List.of(c));
+        Set<ClassSymbol> seen = new HashSet<>();
+        while (!work.isEmpty()) {
+            ClassSymbol s = work.removeFirst();
+            if (!seen.add(s)) continue;
+            if (TypeMapper.isClass(s, "kotlin.collections.Collection") || TypeMapper.isClass(s, "java.util.Collection")) {
+                return true;
+            }
+            for (KType t : s.supertypes()) if (t instanceof KType.ClassType ct) work.add(ct.symbol());
+        }
+        return false;
+    }
+
+    private static ClassSymbol superclassOf(ClassSymbol c) {
+        for (KType t : c.supertypes()) {
+            if (t instanceof KType.ClassType ct && !ct.symbol().isInterface()) return ct.symbol();
+        }
+        return null;
+    }
+
     // ==== Interface delegation ====
 
     /** The supertypes delegated to an expression, {@code I by d}, in order. */
@@ -1568,13 +1727,7 @@ final class ClassCodegen {
     private void interfaceDelegations() {
         List<Decl.SuperTypeEntry> delegated = delegatedSupertypes();
         if (delegated.isEmpty()) return;
-        Set<CallableSymbol> overridden = new HashSet<>();
-        for (List<FunctionSymbol> fs : cls.members().functions().values()) {
-            for (FunctionSymbol f : fs) overridden.addAll(allOverridden(f));
-        }
-        for (List<PropertySymbol> ps : cls.members().properties().values()) {
-            for (PropertySymbol p : ps) overridden.addAll(allOverridden(p));
-        }
+        Set<CallableSymbol> overridden = overriddenByMembers();
         for (int i = 0; i < delegated.size(); i++) {
             ClassSymbol iface = ((KType.ClassType) cls.supertype(delegated.get(i))).symbol();
             Members.FieldRef field = new Members.FieldRef(desc, "$$delegate_" + i, backend.types.classDesc(iface),
@@ -1590,13 +1743,13 @@ final class ClassCodegen {
                 ClassDesc owner = backend.types.classDesc(c);
                 for (List<FunctionSymbol> fs : c.members().functions().values()) {
                     for (FunctionSymbol f : fs) {
-                        if (!isDelegated(f, overridden) || isObjectMethod(f)) continue;
+                        if (!isInheritable(f) || overridden.contains(f) || isObjectMethod(f)) continue;
                         delegation(field, owner, backend.names.functionName(f), backend.types.methodType(f));
                     }
                 }
                 for (List<PropertySymbol> ps : c.members().properties().values()) {
                     for (PropertySymbol p : ps) {
-                        if (!isDelegated(p, overridden) || p.isJavaField() || p.has(Modifier.CONST)) continue;
+                        if (!isInheritable(p) || overridden.contains(p) || p.isJavaField() || p.has(Modifier.CONST)) continue;
                         delegation(field, owner, backend.names.getterName(p), backend.types.getterType(p));
                         if (p.isVar()) {
                             delegation(field, owner, backend.names.setterName(p), backend.types.setterType(p));
@@ -1607,8 +1760,8 @@ final class ClassCodegen {
         }
     }
 
-    private static boolean isDelegated(CallableSymbol member, Set<CallableSymbol> overridden) {
-        return !member.isStatic() && member.visibility() != Visibility.PRIVATE && !overridden.contains(member);
+    private static boolean isInheritable(CallableSymbol member) {
+        return !member.isStatic() && member.visibility() != Visibility.PRIVATE;
     }
 
     /** Whether a function is one of Object's, which interfaces may redeclare but delegation leaves alone. */
