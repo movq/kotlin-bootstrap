@@ -516,7 +516,10 @@ final class ClassCodegen {
         if (cls.isInner() && !cls.isLocal() && cls.outer() != null) {
             field(ClassFile.ACC_FINAL | ClassFile.ACC_SYNTHETIC, "this$0", backend.types.classDesc(cls.outer()), null);
         }
-        if (!cls.isInterface()) constructors();
+        if (!cls.isInterface()) {
+            interfaceDelegations();
+            constructors();
+        }
         synthesized();
         companionAndObject();
         bridges();
@@ -1126,6 +1129,12 @@ final class ClassCodegen {
      * constructor's parameters.
      */
     private void initializers(ExprCodegen g) {
+        List<Decl.SuperTypeEntry> delegated = delegatedSupertypes();
+        for (int i = 0; i < delegated.size(); i++) {
+            ClassDesc type = backend.types.classDesc(((KType.ClassType) cls.supertype(delegated.get(i))).symbol());
+            storeField(g, new Members.FieldRef(desc, "$$delegate_" + i, type, false),
+                    backend.checker.checkedSupertypeDelegate(cls, delegated.get(i)));
+        }
         Decl.PrimaryConstructor primary = cls.decl().primaryConstructor();
         FunctionSymbol k = primary == null ? null : cls.members().constructors().stream()
                 .filter(c -> c.source() == primary).findFirst().orElse(null);
@@ -1538,6 +1547,91 @@ final class ClassCodegen {
             }
             code.invokevirtual(desc, targetName, target);
             g.coerce(target.returnType(), type.returnType());
+            g.returnValue(type.returnType());
+        });
+    }
+
+    // ==== Interface delegation ====
+
+    /** The supertypes delegated to an expression, {@code I by d}, in order. */
+    private List<Decl.SuperTypeEntry> delegatedSupertypes() {
+        return cls.decl().superTypes().stream().filter(e -> e.delegate() != null).toList();
+    }
+
+    /**
+     * Implements delegated interfaces, as kotlinc's DelegatedMemberGenerator:
+     * a field {@code $$delegate_N} keeps each delegate, and the members of
+     * the interface and its superinterfaces the class doesn't override call
+     * the delegate's. Each JVM signature of a member forwards to the same
+     * one of the delegate, which makes bridges unnecessary.
+     */
+    private void interfaceDelegations() {
+        List<Decl.SuperTypeEntry> delegated = delegatedSupertypes();
+        if (delegated.isEmpty()) return;
+        Set<CallableSymbol> overridden = new HashSet<>();
+        for (List<FunctionSymbol> fs : cls.members().functions().values()) {
+            for (FunctionSymbol f : fs) overridden.addAll(allOverridden(f));
+        }
+        for (List<PropertySymbol> ps : cls.members().properties().values()) {
+            for (PropertySymbol p : ps) overridden.addAll(allOverridden(p));
+        }
+        for (int i = 0; i < delegated.size(); i++) {
+            ClassSymbol iface = ((KType.ClassType) cls.supertype(delegated.get(i))).symbol();
+            Members.FieldRef field = new Members.FieldRef(desc, "$$delegate_" + i, backend.types.classDesc(iface),
+                    false);
+            fieldIn(field, ClassFile.ACC_PRIVATE | ClassFile.ACC_FINAL | ClassFile.ACC_SYNTHETIC, null, null,
+                    List.of());
+            Deque<ClassSymbol> work = new ArrayDeque<>(List.of(iface));
+            Set<ClassSymbol> seen = new HashSet<>();
+            while (!work.isEmpty()) {
+                ClassSymbol c = work.removeFirst();
+                if (!c.isInterface() || !seen.add(c)) continue;
+                for (KType t : c.supertypes()) if (t instanceof KType.ClassType ct) work.add(ct.symbol());
+                ClassDesc owner = backend.types.classDesc(c);
+                for (List<FunctionSymbol> fs : c.members().functions().values()) {
+                    for (FunctionSymbol f : fs) {
+                        if (!isDelegated(f, overridden) || isObjectMethod(f)) continue;
+                        delegation(field, owner, backend.names.functionName(f), backend.types.methodType(f));
+                    }
+                }
+                for (List<PropertySymbol> ps : c.members().properties().values()) {
+                    for (PropertySymbol p : ps) {
+                        if (!isDelegated(p, overridden) || p.isJavaField() || p.has(Modifier.CONST)) continue;
+                        delegation(field, owner, backend.names.getterName(p), backend.types.getterType(p));
+                        if (p.isVar()) {
+                            delegation(field, owner, backend.names.setterName(p), backend.types.setterType(p));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean isDelegated(CallableSymbol member, Set<CallableSymbol> overridden) {
+        return !member.isStatic() && member.visibility() != Visibility.PRIVATE && !overridden.contains(member);
+    }
+
+    /** Whether a function is one of Object's, which interfaces may redeclare but delegation leaves alone. */
+    private static boolean isObjectMethod(FunctionSymbol f) {
+        int params = f.signature().params().size();
+        return f.signature().receiver() == null && switch (f.name()) {
+            case "equals" -> params == 1;
+            case "hashCode", "toString" -> params == 0;
+            default -> false;
+        };
+    }
+
+    /** A method calling the same one of a delegate. */
+    private void delegation(Members.FieldRef field, ClassDesc owner, String name, MethodTypeDesc type) {
+        if (declaredMethods.contains(name + type.descriptorString())) return;
+        addMethod(name, ClassFile.ACC_PUBLIC, type, null, null, g -> {
+            g.code.aload(0).getfield(field.owner(), field.name(), field.type());
+            int slot = 1;
+            for (ClassDesc p : type.parameterList()) {
+                g.code.loadLocal(TypeKind.from(p), slot);
+                slot += TypeKind.from(p).slotSize();
+            }
+            g.code.invokeinterface(owner, name, type);
             g.returnValue(type.returnType());
         });
     }
