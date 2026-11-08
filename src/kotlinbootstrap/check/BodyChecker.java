@@ -1410,6 +1410,8 @@ final class BodyChecker {
             bodies.add(block(c.body().pos(), c.body().statements(), ctx.withLocalScope(scope), Mode.DEPENDENT));
             exits.add(dfa.save());
         }
+        List<DataFlowAnalyzer.State> finallyEnters = new ArrayList<>(exits);
+        finallyEnters.add(tryEnter);
         dfa.join(exits);
         TExpr[] finallyBlock = new TExpr[1];
         Candidate candidate = synthetic().tryCall(inferenceSession, t.pos(), bodies, null);
@@ -1425,7 +1427,10 @@ final class BodyChecker {
         };
         TExpr result = completer.completeCall(candidate, mode);
         if (t.finallyBlock() != null) {
+            DataFlowAnalyzer.State exit = dfa.save();
+            DataFlowAnalyzer.State finallyEnter = dfa.enterFinally(finallyEnters);
             finallyBlock[0] = block(t.finallyBlock().pos(), t.finallyBlock().statements(), ctx, Mode.INDEPENDENT);
+            dfa.exitFinally(finallyEnter, exit);
             // The builder ran already if the call was completed.
             if (result instanceof TExpr.Try r) {
                 result = new TExpr.Try(r.pos(), r.type(), r.body(), r.catches(), finallyBlock[0]);

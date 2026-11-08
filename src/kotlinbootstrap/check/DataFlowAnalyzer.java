@@ -123,6 +123,29 @@ final class DataFlowAnalyzer {
         dead = s.dead();
     }
 
+    /**
+     * Enters a finally block, which runs after any of the states, also after
+     * jumps and exceptions: so reachable even if none of them is.
+     */
+    State enterFinally(List<State> states) {
+        List<Flow> flows = states.stream().map(State::flow).toList();
+        flow = logic.joinFlow(flows, flows, false);
+        dead = false;
+        return save();
+    }
+
+    /**
+     * Leaves a finally block, continuing from the normal exit of the try
+     * with what the finally block learned, as FIR's path-aware finally flow.
+     */
+    void exitFinally(State enter, State normalExit) {
+        Flow finallyExit = flow;
+        flow = enter.flow();
+        Map<DataFlowVariable, TypeStatement> learned = statementsNotInheritedFrom(finallyExit);
+        restore(normalExit);
+        addAll(learned);
+    }
+
     /** Unreachable states do not count, unless all are. */
     private State joined(List<State> states) {
         List<Flow> live = new ArrayList<>();

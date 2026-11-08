@@ -1,6 +1,7 @@
 package kotlinbootstrap.resolve;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -11,6 +12,7 @@ import kotlinbootstrap.ast.TypeRef;
 import kotlinbootstrap.symbols.ClassId;
 import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassifierSymbol;
+import kotlinbootstrap.symbols.Overrides;
 import kotlinbootstrap.symbols.TypeAliasSymbol;
 import kotlinbootstrap.symbols.TypeParamSymbol;
 import kotlinbootstrap.types.KType;
@@ -129,14 +131,47 @@ public final class TypeResolver {
                     if (!outerArgs.isEmpty()) {
                         args.addAll(typeArgs(outerArgs, scope, file));
                     } else {
-                        for (TypeParamSymbol tp : outer.typeParams()) {
-                            args.add(TypeArg.of(new KType.TypeParamType(tp, false)));
-                        }
+                        args.addAll(implicitOuterArgs(outer, scope));
                     }
                 }
                 yield new KType.ClassType(cls, args, false);
             }
         };
+    }
+
+    /**
+     * The implicit arguments of an outer class of an inner class, as FIR's
+     * outer type arguments: those of the outer class as a supertype of the
+     * innermost enclosing class deriving from it, else its own parameters.
+     */
+    private List<TypeArg> implicitOuterArgs(ClassSymbol outer, Scope scope) {
+        for (Scope s = scope; s != null; s = s.parent()) {
+            if (s.ownerClass() == null) continue;
+            List<TypeArg> args = s.ownerClass() == outer ? null : supertypeArgs(s.ownerClass(), outer, new HashSet<>());
+            if (args != null && args.size() >= outer.typeParams().size()) return args.subList(0, outer.typeParams().size());
+            if (s.ownerClass() == outer) break;
+        }
+        List<TypeArg> args = new ArrayList<>();
+        for (TypeParamSymbol tp : outer.typeParams()) args.add(TypeArg.of(new KType.TypeParamType(tp, false)));
+        return args;
+    }
+
+    /** The arguments of target as a supertype of cls, in terms of cls's parameters; null if not a supertype. */
+    private static List<TypeArg> supertypeArgs(ClassSymbol cls, ClassSymbol target, Set<ClassSymbol> seen) {
+        if (!seen.add(cls) || cls.supertypesInProgress()) return null;
+        for (KType t : cls.supertypes()) {
+            if (!(Types.lowerBound(t) instanceof KType.ClassType ct)) continue;
+            if (ct.symbol() == target) return ct.args();
+            List<TypeArg> args = supertypeArgs(ct.symbol(), target, seen);
+            if (args == null) continue;
+            List<TypeParamSymbol> params = Overrides.allTypeParams(ct.symbol());
+            if (params.size() != ct.args().size()) return args;
+            Substitution sub = Substitution.of(params, ct.args());
+            List<TypeArg> result = new ArrayList<>();
+            for (TypeArg a : args) result.add(a.isStar() ? a : new TypeArg(a.variance(), sub.apply(a.type())));
+            return result;
+        }
+        return null;
     }
 
     private List<TypeArg> typeArgs(List<TypeRef.TypeArg> written, Scope scope, FileContext file) {

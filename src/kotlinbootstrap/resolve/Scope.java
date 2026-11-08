@@ -3,6 +3,7 @@ package kotlinbootstrap.resolve;
 import java.util.List;
 import java.util.function.Function;
 
+import kotlinbootstrap.symbols.ClassSymbol;
 import kotlinbootstrap.symbols.ClassifierSymbol;
 import kotlinbootstrap.symbols.TypeParamSymbol;
 
@@ -20,6 +21,11 @@ public abstract class Scope {
 
     public Scope parent() {
         return parent;
+    }
+
+    /** The class whose body this level is, or null. */
+    public ClassSymbol ownerClass() {
+        return null;
     }
 
     /** The classifier this level declares under the name, or null. */
@@ -48,6 +54,21 @@ public abstract class Scope {
 
     public static Scope of(Function<String, ClassifierSymbol> lookup, Scope parent) {
         return new Scope(parent) {
+            @Override
+            protected ClassifierSymbol own(String name) {
+                return lookup.apply(name);
+            }
+        };
+    }
+
+    /** The level of a class body, finding classifiers with the lookup. */
+    public static Scope classBody(ClassSymbol owner, Function<String, ClassifierSymbol> lookup, Scope parent) {
+        return new Scope(parent) {
+            @Override
+            public ClassSymbol ownerClass() {
+                return owner;
+            }
+
             @Override
             protected ClassifierSymbol own(String name) {
                 return lookup.apply(name);

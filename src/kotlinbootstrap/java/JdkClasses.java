@@ -57,6 +57,7 @@ public final class JdkClasses implements ClassFinder {
     private final SymbolTable table;
     private final JavaTypes types;
     private final Elements elements;
+    private final Lazy<Elements> internalElements;
     private final Map<TypeParameterElement, TypeParamSymbol> typeParams = new HashMap<>();
 
     /**
@@ -74,18 +75,32 @@ public final class JdkClasses implements ClassFinder {
         }
         JavacTask task = (JavacTask) compiler.getTask(null, null, null, options, null, List.of());
         this.elements = task.getElements();
+        List<String> internalOptions = new ArrayList<>(options.subList(2, options.size()));
+        this.internalElements = new Lazy<>(() ->
+                ((JavacTask) compiler.getTask(null, null, null, internalOptions, null, List.of())).getElements());
     }
 
     @Override
     public ClassSymbol findClass(ClassId id) {
-        TypeElement te = elements.getTypeElement(id.fqName());
-        if (te == null || !elements.getPackageOf(te).getQualifiedName().contentEquals(id.packageName())) return null;
+        Elements e = elements(id.packageName());
+        TypeElement te = e.getTypeElement(id.fqName());
+        if (te == null || !e.getPackageOf(te).getQualifiedName().contentEquals(id.packageName())) return null;
         return new JdkClassSymbol(te, id);
     }
 
     @Override
     public boolean packageExists(String packageName) {
-        return elements.getPackageElement(packageName) != null;
+        return elements(packageName).getPackageElement(packageName) != null;
+    }
+
+    /**
+     * The elements to look up a package's classes in: internal JDK packages
+     * like sun.misc, which a release's API leaves out but kotlinc sees in
+     * the JDK it runs on, are read from the running JDK.
+     */
+    private Elements elements(String packageName) {
+        boolean internal = packageName.startsWith("sun.") || packageName.startsWith("jdk.internal.");
+        return internal && elements.getPackageElement(packageName) == null ? internalElements.get() : elements;
     }
 
     static ClassId classId(TypeElement te) {

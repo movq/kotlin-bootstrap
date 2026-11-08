@@ -171,7 +171,7 @@ public final class KotlinClassSymbol extends ClassSymbol {
      */
     public Scope bodyScope(boolean withTypeParams) {
         if (bodyScope == null) {
-            staticBodyScope = Scope.of(this::findClassifierInBody, outerScope());
+            staticBodyScope = Scope.classBody(this, this::findClassifierInBody, outerScope());
             bodyScope = Scope.typeParams(typeParams(), staticBodyScope);
         }
         return withTypeParams ? bodyScope : staticBodyScope;
