@@ -101,7 +101,14 @@ final class TypeMapper {
             }
             localNames.forEach((cls, name) -> byInternalName.put(name, cls));
         }
-        return byInternalName.get(internalName);
+        ClassSymbol cls = byInternalName.get(internalName);
+        if (cls != null) return cls;
+        // A Java class, from sources or a jar.
+        int slash = internalName.lastIndexOf('/');
+        String packageName = slash < 0 ? "" : internalName.substring(0, slash).replace('/', '.');
+        String relativeName = internalName.substring(slash + 1);
+        cls = resolver.table().findClass(new ClassId(packageName, relativeName.replace('$', '.')));
+        return cls != null ? cls : resolver.table().findClass(new ClassId(packageName, relativeName));
     }
 
     /** The JVM name of a class: a builtin's Java class, a nested class as Outer$Nested. */

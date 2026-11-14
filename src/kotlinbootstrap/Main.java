@@ -34,7 +34,7 @@ public final class Main {
                    kbc check [--jdk-release N] [--errors]
                              [-Xname-based-destructuring={complete|only-syntax}] <file.kt, file.java, file.jar or directory>...
                    kbc compile -d <directory> [--module-name name] [--jdk-release N] [--keep-going] [--errors]
-                               [-Xname-based-destructuring=complete] [-cp <path>]...
+                               [-Xname-based-destructuring={complete|only-syntax}] [-cp <path>]...
                                <file.kt or directory>...""";
 
     private Main() {
@@ -173,21 +173,37 @@ public final class Main {
         LanguageSettings settings = LanguageSettings.DEFAULT;
         List<Path> classPath = new ArrayList<>();
         List<Path> sources = new ArrayList<>();
+        Map<Path, LanguageSettings> pathSettings = new HashMap<>();
         for (int i = 0; i < args.size(); i++) {
-            switch (args.get(i)) {
+            String arg = args.get(i);
+            switch (arg) {
                 case "--jdk-release" -> release = args.get(++i);
                 case "--module-name" -> moduleName = args.get(++i);
                 case "-d" -> out = Path.of(args.get(++i));
-                case "-cp" -> classPath.add(Path.of(args.get(++i)));
+                case "-cp" -> {
+                    classPath.add(Path.of(args.get(++i)));
+                    pathSettings.put(Path.of(args.get(i)), settings);
+                }
                 case "--keep-going" -> keepGoing = true;
                 case "--errors" -> printErrors = true;
-                case "-Xname-based-destructuring=complete" -> settings = new LanguageSettings(true);
-                default -> sources.add(Path.of(args.get(i)));
+                default -> {
+                    if (arg.startsWith("-Xname-based-destructuring=")) {
+                        settings = new LanguageSettings(arg.endsWith("=complete"));
+                    } else if (!arg.startsWith("-X")) {
+                        // Other features, like context parameters, are always on.
+                        sources.add(Path.of(arg));
+                        pathSettings.put(Path.of(arg), settings);
+                    }
+                }
             }
         }
         if (out == null) usage();
         Set<String> compiled = new HashSet<>();
         for (Path f : Frontend.sourceFiles(sources, ".kt")) compiled.add(f.toString());
+        Map<String, LanguageSettings> fileSettings = new HashMap<>();
+        for (Map.Entry<Path, LanguageSettings> e : pathSettings.entrySet()) {
+            for (Path f : Frontend.sourceFiles(List.of(e.getKey()), ".kt")) fileSettings.put(f.toString(), e.getValue());
+        }
         List<Path> paths = new ArrayList<>(classPath);
         paths.addAll(sources);
         String module = moduleName;
@@ -195,7 +211,8 @@ public final class Main {
             Resolver resolver = Frontend.load(paths, release);
             List<FileContext> files = resolver.files().stream()
                     .filter(f -> compiled.contains(f.file().source().path())).toList();
-            JvmBackend backend = new JvmBackend(resolver, new Checker(resolver, settings), file -> module,
+            JvmBackend backend = new JvmBackend(resolver, new Checker(resolver,
+                    file -> fileSettings.getOrDefault(file.path(), LanguageSettings.DEFAULT)), file -> module,
                     ClassHierarchyResolver.defaultResolver());
             if (keepGoing) backend.keepGoing();
             for (Map.Entry<String, byte[]> e : backend.compile(files).entrySet()) {

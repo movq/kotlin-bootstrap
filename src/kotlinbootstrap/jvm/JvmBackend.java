@@ -364,6 +364,9 @@ public final class JvmBackend {
             name = name.substring(1, name.length() - 1);
             ClassDesc synthetic = backend.syntheticSupers.get(name);
             if (synthetic != null) return ClassHierarchyInfo.ofClass(synthetic);
+            // Object is the root: its superclass is null, as the default resolver says. Saying Object is
+            // its own superclass makes the JDK's stack map commonAncestor walk loop forever.
+            if (name.equals("java/lang/Object")) return ClassHierarchyInfo.ofClass(null);
             ClassSymbol cls = backend.types.classByInternalName(name);
             if (cls == null) return null;
             if (cls.isInterface()) return ClassHierarchyInfo.ofInterface();
